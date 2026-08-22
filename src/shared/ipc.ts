@@ -1,0 +1,368 @@
+/**
+ * The IPC contract.
+ *
+ * `ApiSchema` (renderer -> main, request/response) and `EventSchema`
+ * (main -> renderer, push) are the single source of truth for what may cross
+ * the process boundary. The preload bridge, the main-process handler registry
+ * and the renderer's `window.api` typing are all derived from them, so a channel
+ * cannot be added on one side without the other side failing to compile. That is
+ * the whole point of routing everything through here.
+ */
+
+import type {
+  ActiveJob,
+  CreateRecordingInput,
+  LiveTranscriptChunk,
+  ImportProgress,
+  JobProgress,
+  Platform,
+  Recording,
+  RecordingSummary,
+  SpeakerSplitting,
+  TrackKind,
+  TranscriptBundle
+} from './types'
+import type { ModelDownloadProgress, ModelStatus } from './models'
+import type { ExportFormat } from './export'
+
+export interface ApiSchema {
+  'recordings:list': {
+    request: void
+    response: RecordingSummary[]
+  }
+  'recordings:get': {
+    request: { id: string }
+    response: TranscriptBundle | null
+  }
+  'recordings:create': {
+    request: CreateRecordingInput
+    response: Recording
+  }
+  'recordings:rename': {
+    request: { id: string; title: string }
+    response: Recording
+  }
+  'recordings:delete': {
+    request: { id: string }
+    response: void
+  }
+  /**
+   * Opens the native file picker. Returns absolute paths, or an empty array if
+   * the user cancelled.
+   */
+  'dialog:pickMediaFiles': {
+    request: void
+    response: string[]
+  }
+  /**
+   * Queues one ingest job per path and returns immediately with the created
+   * rows in `normalizing` state. Completion arrives via the `recording:updated`
+   * event — importing a long video takes far too long to block an IPC call on.
+   */
+  'recordings:import': {
+    request: { paths: string[] }
+    response: Recording[]
+  }
+  'app:info': {
+    request: void
+    response: {
+      version: string
+      platform: Platform
+      userDataPath: string
+      mediaPath: string
+      modelsPath: string
+      /** False when the ffmpeg sidecar is missing, so the UI can explain why. */
+      ffmpegAvailable: boolean
+      /** False when whisper-cli is missing — the common case on macOS. */
+      whisperAvailable: boolean
+      /** False when parakeet-cli is missing. Ships in the same archive as whisper-cli. */
+      parakeetAvailable: boolean
+      /** False when the diarization helper or its models are missing. */
+      diarizationAvailable: boolean
+    }
+  }
+
+  /** Installed/downloading state for every model in the catalogue. */
+  'models:list': {
+    request: void
+    response: ModelStatus[]
+  }
+  /** Starts a resumable download. Progress arrives via `model:progress`. */
+  'models:download': {
+    request: { id: string }
+    response: void
+  }
+  'models:cancel': {
+    request: { id: string }
+    response: void
+  }
+  'models:delete': {
+    request: { id: string }
+    response: void
+  }
+
+  'settings:get': {
+    request: void
+    response: TranscriptionSettings
+  }
+  'settings:set': {
+    request: Partial<TranscriptionSettings>
+    response: TranscriptionSettings
+  }
+
+  /**
+   * Queues transcription. Returns once queued, not once finished — progress
+   * arrives via `job:progress` and completion via `recording:updated`.
+   */
+  'transcribe:start': {
+    request: { id: string }
+    response: void
+  }
+  'transcribe:cancel': {
+    request: { id: string }
+    response: void
+  }
+  /** Recording ids with a queued or in-flight job, for restoring UI state. */
+  /**
+   * Jobs currently queued or running, with their latest progress.
+   *
+   * Returned in full rather than as bare ids so a screen opening mid-job can
+   * show the real stage, percentage and elapsed time immediately, instead of an
+   * empty bar until the next progress event happens to arrive.
+   */
+  'transcribe:active': {
+    request: void
+    response: ActiveJob[]
+  }
+
+  /**
+   * Waveform envelope for a recording, computed in the main process.
+   *
+   * Keyed by recording rather than by track: which file the waveform should
+   * describe is the playback mixdown when there is one, and the renderer has no
+   * way to know whether one was written. Main resolves it so the waveform and
+   * the audio can never disagree.
+   *
+   * The renderer cannot fetch the audio itself (Chromium blocks fetch to custom
+   * schemes), and would not want to: this returns ~2 kB instead of hundreds of
+   * megabytes of PCM.
+   */
+  'peaks:get': {
+    request: { recordingId: string; buckets?: number }
+    response: { values: number[]; durationMs: number }
+  }
+
+  /** Rewrites one utterance's text and flags it as human-edited. */
+  'utterances:update': {
+    request: { id: string; text: string }
+    response: void
+  }
+
+  /**
+   * Renders the transcript and asks the user where to save it.
+   * Returns the written path, or null if the save dialog was cancelled.
+   */
+  'transcript:export': {
+    request: { id: string; format: ExportFormat }
+    response: string | null
+  }
+
+  'speakers:rename': {
+    request: { id: string; displayName: string }
+    response: void
+  }
+  /**
+   * Folds one speaker into another.
+   *
+   * Diarization routinely splits a single person across two clusters when their
+   * voice changes, so merging is the primary correction the editor needs.
+   */
+  'speakers:merge': {
+    request: { recordingId: string; fromId: string; intoId: string }
+    response: void
+  }
+  /** Moves one line to a different speaker. */
+  'speakers:reassign': {
+    request: { utteranceId: string; speakerId: string | null }
+    response: void
+  }
+
+  /**
+   * Opens WAV writers and returns the new recording row.
+   *
+   * The renderer has already acquired its streams by this point, so `kinds`
+   * reflects what it actually managed to open — system audio may have been
+   * declined without that failing the whole recording.
+   */
+  'recording:start': {
+    request: { title?: string; kinds: TrackKind[]; sampleRate: number }
+    response: Recording
+  }
+  /** Appends one block of 16-bit PCM to a track. */
+  'recording:chunk': {
+    request: { kind: TrackKind; samples: Uint8Array }
+    response: void
+  }
+  'recording:pause': {
+    request: { paused: boolean }
+    response: void
+  }
+  'recording:stop': {
+    request: void
+    response: {
+      recordingId: string
+      durationMs: number
+      tracks: Array<{ kind: TrackKind; durationMs: number }>
+      /**
+       * Tracks discarded for carrying no signal — system-audio loopback with
+       * nothing playing, most often. Reported so the UI can say what happened
+       * instead of a source quietly vanishing.
+       */
+      silentTracks: TrackKind[]
+    }
+  }
+  /** Discards an in-progress recording and everything captured so far. */
+  'recording:cancel': {
+    request: void
+    response: void
+  }
+}
+
+export interface TranscriptionSettings {
+  modelId: string | null
+  language: string
+  /** Run speaker diarization after transcription. */
+  diarize: boolean
+  /** Upper bound on the speaker count, or null to cluster automatically. */
+  speakerCount: number | null
+  /**
+   * How eagerly to split voices apart when the count is unknown.
+   *
+   * Ignored when speakerCount is set: a fixed cluster count makes the distance
+   * threshold irrelevant.
+   */
+  speakerSplitting: SpeakerSplitting
+  /**
+   * Apply the browser's conferencing audio processing to the microphone.
+   *
+   * Off by default: it is what makes a recording sound like a phone call. Worth
+   * enabling only when recording a laptop mic with sound playing from speakers,
+   * where echo cancellation stops the far end being captured twice.
+   */
+  micProcessing: boolean
+  /**
+   * The microphone carries only the local user's voice.
+   *
+   * True skips diarizing the mic track and labels it "You" — correct for a
+   * call. False (the default) diarizes it like any other source, which is what
+   * several people sharing one microphone requires.
+   */
+  micSoloSpeaker: boolean
+}
+
+/** Payloads pushed from main to renderer. */
+export interface EventSchema {
+  /** A recording row changed: status, duration or title. */
+  'recording:updated': Recording
+  /** Fine-grained progress for an in-flight ingest job. */
+  'import:progress': ImportProgress
+  /** Progress for a transcription/diarization job. */
+  'job:progress': JobProgress
+  /** Progress for a model download. */
+  'model:progress': ModelDownloadProgress
+  /**
+   * A window of text transcribed while the recording is still running.
+   *
+   * One event per completed window, carrying only that window's text rather than
+   * the transcript so far: a two-hour recording accumulates tens of thousands of
+   * words, and resending all of them every forty-five seconds would put the
+   * whole transcript through the bridge over and over. The renderer appends.
+   */
+  'live:transcript': LiveTranscriptChunk
+}
+
+
+export type Channel = keyof ApiSchema
+export type Request<C extends Channel> = ApiSchema[C]['request']
+export type Response<C extends Channel> = ApiSchema[C]['response']
+
+export type EventName = keyof EventSchema
+export type EventPayload<E extends EventName> = EventSchema[E]
+
+/**
+ * Every channel the preload bridge is allowed to expose. Derived from the schema
+ * rather than written by hand so it can never drift out of sync.
+ */
+export const CHANNELS = [
+  'recordings:list',
+  'recordings:get',
+  'recordings:create',
+  'recordings:rename',
+  'recordings:delete',
+  'dialog:pickMediaFiles',
+  'recordings:import',
+  'app:info',
+  'models:list',
+  'models:download',
+  'models:cancel',
+  'models:delete',
+  'settings:get',
+  'settings:set',
+  'transcribe:start',
+  'transcribe:cancel',
+  'transcribe:active',
+  'peaks:get',
+  'utterances:update',
+  'transcript:export',
+  'speakers:rename',
+  'speakers:merge',
+  'speakers:reassign',
+  'recording:start',
+  'recording:chunk',
+  'recording:pause',
+  'recording:stop',
+  'recording:cancel'
+] as const satisfies readonly Channel[]
+
+export const EVENTS = [
+  'recording:updated',
+  'import:progress',
+  'job:progress',
+  'model:progress',
+  'live:transcript'
+] as const satisfies readonly EventName[]
+
+/**
+ * Shape of the `window.api` object the preload script installs.
+ *
+ * Channels whose request type is `void` take no argument; all others require
+ * exactly one. The conditional keeps `api.invoke('recordings:list')` legal while
+ * still forcing a payload on `recordings:get`.
+ */
+export type RendererApi = {
+  invoke<C extends Channel>(
+    ...args: Request<C> extends void ? [channel: C] : [channel: C, payload: Request<C>]
+  ): Promise<Response<C>>
+  /** Subscribes to a push event. Returns an unsubscribe function. */
+  on<E extends EventName>(event: E, listener: (payload: EventPayload<E>) => void): () => void
+  /**
+   * Absolute path of a dropped File.
+   *
+   * Electron 32 removed the non-standard `File.path` property, so a drop target
+   * has no way to learn the real path without asking the preload layer.
+   */
+  getPathForFile(file: File): string
+}
+
+/** Media served to the renderer goes through this scheme, never file://. */
+export const MEDIA_SCHEME = 'sonascribe-media'
+
+/** URL for a normalized track's WAV. */
+export function trackMediaUrl(trackId: string): string {
+  return `${MEDIA_SCHEME}://track/${trackId}`
+}
+
+/** URL for a recording's original, un-normalized file. */
+export function sourceMediaUrl(recordingId: string): string {
+  return `${MEDIA_SCHEME}://source/${recordingId}`
+}

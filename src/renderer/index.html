@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SonaScribe</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Locked-down CSP for the renderer. 'unsafe-inline' on style-src is required
+      by React's inline style attributes; script-src stays strict.
+
+      media-src allows the sonascribe-media: scheme so the editor can play local
+      recordings. It is absent from connect-src on purpose: Chromium blocks
+      cross-origin fetch/XHR to custom schemes outright, so listing it would
+      only imply a capability that does not exist. Audio samples reach the
+      renderer over IPC instead.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' sonascribe-media: blob:; connect-src 'self'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

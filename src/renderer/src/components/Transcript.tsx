@@ -1,0 +1,225 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Speaker, Utterance } from '@shared/types'
+import { formatTimestamp } from '../lib/format'
+import Select from './Select'
+
+/**
+ * The transcript body: playback-synced, click-to-seek, inline-editable.
+ */
+
+/** Splits text around case-insensitive matches so hits can be marked. */
+function highlight(text: string, query: string): React.ReactNode {
+  if (!query) return text
+  const lower = text.toLowerCase()
+  const needle = query.toLowerCase()
+
+  const nodes: React.ReactNode[] = []
+  let from = 0
+  for (;;) {
+    const at = lower.indexOf(needle, from)
+    if (at === -1) break
+    if (at > from) nodes.push(text.slice(from, at))
+    nodes.push(
+      <mark key={`${at}-${needle}`} className="hit">
+        {text.slice(at, at + needle.length)}
+      </mark>
+    )
+    from = at + needle.length
+  }
+  if (from === 0) return text
+  if (from < text.length) nodes.push(text.slice(from))
+  return nodes
+}
+
+export default function Transcript({
+  utterances,
+  speakers,
+  currentMs,
+  showHours,
+  query,
+  follow,
+  onSeek,
+  onEdit,
+  onReassign
+}: {
+  utterances: Utterance[]
+  speakers: Speaker[]
+  currentMs: number
+  showHours: boolean
+  query: string
+  /** Auto-scroll the active line into view during playback. */
+  follow: boolean
+  onSeek: (ms: number) => void
+  onEdit: (id: string, text: string) => Promise<void>
+  onReassign: (utteranceId: string, speakerId: string) => Promise<void>
+}): React.JSX.Element {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const activeRef = useRef<HTMLDivElement>(null)
+
+  const visible = useMemo(() => {
+    if (!query) return utterances
+    const needle = query.toLowerCase()
+    return utterances.filter((u) => u.text.toLowerCase().includes(needle))
+  }, [utterances, query])
+
+  /**
+   * Index of the line covering the playhead.
+   *
+   * Falls back to the last line that has started, so the highlight persists
+   * through the silence between utterances rather than flickering off.
+   */
+  const activeId = useMemo(() => {
+    let candidate: string | null = null
+    for (const u of utterances) {
+      if (u.startMs <= currentMs) candidate = u.id
+      else break
+      if (currentMs <= u.endMs) return u.id
+    }
+    return candidate
+  }, [utterances, currentMs])
+
+  useEffect(() => {
+    if (!follow || editingId) return
+    activeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [activeId, follow, editingId])
+
+  async function commit(id: string): Promise<void> {
+    const text = draft.trim()
+    setEditingId(null)
+    const original = utterances.find((u) => u.id === id)
+    if (!text || !original || text === original.text) return
+    await onEdit(id, text)
+  }
+
+  if (visible.length === 0) {
+    return (
+      <div className="empty">
+        <h2>{query ? 'No matches' : 'No transcript yet'}</h2>
+        {query && <p>Nothing in this transcript matches “{query}”.</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="transcript">
+      {visible.map((u) => {
+        const speaker = speakers.find((s) => s.id === u.speakerId)
+        const isActive = u.id === activeId
+        const isEditing = u.id === editingId
+        const shaky = u.confidence != null && u.confidence < 0.5
+
+        return (
+          <div
+            key={u.id}
+            ref={isActive ? activeRef : undefined}
+            className={isActive ? 'utterance utterance--active' : 'utterance'}
+          >
+            <div className="utterance__meta">
+              {speakers.length > 0 ? (
+                <Select
+                  variant="bare"
+                  value={u.speakerId ?? ''}
+                  // Each option carries its own speaker's colour rather than
+                  // inheriting the trigger's, so the open list reads as the
+                  // same set of people as the chips above it.
+                  options={[
+                    ...(u.speakerId ? [] : [{ value: '', label: 'Unknown' }]),
+                    ...speakers.map((s) => ({
+                      value: s.id,
+                      label: s.displayName,
+                      color: s.color
+                    }))
+                  ]}
+                  onChange={(id) => void onReassign(u.id, id)}
+                  ariaLabel="Reassign this line to another speaker"
+                  title="Reassign this line to another speaker"
+                />
+              ) : (
+                speaker && (
+                  <span className="utterance__speaker" style={{ color: speaker.color }}>
+                    {speaker.displayName}
+                  </span>
+                )
+              )}
+              <button
+                className="utterance__time"
+                onClick={() => onSeek(u.startMs)}
+                title="Jump to this moment"
+              >
+                {formatTimestamp(u.startMs, showHours)}
+              </button>
+              {u.edited && <span className="utterance__edited">edited</span>}
+              {shaky && !u.edited && (
+                <span className="utterance__flag" title="Low model confidence">
+                  low confidence
+                </span>
+              )}
+            </div>
+
+            {isEditing ? (
+              <textarea
+                className="utterance__input"
+                value={draft}
+                autoFocus
+                rows={Math.max(2, Math.ceil(draft.length / 90))}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={() => void commit(u.id)}
+                onKeyDown={(e) => {
+                  // Enter saves; Shift+Enter inserts a newline.
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    void commit(u.id)
+                  }
+                  if (e.key === 'Escape') setEditingId(null)
+                }}
+              />
+            ) : (
+              <p
+                className="utterance__text"
+                onDoubleClick={() => {
+                  setEditingId(u.id)
+                  setDraft(u.text)
+                }}
+                title="Double-click to edit"
+              >
+                {/*
+                  Word by word when the timings are there, and the whole line
+                  otherwise — an edited line has no usable word timings, and a
+                  search is asking for its matches to be marked rather than the
+                  playhead. Falling back keeps both cases correct instead of
+                  showing one of them wrongly.
+                */}
+                {u.words.length > 0 && !query
+                  ? u.words.map((word, i) => {
+                      const spoken = currentMs >= word.startMs
+                      const now = spoken && currentMs < word.endMs
+                      return (
+                        <span
+                          key={i}
+                          className={
+                            now
+                              ? 'word word--now'
+                              : spoken
+                                ? 'word word--said'
+                                : 'word'
+                          }
+                          // Single click seeks; the paragraph keeps double-click
+                          // for editing, so neither gets in the other's way.
+                          onClick={() => onSeek(word.startMs)}
+                          title={formatTimestamp(word.startMs, showHours)}
+                        >
+                          {word.text}{' '}
+                        </span>
+                      )
+                    })
+                  : highlight(u.text, query)}
+              </p>
+
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}

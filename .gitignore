@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+resources/bin/
+resources/models/
+*.log
+.DS_Store
+.smoke-fixtures/
+.smoke-cache/
+*.tsbuildinfo
+*.new
+*.new.*

@@ -1,0 +1,2381 @@
+/*
+ * Brand tokens.
+ *
+ * Every colour in the app comes from here, which is what makes two themes cheap:
+ * the components ask for --surface or --accent and never for a hex value, so a
+ * theme is a different set of answers rather than a different stylesheet.
+ *
+ * Light is the default because it is what the brand sheet specifies. Dark keeps
+ * the same token names and the same Signal Blue, on Sona Navy surfaces.
+ */
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  /* Raised and hover kept as their own tokens: on light they are barely tinted,
+     on dark they have to lift away from the page, and callers should not care. */
+  --bg-raised: #ffffff;
+  --bg-hover: #f0f2f5;
+  --border: #e4e7ec;
+  --text: #16181d;
+  --text-muted: #667085;
+  --accent: #4f7cff;
+  --accent-fg: #ffffff;
+  --accent-soft: #eef2ff;
+  --navy: #172033;
+  --ok: #32a071;
+  --warn: #e5a43b;
+  --danger: #d94c4c;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+
+  /*
+   * Accessible variants of the brand hues.
+   *
+   * Signal Blue is 3.71:1 against white, which is fine for a graphic and short
+   * of the 4.5:1 that WCAG 1.4.3 asks of text. Rather than abandon the colour,
+   * each hue has a text-weight and a fill-weight version found by moving only
+   * lightness — same hue and saturation, so it still reads as the brand.
+   *
+   * --accent stays the graphic colour: waveforms and meters need 3:1, not 4.5.
+   */
+  --accent-text: #265eff;
+  --accent-strong: #3569ff;
+  /* Pressed/hovered fills, dark enough to read as a state change. */
+  --accent-hover: #2b58e0;
+  --danger-hover: #c93f3f;
+  --ok-text: #257553;
+  /* 3.46:1 on the meter track, where plain --ok is 2.87:1 and misses 1.4.11. */
+  --ok-strong: #2d9066;
+  --warn-text: #926213;
+  --danger-text: #b83636;
+  --danger-strong: #d63f3f;
+  /* Borders that identify a control, which 1.4.11 holds to 3:1. The soft
+     --border stays for dividers, which carry no meaning on their own. */
+  --border-strong: #818fa6;
+
+
+  /*
+   * Corner scale.
+   *
+   * The app had eleven distinct radii — 2, 4, 5, 6, 7, 8, 10, 12, 18 — which is
+   * not one design decision but nine. Four steps now: a mark inside running
+   * text, a control, a panel, a card.
+   */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /** The recorder clock, the one number big enough to read across a room. */
+  --fs-display: 40px;
+
+  /* Type scale from the brand sheet: size / line-height. */
+  --fs-h1: 32px;
+  --lh-h1: 40px;
+  --fs-h2: 24px;
+  --lh-h2: 32px;
+  --fs-h3: 18px;
+  --lh-h3: 28px;
+  --fs-body: 16px;
+  --lh-body: 26px;
+  --fs-small: 14px;
+  --lh-small: 20px;
+  --fs-caption: 12px;
+  --lh-caption: 16px;
+
+  color-scheme: light;
+  /* Inter is bundled rather than fetched: the app is offline-first and its
+     content security policy allows no outside origins. */
+  font-family: 'Inter Variable', Inter, 'Segoe UI Variable Text', 'Segoe UI', Roboto,
+    -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: var(--fs-body);
+  font-synthesis-weight: none;
+}
+
+:root[data-theme='dark'] {
+  --bg: #101827;
+  --surface: #172033;
+  --bg-raised: #172033;
+  --bg-hover: #1e2a3f;
+  --border: #2a3547;
+  --text: #f7f8fa;
+  --text-muted: #98a2b3;
+  --accent: #4f7cff;
+  --accent-fg: #ffffff;
+  --accent-soft: #1d2a4a;
+  --navy: #f7f8fa;
+  --ok: #3ec08a;
+  --ok-strong: #3ec08a;
+  --warn: #e5a43b;
+  --danger: #e2665f;
+  --accent-hover: #6b91ff;
+  --danger-hover: #ea7d77;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+
+  /* The same idea against navy: here the hues need lifting, not darkening.
+     Success and warning already clear 4.5:1 on this surface unchanged. */
+  --accent-text: #638bff;
+  --accent-strong: #3569ff;
+  --ok-text: #36ac79;
+  --warn-text: #e5a43b;
+  --danger-text: #dd6161;
+  --danger-strong: #d63f3f;
+  --border-strong: #566c91;
+
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  height: 100%;
+}
+
+/* ---------- sidebar ---------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+  padding: 0 12px 16px;
+}
+
+/* Frameless macOS title bar still needs somewhere to grab. */
+.sidebar__drag {
+  height: 38px;
+  -webkit-app-region: drag;
+}
+
+.sidebar__brand {
+  font-size: var(--fs-h3);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  padding: 4px 8px 16px;
+}
+
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.navlink {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.navlink:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.navlink--active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sidebar__footer {
+  margin-top: auto;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 0 8px;
+}
+
+/* ---------- page ---------- */
+
+.content {
+  overflow-y: auto;
+}
+
+.page {
+  padding: 38px 32px 48px;
+  max-width: 1000px;
+}
+
+.page__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.page h1 {
+  margin: 0;
+  /* H2 on the brand scale rather than H1: a page title inside a chrome-heavy
+     window at 32px crowds everything under it. */
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.page h2 {
+  margin: 0;
+  font-size: var(--fs-h3);
+  line-height: var(--lh-h3);
+  font-weight: 500;
+}
+
+.page__title-editable {
+  cursor: text;
+  border-radius: var(--r-sm);
+}
+
+.page__title-editable:hover {
+  background: var(--bg-hover);
+}
+
+.page__subtitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.page__meta {
+  color: var(--text-muted);
+}
+
+.page__back {
+  display: inline-block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: var(--fs-small);
+}
+
+.page__back:hover {
+  color: var(--text);
+}
+
+.page__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ---------- controls ---------- */
+
+/* Secondary button: a surface with a border, which is the resting state in the
+   brand sheet. Primary and text are variants of it. */
+.btn {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 9px 16px;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-fg);
+}
+
+/* Text button: no chrome until it is wanted. */
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: transparent;
+}
+
+.btn--sm {
+  padding: 5px 11px;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 6px 10px;
+  font-family: inherit;
+  /* A form control does not inherit type: without this the search field fell
+     back to the browser's 13.33px, the one size in the app off the scale. */
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.input--title {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  width: 100%;
+}
+
+
+
+
+
+
+
+
+
+/* ---------- pills ---------- */
+
+.pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  background: var(--bg-hover);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.pill--ready {
+  background: color-mix(in srgb, var(--ok) 16%, var(--surface));
+  color: var(--ok-text);
+}
+
+.pill--failed {
+  background: color-mix(in srgb, var(--danger) 16%, var(--surface));
+  color: var(--danger-text);
+}
+
+/* Everything mid-flight reads the same, because to the user it is one wait. */
+.pill--transcribing,
+.pill--diarizing,
+.pill--normalizing,
+.pill--merging,
+.pill--queued {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--accent-text);
+}
+
+/* ---------- misc ---------- */
+
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  padding: 44px 32px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty h2 {
+  margin: 0 0 8px;
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+
+.empty p {
+  margin: 0 auto;
+  max-width: 46ch;
+  line-height: 1.6;
+}
+
+.banner {
+  border-radius: var(--r-sm);
+  padding: 11px 14px;
+  margin-bottom: 18px;
+}
+
+.banner--error {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 18px;
+  margin: 26px auto 0;
+  max-width: 460px;
+  text-align: left;
+  font-size: var(--fs-caption);
+}
+
+.kv dt {
+  color: var(--text-muted);
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.kv__path {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  word-break: break-all;
+}
+
+/* ---------- transcript ---------- */
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.utterance__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+
+.utterance__speaker {
+  font-weight: 650;
+  font-size: var(--fs-small);
+}
+
+.utterance__time {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.utterance__text {
+  margin: 0;
+  line-height: 1.65;
+}
+
+/* ---------- import / drag-drop ---------- */
+
+.page--dropping {
+  position: relative;
+}
+
+.dropzone {
+  position: fixed;
+  inset: 0 0 0 220px;
+  display: grid;
+  place-items: center;
+  background: rgba(18, 19, 26, 0.82);
+  border: 2px dashed var(--accent);
+  color: var(--accent);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.empty--drop {
+  border-color: var(--border);
+}
+
+.banner--warn {
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  color: var(--warn-text);
+}
+
+.banner code {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+}
+
+/* ---------- progress ---------- */
+
+.progress {
+  position: relative;
+  width: 150px;
+  height: 20px;
+  background: var(--bg-hover);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.progress__bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.18s linear;
+}
+
+/* Length is unknown until ffmpeg reports a duration, so sweep instead. */
+.progress__bar--indeterminate {
+  width: 35%;
+  animation: sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+.progress__label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ---------- audio player ---------- */
+
+.player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+  margin-bottom: 24px;
+}
+
+.player__play {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.player__time {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  min-width: 46px;
+}
+
+.player__time--total {
+  text-align: right;
+}
+
+.player__scrub {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.player__error {
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+/* ---------- models ---------- */
+
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.model {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+}
+
+.model--selected {
+  border-color: var(--accent);
+}
+
+.model__main {
+  min-width: 0;
+  flex: 1;
+}
+
+.model__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.model__name {
+  font-weight: 600;
+}
+
+.model__size {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.model__note {
+  margin: 5px 0 9px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 62ch;
+}
+
+.model__ratings {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.model__lang {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.model__partial {
+  margin: 9px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.model__actions {
+  display: flex;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.rating__label {
+  margin-right: 3px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.dot--on {
+  background: var(--accent);
+}
+
+.progress--wide {
+  width: 100%;
+  height: 24px;
+  margin: 10px 0 18px;
+}
+
+/* ---------- settings ---------- */
+
+.settings-row {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  max-width: 420px;
+}
+
+.settings-row label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 7px;
+}
+
+.settings-row .select {
+  display: flex;
+}
+
+.settings-row__hint {
+  margin: 8px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.page__path {
+  margin-top: 26px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  word-break: break-all;
+}
+
+.utterance__flag {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn-text);
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface));
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+}
+
+/* ---------- waveform ---------- */
+
+.waveform {
+  position: relative;
+  flex: 1;
+  height: 56px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.waveform:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--r-xs);
+}
+
+.waveform canvas {
+  display: block;
+}
+
+.waveform__hover {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-muted);
+  pointer-events: none;
+}
+
+.player {
+  align-items: center;
+}
+
+/* ---------- transcript toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.toolbar__search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 340px;
+}
+
+.toolbar__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolbar__hint {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+/* ---------- transcript lines ---------- */
+
+.utterance {
+  border-left: 2px solid transparent;
+  padding-left: 12px;
+  margin-left: -14px;
+  transition: border-color 0.15s, background 0.15s;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+.utterance--active {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.utterance__time {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.utterance__time:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.utterance__edited {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.utterance__text {
+  cursor: text;
+}
+
+.utterance__input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: var(--fs-small);
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.utterance__input:focus {
+  outline: none;
+}
+
+.hit {
+  background: color-mix(in srgb, var(--warn) 32%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.banner--ok {
+  background: color-mix(in srgb, var(--ok) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
+  word-break: break-all;
+}
+
+/* ---------- speaker chips ---------- */
+
+.speakers {
+  margin-bottom: 18px;
+}
+
+.speakers__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 6px 4px 10px;
+  background: var(--bg-raised);
+  font-size: var(--fs-small);
+}
+
+.chip--merging {
+  box-shadow: 0 0 0 2px rgba(108, 140, 255, 0.35);
+}
+
+.chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chip__name {
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.chip__name:hover {
+  text-decoration: underline;
+}
+
+.chip__input {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  padding: 1px 5px;
+}
+
+.chip__input:focus {
+  outline: none;
+}
+
+.chip__count {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip__action {
+  background: var(--bg-hover);
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  font-size: var(--fs-caption);
+}
+
+.chip__action:hover {
+  color: var(--text);
+}
+
+.chip__action--target {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.speakers__hint {
+  margin: 10px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+
+
+.settings-row__inline {
+  margin-bottom: 10px;
+}
+
+/* ---------- recorder ---------- */
+
+.recorder {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+
+.recorder__time {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.recorder__setup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 420px;
+  /* Centred in the detail area rather than left-aligned in it. The form used to
+     be a direct child of the centring flex container; it is now nested a level
+     deeper, so it has to centre itself. */
+  margin-inline: auto;
+}
+
+.recorder__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.recorder__controls {
+  display: flex;
+  gap: 10px;
+}
+
+.recorder__hint {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.btn--record {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-fg);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  padding: 12px 28px;
+  border-radius: var(--r-pill);
+}
+
+.btn--record:hover:not(:disabled) {
+  background: var(--danger-hover);
+  border-color: var(--danger-hover);
+  color: var(--accent-fg);
+}
+
+.recorder__meters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.meter__label {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  width: 96px;
+  flex-shrink: 0;
+}
+
+.meter__track {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-hover);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.meter__fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  transition: width 0.08s linear;
+}
+
+.recorder__note {
+  margin-top: 24px;
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  max-width: 62ch;
+}
+
+.recorder__note p {
+  margin: 0 0 10px;
+}
+
+/* ---------- engine sections ---------- */
+
+.engine {
+  margin-bottom: 30px;
+}
+
+.engine__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.engine__name {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.engine__blurb {
+  margin: 5px 0 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 68ch;
+}
+
+/* ---------- job progress ---------- */
+
+.job {
+  margin-bottom: 22px;
+}
+
+.job__bar {
+  height: 6px;
+  background: var(--bg-hover);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.job__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-pill);
+  transition: width 0.25s linear;
+}
+
+/* Engines that report no percentage still need to look alive. */
+.job__fill--indeterminate {
+  width: 30%;
+  animation: job-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes job-sweep {
+  0% { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+
+.job__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: var(--fs-small);
+}
+
+.job__stage {
+  font-weight: 550;
+}
+
+.job__percent {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.job__elapsed {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.job__hint {
+  margin: 6px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.recorder__fine {
+  margin: -4px 0 0 24px;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Live transcript on the Record screen: text arriving while capture runs. */
+.live {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.live__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.live__title {
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.live__count {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.live__empty {
+  margin: 0;
+  padding: 14px;
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* Capped and scrollable: a long meeting would otherwise push the stop button
+   off the bottom of the screen. */
+.live__body {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px 14px 12px;
+  text-align: left;
+}
+
+.live__line {
+  margin: 8px 0 0;
+  font-size: var(--fs-small);
+  line-height: 1.55;
+}
+
+.live__at {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
+.live__kind {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  margin-right: 8px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.live__kind--mic {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.live__kind--system {
+  color: var(--ok-text);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+/* Setup-time monitoring: meters and readiness before anything is recorded. */
+.meter__hint {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  margin-left: 10px;
+  white-space: nowrap;
+}
+
+.recorder__status {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.recorder__fine--warn {
+  color: var(--warn-text);
+}
+
+/* Record screen: one frame shared by setup and recording.
+   The slots are fixed so the parts that persist — clock, meters, buttons —
+   never move when a recording starts. Only the detail area below them swaps. */
+.recorder__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  /* Reserved whether or not a recording is running, so the meters below sit at
+     the same height in both states. */
+  min-height: 78px;
+  justify-content: center;
+}
+
+/* Dimmed at rest, full strength once it is counting: the clock is the same
+   element throughout, so starting simply brings it to life. */
+.recorder--setup .recorder__time {
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+.recorder__time {
+  transition: color 220ms ease, opacity 220ms ease;
+}
+
+.recorder__controls {
+  /* Matches the taller record button, so swapping the button row for the
+     transport controls does not change the height of the frame. */
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recorder__detail {
+  width: 100%;
+  animation: recorder-detail-in 220ms ease both;
+}
+
+/* The swap is deliberate rather than abrupt: the outgoing tree is replaced by
+   React (the key changes), and the incoming one rises a few pixels as it fades. */
+@keyframes recorder-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recorder__detail {
+    animation: none;
+  }
+  .recorder__time {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------------ brand ---
+   Component-level pass over the token change. Cards on a light page need a
+   border and a shadow to read as raised, where on dark a lighter fill was
+   enough; both are expressed through the same tokens so neither theme is a
+   special case. */
+
+.sidebar {
+  background: var(--surface);
+}
+
+.navlink--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.recorder,
+.card,
+.live,
+.job {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.live {
+  box-shadow: none;
+}
+
+/* Settings toggles, per panel 10: a pill rather than a checkbox. */
+.toolbar__toggle {
+  gap: 10px;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--text);
+}
+
+.toolbar__toggle input[type='checkbox'] {
+  appearance: none;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border-radius: var(--r-pill);
+  background: var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.toolbar__toggle input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.25);
+  transition: transform 140ms ease;
+}
+
+.toolbar__toggle input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+.toolbar__toggle input[type='checkbox']:checked::after {
+  transform: translateX(16px);
+}
+
+.toolbar__toggle input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Empty states, per panel 11: mark, heading, one line, one action. */
+.empty {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.empty h2 {
+  font-size: var(--fs-h3);
+  line-height: var(--lh-h3);
+  font-weight: 600;
+}
+
+.empty p {
+  max-width: 42ch;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+/* The waveform mark from the logo, drawn in CSS so there is no asset to ship. */
+.empty__mark {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 34px;
+  margin-bottom: 4px;
+}
+
+.empty__mark span {
+  width: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.empty__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* Theme switch in the sidebar footer. */
+.sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Logo mark: the waveform from the brand sheet, in its navy tile. */
+.sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  background: var(--navy-tile, #172033);
+  flex: none;
+}
+
+.brand__mark i {
+  width: 2.5px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* Bars of differing heights, so it reads as sound rather than a barcode. */
+.brand__mark i:nth-child(1) { height: 8px; }
+.brand__mark i:nth-child(2) { height: 15px; }
+.brand__mark i:nth-child(3) { height: 11px; }
+.brand__mark i:nth-child(4) { height: 6px; }
+
+/* The tile stays navy in both themes; on dark it needs to lift off the sidebar. */
+:root[data-theme='dark'] .brand__mark {
+  background: #0b111d;
+}
+
+/* Content sits on a surface, as in the sheet's desktop example, rather than
+   directly on the page. */
+.table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.table th {
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.table td {
+  font-size: var(--fs-small);
+}
+
+.table__row:hover {
+  background: var(--bg-hover);
+}
+
+/* Speaker chips carry their speaker's colour as a fill, not just a dot.
+   Every part is mixed from the one hue the component passes in: the tint against
+   the current surface, the edge, and the text against the current text colour —
+   so the same rule reads correctly on white and on navy without a second set. */
+.chip {
+  background: color-mix(in srgb, var(--speaker, var(--accent)) 13%, var(--surface));
+  border-color: color-mix(in srgb, var(--speaker, var(--accent)) 42%, transparent);
+  color: color-mix(in srgb, var(--speaker, var(--accent)) 55%, var(--text));
+}
+
+.chip__name {
+  /* Inherits the chip's mixed colour rather than the page's text colour. */
+  color: inherit;
+}
+
+.chip:hover {
+  background: color-mix(in srgb, var(--speaker, var(--accent)) 20%, var(--surface));
+}
+
+.chip--merging {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--speaker, var(--accent)) 40%, transparent);
+}
+
+/* The count and the menu sit quieter than the name, but still inside the chip's
+   colour: a grey pill on a tinted fill reads as a different component. */
+.chip__count {
+  color: inherit;
+  opacity: 0.65;
+}
+
+.chip__action {
+  background: color-mix(in srgb, var(--speaker, var(--accent)) 16%, transparent);
+  color: inherit;
+}
+
+.chip__action:hover {
+  background: color-mix(in srgb, var(--speaker, var(--accent)) 30%, transparent);
+}
+
+
+/* Sidebar, following the desktop example: an icon per item, then the recent
+   recordings so getting back to what you were doing is one click. */
+.navlink {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.navlink__icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  opacity: 0.85;
+}
+
+.recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 22px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.recent__label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 10px;
+  margin-bottom: 6px;
+}
+
+.recent__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  text-decoration: none;
+  color: var(--text);
+  min-width: 0;
+}
+
+.recent__item:hover {
+  background: var(--bg-hover);
+}
+
+.recent__item--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* One line each: the sidebar is a shortcut, not a second library. */
+.recent__title {
+  font-size: var(--fs-small);
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent__meta {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent__item--active .recent__meta {
+  color: inherit;
+  opacity: 0.75;
+}
+
+/* The nav keeps its size; only the recent list gives way when the window is short. */
+.sidebar__nav {
+  flex: none;
+}
+
+.sidebar__footer {
+  margin-top: auto;
+  padding-top: 16px;
+}
+
+/* --------------------------------------------------------------- contrast ---
+   Every rule below exists because a measured pair fell short of WCAG 1.4.3
+   (4.5:1 for text) or 1.4.11 (3:1 for a control's own visual boundary). The
+   ratios in the comments are the measured "before".
+
+   Colour is never the only signal in any of these: speakers carry a name, the
+   status pills carry a word, and the confidence flag carries its label — 1.4.1
+   is satisfied by the text, not by the hue. */
+
+/* Signal Blue as text was 3.32:1 on the page and 3.82:1 on navy. */
+.navlink--active,
+.recent__item--active {
+  color: var(--accent-text);
+}
+
+/* The meta line under an active recent item inherited that colour at 75%
+   opacity, landing at 2.4:1. It reads as secondary from its size and position
+   without being faded. */
+.recent__item--active .recent__meta {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* White on Signal Blue was 3.71:1. The fill darkens; the label stays white. */
+.btn--primary,
+.player__play {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* White on the record red was 4.13:1 on light and 3.33:1 on dark. */
+.btn--record {
+  background: var(--danger-strong);
+  border-color: var(--danger-strong);
+}
+
+/* "LOW CONFIDENCE" was 1.37:1 — the worst pair in the app. */
+.utterance__flag {
+  color: var(--warn-text);
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface));
+}
+
+/* A control's boundary has to be findable: inputs, selects and the secondary
+   button sat at 1.17–1.44:1 against what surrounds them. */
+.input,
+.btn,
+.theme-toggle,
+select {
+  border-color: var(--border-strong);
+}
+
+
+/* The resting clock was dimmed to 1.85:1. Muted is enough to say "not running"
+   and still clears the 3:1 that large text needs. */
+.recorder--setup .recorder__time {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* Meter fill against its own track measured 2.92:1. */
+.meter__fill,
+.progress__bar {
+  background: var(--accent-strong);
+}
+
+/* Focus has to be visible on everything focusable, not just buttons. */
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Speaker chips, held to the same bar as everything else.
+   The text now mixes toward the page's text colour rather than away from it —
+   at 55% of the speaker hue it measured 4.21:1, short of 4.5 — and the edge uses
+   the hue at full strength, which is 3.71:1 on white and 4.38:1 on navy. The
+   fill is unchanged, so the chip still reads as that speaker's colour. */
+.chip {
+  color: color-mix(in srgb, var(--speaker, var(--accent)) 30%, var(--text));
+  border-color: var(--speaker, var(--accent));
+}
+
+/* Both were faded, which is what put them under: 2.38:1 and 3.87:1. Size and
+   position already say "secondary" without dimming them. */
+.chip__count,
+.chip__action {
+  color: inherit;
+  opacity: 1;
+}
+
+.chip__count {
+  font-weight: 500;
+}
+
+/* Final contrast pass, from the measured numbers.
+
+   The chip edge cannot use the speaker hue raw: a speaker colour is arbitrary,
+   and a light one — the old palette's #4ade80 — is 1.64:1 against white. Mixing
+   it toward the text colour darkens it on light and lifts it on dark, so any
+   hue lands above 3:1 while still reading as that speaker. */
+.chip {
+  border-color: color-mix(in srgb, var(--speaker, var(--accent)) 60%, var(--text));
+}
+
+/* 4.50:1 against accent-soft is a coin toss at the rounding boundary; these
+   have room to be unambiguous. */
+:root[data-theme='dark'] {
+  --accent-text: #6b91ff;
+  --ok-text: #40bd88;
+}
+
+/* Muted at 4.45:1 on the active row's tint. It is the one place the muted
+   colour sits on something other than the page. */
+.recent__item--active .recent__meta {
+  color: var(--text);
+  opacity: 0.75;
+}
+
+/* A switch in its off state was 1.32:1 against the surface. The track is the
+   control — if it cannot be seen, the control cannot be found. */
+.toolbar__toggle input[type='checkbox'] {
+  background: var(--border-strong);
+}
+
+/* On is already the accent; the knob keeps a shadow so it reads against both. */
+.toolbar__toggle input[type='checkbox']:checked {
+  background: var(--accent-strong);
+}
+
+
+/* ------------------------------------------------------------- library ---
+   Recordings as a stack of cards, each readable and playable in place: the
+   opening of the transcript, a way into the rest of it, and the audio with its
+   own running time in the corner. */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 760px;
+}
+
+.rec {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 18px 20px 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.rec:hover {
+  border-color: var(--border-strong);
+}
+
+/* Playing is marked by the rail as well as the tint, so the state does not
+   depend on colour vision. */
+.rec--playing {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow);
+}
+
+.rec__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rec__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rec__title {
+  margin: 0;
+  font-size: var(--fs-h3);
+  line-height: var(--lh-h3);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rec__title-input {
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  padding: 4px 8px;
+  max-width: 420px;
+}
+
+.rec__stamp {
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.rec__preview {
+  margin: 10px 0 0;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+}
+
+/* The line under the playhead. Weight carries it as well as colour, so it is
+   still findable without seeing the hue. */
+.rec__line--now {
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.rec__more,
+.rec__note {
+  color: var(--text-muted);
+}
+
+.rec__note {
+  margin: 10px 0 0;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.rec__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* A pill rather than a link: it is the way into the recording, and on a card
+   of body text a bare link disappears. */
+.rec__full {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent-text);
+  border-radius: var(--r-pill);
+  padding: 7px 16px;
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.rec__full:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Play and elapsed time as one control in the corner, as in the reference. */
+.rec__play {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--accent-text);
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 4px;
+  border-radius: var(--r-sm);
+}
+
+.rec__play:hover {
+  background: var(--accent-soft);
+}
+
+.rec__glyph {
+  font-size: var(--fs-small);
+  line-height: 1;
+}
+
+.rec__time {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec--playing .rec__time {
+  color: var(--accent-text);
+}
+
+.rec__retry {
+  border: none;
+  background: transparent;
+  color: var(--warn-text);
+  font-size: var(--fs-h3);
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.rec__retry:hover {
+  background: var(--bg-hover);
+}
+
+.cards__job {
+  margin-top: -8px;
+  padding: 0 20px 12px;
+}
+
+/* The three-dot menu, anchored to the card's corner. */
+.rec__menu {
+  position: relative;
+}
+
+.rec__menu-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rec__menu-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 20;
+  min-width: 172px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
+  display: flex;
+  flex-direction: column;
+}
+
+.menu button {
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.menu button:hover {
+  background: var(--bg-hover);
+}
+
+.menu__danger {
+  color: var(--danger-text);
+}
+
+/* A toggle inside a settings row was being flattened by `.settings-row label`,
+   which sets display:block for the field labels. Same specificity, later rule,
+   so the switch lost its flex layout and its gap did nothing — the label sat
+   against the switch with no space at all. */
+.settings-row label.toolbar__toggle,
+label.toolbar__toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+  font-weight: 400;
+}
+
+/* Room around each switch, so a stack of them reads as separate choices. */
+.settings-row .toolbar__toggle {
+  margin-top: 10px;
+}
+
+.settings-row__inline {
+  margin-bottom: 14px;
+}
+
+/* The logo mark: dark bars on a white tile. */
+.brand__mark {
+  background: #ffffff;
+  /* The tile is white in both themes, so on light it needs an edge of its own
+     or it dissolves into the sidebar. */
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.brand__mark i {
+  background: var(--navy-mark, #172033);
+}
+
+:root[data-theme='dark'] .brand__mark {
+  background: #ffffff;
+  box-shadow: none;
+}
+
+/* Word-level follow-along in the transcript.
+
+   Three states: not yet spoken, already spoken, and the word under the
+   playhead. The current word is marked by a background as well as weight, so it
+   is findable without depending on colour. */
+.word {
+  cursor: pointer;
+  border-radius: var(--r-xs);
+  transition: background 90ms ease, color 90ms ease;
+}
+
+.word:hover {
+  background: var(--accent-soft);
+}
+
+/* Already spoken: dimmed rather than recoloured, so the eye is drawn forward to
+   where playback is rather than back over where it has been. */
+.word--said {
+  color: var(--text-muted);
+}
+
+.word--now {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .word {
+    transition: none;
+  }
+}
+
+/* The in-progress box was given a surface and a border in the brand pass but no
+   padding, so the bar sat on the top edge and the text against the left one. */
+.job {
+  padding: 16px 18px 14px;
+  border-radius: var(--r-md);
+}
+
+.job__meta {
+  margin-top: 12px;
+}
+
+.job__stage {
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.job__elapsed {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.job__hint {
+  margin-top: 8px;
+  line-height: var(--lh-small);
+}
+
+/* ---------- one dropdown, everywhere ---------- */
+
+/*
+ * A native <select> hands its open list to Windows, which drew it with square
+ * corners and a hard blue highlight — the only control in the app that ignored
+ * the theme. The trigger below is styled like every other field, and the list
+ * reuses the card menu's surface so both floating panels are the same object.
+ */
+.select {
+  position: relative;
+  display: inline-flex;
+}
+
+.select__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  padding: 9px 14px;
+  font: inherit;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.select__trigger:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.select[data-open] .select__trigger {
+  border-color: var(--accent);
+}
+
+.select__trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.select__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select__value--empty {
+  color: var(--text-muted);
+}
+
+.select__caret {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  opacity: 0.7;
+  transition: transform 140ms ease;
+}
+
+.select[data-open] .select__caret {
+  transform: rotate(180deg);
+}
+
+/* Inherits .menu for surface, border, radius and shadow — it is the same panel
+   the card menus use, positioned under its own trigger. */
+.select__list {
+  top: calc(100% + 6px);
+  right: auto;
+  left: 0;
+  min-width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.select__list--end {
+  left: auto;
+  right: 0;
+}
+
+.select__list--above {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.select__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Keyboard and pointer share one highlight, so arrowing down looks the same as
+   hovering rather than lighting up two rows at once. */
+.select__option[data-active] {
+  background: var(--bg-hover);
+}
+
+.select__option[aria-selected='true'] {
+  font-weight: 650;
+}
+
+.select__option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A fixed column so the labels line up whether or not a row is ticked. */
+.select__tick {
+  width: 12px;
+  flex: none;
+  font-size: var(--fs-caption);
+  opacity: 0.9;
+}
+
+/* Inline in the transcript: no chrome until pointed at, since a border per line
+   would draw a box around every speaker name in the document. */
+.select--bare .select__trigger {
+  background: transparent;
+  border-color: transparent;
+  padding: 1px 4px;
+  font-weight: 650;
+  font-size: var(--fs-small);
+  gap: 4px;
+  max-width: 190px;
+}
+
+.select--bare .select__trigger:hover:not(:disabled),
+.select--bare[data-open] .select__trigger {
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+.select--bare .select__caret {
+  width: 9px;
+  height: 9px;
+}
+
+/* ---------- scrollbars ---------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: var(--r-pill);
+  /* Inset by its own border so the thumb reads as a bar, not a filled gutter. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 38%, transparent);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* A speaker's colour, as words rather than as a graphic.
+   Painted straight on, Signal Blue reads 3.49:1 against the surface, which is
+   enough for a dot and not for a name. Mixing toward the page's text colour —
+   the same move the chips make — keeps whose line it is legible at 4.5:1. */
+.select__trigger[style*='--speaker'],
+.select__option[style*='--speaker'] {
+  color: color-mix(in srgb, var(--speaker) 32%, var(--text));
+}
