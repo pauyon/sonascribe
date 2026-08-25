@@ -168,47 +168,26 @@ export default function Library(): React.JSX.Element {
           {recordings.map((r) => {
             const job = progress[r.id] ?? jobs[r.id]
             return (
-              <div key={r.id} className="cards__item">
-                <RecordingCard
-                  recording={r}
-                  playingId={playingId}
-                  onPlay={setPlayingId}
-                  onOpen={(id) => navigate(`/recordings/${id}`)}
-                  onRename={async (id, title) => {
-                    await api.invoke('recordings:rename', { id, title })
-                    refetch()
-                  }}
-                  onDelete={(id) => {
-                    void api.invoke('recordings:delete', { id }).then(refetch)
-                  }}
-                  onRetry={(id) => {
-                    void api.invoke('transcribe:start', { id }).catch(() => undefined)
-                  }}
-                />
-                {/* Progress belongs on the card it describes, not in a column. */}
-                {job && (
-                  <div className="cards__job">
-                    <div className="progress" title={STAGE_LABEL[job.stage] ?? 'Working'}>
-                      <div
-                        className={
-                          job.fraction == null
-                            ? 'progress__bar progress__bar--indeterminate'
-                            : 'progress__bar'
-                        }
-                        style={
-                          job.fraction == null
-                            ? undefined
-                            : { width: `${Math.round(job.fraction * 100)}%` }
-                        }
-                      />
-                      <span className="progress__label">
-                        {STAGE_LABEL[job.stage] ?? 'Working'}
-                        {job.fraction != null && ` ${Math.round(job.fraction * 100)}%`}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <RecordingCard
+                key={r.id}
+                recording={r}
+                playingId={playingId}
+                onPlay={setPlayingId}
+                onOpen={(id) => navigate(`/recordings/${id}`)}
+                onRename={async (id, title) => {
+                  await api.invoke('recordings:rename', { id, title })
+                  refetch()
+                }}
+                onDelete={(id) => {
+                  void api.invoke('recordings:delete', { id }).then(refetch)
+                }}
+                onRetry={(id) => {
+                  void api.invoke('transcribe:start', { id }).catch(() => undefined)
+                }}
+                job={
+                  job ? { label: STAGE_LABEL[job.stage] ?? 'Working', fraction: job.fraction } : null
+                }
+              />
             )
           })}
         </div>

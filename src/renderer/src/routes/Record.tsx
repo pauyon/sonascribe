@@ -12,6 +12,7 @@ import {
 } from '../lib/capture'
 import { formatDuration } from '../lib/format'
 import Select from '../components/Select'
+import LiveTranscriptPanel from '../components/LiveTranscriptPanel'
 
 /** Peak level meter for one track. */
 function Meter({
@@ -51,11 +52,6 @@ export default function Record(): React.JSX.Element {
   const [live, setLive] = useState<LiveTranscriptChunk[]>([])
   const { data: info } = useQuery('app:info')
   const { data: settings, refetch: refetchSettings } = useQuery('settings:get')
-
-  const liveBodyRef = useRef<HTMLDivElement>(null)
-  // Only auto-scrolls while the user is already at the bottom, so scrolling up
-  // to reread an earlier line does not get yanked back down by the next chunk.
-  const stickToBottomRef = useRef(true)
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState<string>('')
@@ -116,14 +112,53 @@ export default function Record(): React.JSX.Element {
     setLive((prev) => [...prev, chunk])
   })
 
-  // Keeps the newest line in view as it's typed out, the way a chat log does —
-  // otherwise the scrollable transcript stays pinned to its first lines and
-  // visibly falls behind the recording.
-  useEffect(() => {
-    if (!stickToBottomRef.current) return
-    const el = liveBodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [live])
+  // Pause is decided in main, not set optimistically here, so a toggle from
+  // the mini controls window updates this screen too (and vice versa).
+  useEvent('recording:pauseChanged', (payload) => {
+    setPaused(payload.paused)
+  })
+
+  // Stops sending audio blocks the instant the session is gone in main. This
+  // matters when Stop is clicked from the mini controls window rather than
+  // here: without it, this window keeps writing to a session that's already
+  // closed until the (possibly several-second) recording:stopped event below
+  // arrives with the final result.
+  useEvent('recording:sessionEnded', () => {
+    acceptingRef.current = false
+  })
+
+  // The single place that decides what happens once a recording is done —
+  // reached the same way whether Stop was clicked here or in the mini
+  // controls window, so the outcome (the warning banner, where it navigates)
+  // can't depend on which one it was.
+  useEvent('recording:stopped', (summary) => {
+    acceptingRef.current = false
+    setRecording(false)
+    setPaused(false)
+    if (summary.tracks.length === 0) {
+      setError(
+        'No audio was captured, so nothing was saved. Check the input device and that its level meter moved.'
+      )
+      return
+    }
+    if (summary.silentTracks.length > 0) {
+      const names = summary.silentTracks
+        .map((k) => (k === 'system' ? 'System audio' : 'Microphone'))
+        .join(' and ')
+      setWarning(`${names} captured no sound and was not saved.`)
+    }
+    navigate(`/recordings/${summary.recordingId}`)
+  })
+
+  // Mirrors recording:stopped for the cancel path — same reasoning, no result
+  // to report either way.
+  useEvent('recording:discarded', () => {
+    acceptingRef.current = false
+    setRecording(false)
+    setPaused(false)
+    setElapsedMs(0)
+    setLive([])
+  })
 
   const closeSession = useCallback(async () => {
     const session = sessionRef.current
@@ -247,11 +282,21 @@ export default function Record(): React.JSX.Element {
     }
   }, [])
 
-  // Elapsed timer, excluding paused time.
+  // Elapsed timer, excluding paused time. Also relayed to main (throttled to
+  // whole seconds, not every 200ms tick) so a mini controls window — which
+  // has no way to reach getUserMedia and so can't derive this itself — has
+  // something to display.
+  const lastRelayedSecRef = useRef(-1)
   useEffect(() => {
     if (!recording || paused) return
     const timer = setInterval(() => {
-      setElapsedMs(Date.now() - startedAtRef.current - pausedMsRef.current)
+      const next = Date.now() - startedAtRef.current - pausedMsRef.current
+      setElapsedMs(next)
+      const sec = Math.floor(next / 1000)
+      if (sec !== lastRelayedSecRef.current) {
+        lastRelayedSecRef.current = sec
+        void api.invoke('recording:elapsed', { elapsedMs: next })
+      }
     }, 200)
     return () => clearInterval(timer)
   }, [recording, paused])
@@ -306,32 +351,22 @@ export default function Record(): React.JSX.Element {
     } else {
       pausedMsRef.current += Date.now() - pauseStartRef.current
     }
-    setPaused(next)
+    // `paused` itself updates from the recording:pauseChanged broadcast this
+    // triggers, not set here directly — see that listener above.
     void api.invoke('recording:pause', { paused: next })
   }
 
   async function stop(): Promise<void> {
+    // Optimistic, for instant feedback on this window's own click — the
+    // recording:sessionEnded/recording:stopped handlers above do the same
+    // (and are what actually run when Stop is clicked from the mini window
+    // instead), so this is belt-and-braces rather than load-bearing here.
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
 
     try {
-      const summary = await api.invoke('recording:stop')
-      if (summary.tracks.length === 0) {
-        setError(
-          'No audio was captured, so nothing was saved. Check the input device and that its level meter moved.'
-        )
-        return
-      }
-      if (summary.silentTracks.length > 0) {
-        // Discarding a silent track is the right call, but doing it without
-        // saying so looks like the feature simply did not work.
-        const names = summary.silentTracks
-          .map((k) => (k === 'system' ? 'System audio' : 'Microphone'))
-          .join(' and ')
-        setWarning(`${names} captured no sound and was not saved.`)
-      }
-      navigate(`/recordings/${summary.recordingId}`)
+      await api.invoke('recording:stop')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -339,11 +374,16 @@ export default function Record(): React.JSX.Element {
 
   async function discard(): Promise<void> {
     acceptingRef.current = false
-    await api.invoke('recording:cancel')
     setRecording(false)
     setPaused(false)
     setElapsedMs(0)
     setLive([])
+
+    try {
+      await api.invoke('recording:cancel')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   const monitoringSystem = openKinds.includes('system')
@@ -451,6 +491,14 @@ export default function Record(): React.JSX.Element {
               <button className="btn btn--ghost" onClick={discard}>
                 Discard
               </button>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => void api.invoke('recording:openMiniControls')}
+                title="Open a small always-on-top window with pause/resume and the live transcript"
+              >
+                Pop out controls
+              </button>
             </>
           ) : (
             <button className="btn btn--record" onClick={start} disabled={!captureOpen}>
@@ -463,48 +511,11 @@ export default function Record(): React.JSX.Element {
             than reconciling two unrelated trees, which is what lets it fade. */}
         <div className="recorder__detail" key={recording ? 'live' : 'setup'}>
           {recording ? (
-            <div className="live">
-              <div className="live__head">
-                <span className="live__title">Transcript so far</span>
-                <span className="live__count">
-                  {orderedLive.length === 0
-                    ? 'listening…'
-                    : `${orderedLive.reduce((n, c) => n + c.text.split(/\s+/).filter(Boolean).length, 0)} words`}
-                </span>
-              </div>
-              {orderedLive.length === 0 ? (
-                <p className="live__empty">
-                  Text appears about fifteen seconds behind the audio — it is transcribed in
-                  short windows as you speak, so there is nothing left to wait for when you stop.
-                </p>
-              ) : (
-                <div
-                  className="live__body"
-                  ref={liveBodyRef}
-                  onScroll={(e) => {
-                    const el = e.currentTarget
-                    stickToBottomRef.current =
-                      el.scrollHeight - el.scrollTop - el.clientHeight < 24
-                  }}
-                >
-                  {orderedLive.map((chunk) => (
-                    <p key={`${chunk.kind}-${chunk.startMs}`} className="live__line">
-                      <span className="live__at">{formatDuration(chunk.startMs)}</span>
-                      {monitoringSystem && (
-                        <span className={`live__kind live__kind--${chunk.kind}`}>
-                          {chunk.kind === 'mic'
-                            ? settings?.micSoloSpeaker
-                              ? 'You'
-                              : 'Mic'
-                            : 'System'}
-                        </span>
-                      )}
-                      {chunk.text}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
+            <LiveTranscriptPanel
+              chunks={orderedLive}
+              monitoringSystem={monitoringSystem}
+              micLabel={settings?.micSoloSpeaker ? 'You' : 'Mic'}
+            />
           ) : (
             <div className="recorder__setup">
               <div className="recorder__field">
@@ -591,6 +602,23 @@ export default function Record(): React.JSX.Element {
                 through system audio — your side gets labelled “You” without guessing.
                 Leave it unticked when several people share one microphone, or everyone
                 in the room is merged into a single speaker.
+              </p>
+
+              <label className="toolbar__toggle">
+                <input
+                  type="checkbox"
+                  checked={settings?.autoPopOutOnMinimize ?? false}
+                  onChange={async (e) => {
+                    await api.invoke('settings:set', { autoPopOutOnMinimize: e.target.checked })
+                    refetchSettings()
+                  }}
+                />
+                Pop out controls automatically when minimized
+              </label>
+              <p className="recorder__fine">
+                While recording, minimizing this window opens the small always-on-top
+                controls window on its own, instead of waiting for "Pop out controls" to
+                be clicked.
               </p>
             </div>
           )}

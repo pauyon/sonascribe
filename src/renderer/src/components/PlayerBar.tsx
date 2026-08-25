@@ -1,4 +1,4 @@
-import type { AudioController } from '../lib/useAudio'
+import { PLAYBACK_RATES, type AudioController } from '../lib/useAudio'
 import { formatDuration } from '../lib/format'
 import Waveform from './Waveform'
 
@@ -6,17 +6,20 @@ import Waveform from './Waveform'
 export default function PlayerBar({
   audio,
   peaks,
-  durationMs
+  durationMs,
+  floating = false
 }: {
   audio: AudioController
   peaks: number[] | null
   /** Duration from the database, used until the media element reports its own. */
   durationMs: number
+  /** Pinned to the bottom of the window, in place of the normal in-flow card. */
+  floating?: boolean
 }): React.JSX.Element {
   const total = audio.durationMs ?? durationMs
 
   return (
-    <div className="player">
+    <div className={floating ? 'player player--floating' : 'player'}>
       <button
         className="player__play"
         onClick={audio.toggle}
@@ -50,6 +53,19 @@ export default function PlayerBar({
       )}
 
       <span className="player__time player__time--total">{formatDuration(total)}</span>
+
+      <button
+        type="button"
+        className="player__rate"
+        onClick={() => {
+          const i = PLAYBACK_RATES.indexOf(audio.rate)
+          audio.setRate(PLAYBACK_RATES[(i + 1) % PLAYBACK_RATES.length])
+        }}
+        title="Playback speed"
+        aria-label={`Playback speed: ${audio.rate}×. Click to change.`}
+      >
+        {audio.rate}×
+      </button>
 
       {audio.error && <span className="player__error">{audio.error}</span>}
     </div>

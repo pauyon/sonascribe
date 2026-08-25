@@ -5,6 +5,7 @@ import type { Channel, Request, Response, TranscriptionSettings } from '@shared/
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { mediaPath, modelsPath, userDataPath } from '../paths'
 import {
+  getAutoPopOutOnMinimize,
   getCaptureSystemAudio,
   getDiarizationEnabled,
   getEchoCancellation,
@@ -15,6 +16,7 @@ import {
   getNoiseSuppression,
   getSpeakerCount,
   getSpeakerSplitting,
+  setAutoPopOutOnMinimize,
   setCaptureSystemAudio,
   setDiarizationEnabled,
   setEchoCancellation,
@@ -26,7 +28,7 @@ import {
   setSpeakerCount,
   setSpeakerSplitting
 } from '../db/settings'
-import { mergeSpeakers, reassignUtterance, renameSpeaker } from '../db/speakers'
+import { deleteSpeaker, mergeSpeakers, reassignUtterance, renameSpeaker } from '../db/speakers'
 import {
   cancelModelDownload,
   deleteModel,
@@ -52,11 +54,17 @@ import { queueImport } from '../services/importer'
 import { deleteRecordingMedia } from '../services/media-cleanup'
 import {
   cancelRecording,
+  getRecordingStatus,
   setPaused,
   startRecording,
   stopRecording,
   writeChunk
 } from '../services/recorder'
+import {
+  openMiniRecorderWindow,
+  resizeMiniRecorderWindow
+} from '../windows/mini-recorder'
+import { emit } from './events'
 
 /**
  * Main-process implementation of the IPC contract.
@@ -181,6 +189,7 @@ const handlers: Handlers = {
     // so — as with speakerCount above — the two cannot be collapsed.
     if (patch.micDeviceId !== undefined) setMicDeviceId(patch.micDeviceId)
     if (patch.captureSystemAudio != null) setCaptureSystemAudio(patch.captureSystemAudio)
+    if (patch.autoPopOutOnMinimize != null) setAutoPopOutOnMinimize(patch.autoPopOutOnMinimize)
     return currentSettings()
   },
 
@@ -247,6 +256,10 @@ const handlers: Handlers = {
   'speakers:reassign': ({ utteranceId, speakerId }) =>
     reassignUtterance(utteranceId, speakerId),
 
+  'speakers:delete': ({ id }) => {
+    deleteSpeaker(id)
+  },
+
   'recording:start': ({ title, kinds, sampleRate }) =>
     startRecording({ title, kinds, sampleRate }),
 
@@ -262,6 +275,20 @@ const handlers: Handlers = {
   'recording:stop': () => stopRecording(),
 
   'recording:cancel': () => cancelRecording(),
+
+  'recording:openMiniControls': () => {
+    openMiniRecorderWindow()
+  },
+
+  'recording:status': () => getRecordingStatus(),
+
+  'recording:elapsed': ({ elapsedMs }) => {
+    emit('recording:elapsedTick', { elapsedMs })
+  },
+
+  'recording:resizeMiniControls': ({ expanded }) => {
+    resizeMiniRecorderWindow(expanded)
+  },
 
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)
@@ -279,7 +306,8 @@ function currentSettings(): TranscriptionSettings {
     echoCancellation: getEchoCancellation(),
     micSoloSpeaker: getMicSoloSpeaker(),
     micDeviceId: getMicDeviceId(),
-    captureSystemAudio: getCaptureSystemAudio()
+    captureSystemAudio: getCaptureSystemAudio(),
+    autoPopOutOnMinimize: getAutoPopOutOnMinimize()
   }
 }
 

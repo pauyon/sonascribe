@@ -14,6 +14,11 @@ import JobProgress from '../components/JobProgress'
 import SpeakerBar from '../components/SpeakerBar'
 import Select from '../components/Select'
 
+type PendingAction =
+  | { kind: 'line'; id: string; label: string }
+  | { kind: 'speaker'; id: string; label: string; lineIds: string[] }
+  | { kind: 'merge'; id: string; label: string; lineIds: string[]; intoId: string }
+
 export default function Editor(): React.JSX.Element {
   const { id = '' } = useParams<{ id: string }>()
   const { data, error, loading, refetch } = useQuery('recordings:get', { id })
@@ -40,13 +45,29 @@ export default function Editor(): React.JSX.Element {
   const [peaks, setPeaks] = useState<number[] | null>(null)
 
   /**
-   * Lines hidden immediately on delete, before the delete is actually
-   * committed. The real IPC call is deferred behind `deleteTimers` so a
-   * misclick — background noise turning out to be a word after all — has a
-   * few seconds to be undone before it is unrecoverable.
+   * Whether the in-flow player card has scrolled above the top of the window.
+   *
+   * The player sits at the top of the page, so — unlike a sticky-top bar,
+   * which only has to catch itself before leaving through the same edge it's
+   * pinned to — there is no scroll edge it naturally approaches on the way to
+   * the bottom. A floating bottom copy is swapped in via this flag instead,
+   * once the real one has scrolled out of view above the fold.
+   */
+  const [playerFloating, setPlayerFloating] = useState(false)
+  const playerSentinelRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * Lines (and speakers, with their lines) hidden immediately on delete,
+   * before the delete is actually committed. The real IPC call is deferred
+   * behind `deleteTimers` so a misclick — background noise turning out to be
+   * a word after all — has a few seconds to be undone before it is
+   * unrecoverable.
    */
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; text: string } | null>(null)
+  const [hiddenSpeakerIds, setHiddenSpeakerIds] = useState<Set<string>>(new Set())
+  /** Lines shown under a different speaker while a merge is pending undo. */
+  const [pendingReassign, setPendingReassign] = useState<Map<string, string>>(new Map())
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   // Deliberately never cleared on unmount: a delete the user didn't undo
   // should still land even if they navigate away before the timer fires,
   // rather than silently reverting.
@@ -67,6 +88,21 @@ export default function Editor(): React.JSX.Element {
     : null
 
   const audio = useAudio(playbackSrc)
+
+  useEffect(() => {
+    const sentinel = playerSentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // Not intersecting *and above* the viewport — as opposed to not yet
+        // scrolled to — is what "scrolled past" means here.
+        setPlayerFloating(!entry.isIntersecting && entry.boundingClientRect.top < 0)
+      },
+      { threshold: 0 }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [playbackSrc])
 
   useEvent('recording:updated', (updated) => {
     if (updated.id !== id) return
@@ -152,6 +188,11 @@ export default function Editor(): React.JSX.Element {
   }
 
   const { speakers, utterances } = data
+  // A plain string, unlike `recording` itself: TS doesn't carry the `!recording`
+  // early-return's narrowing into the function declarations below (they're
+  // hoisted, so in principle callable before that guard runs), and this
+  // sidesteps needing every one of them to re-check it.
+  const recordingId = recording.id
 
   async function commitTitle(): Promise<void> {
     const next = draftTitle?.trim()
@@ -178,11 +219,11 @@ export default function Editor(): React.JSX.Element {
     if (!target) return
 
     setHiddenIds((prev) => new Set(prev).add(utteranceId))
-    setPendingDelete({ id: utteranceId, text: target.text })
+    setPendingAction({ kind: 'line', id: utteranceId, label: 'Line deleted.' })
 
     const timer = setTimeout(() => {
       deleteTimers.current.delete(utteranceId)
-      setPendingDelete((current) => (current?.id === utteranceId ? null : current))
+      setPendingAction((current) => (current?.id === utteranceId ? null : current))
       api.invoke('utterances:delete', { id: utteranceId }).catch((err: unknown) => {
         setActionError(err instanceof Error ? err.message : String(err))
         setHiddenIds((prev) => {
@@ -195,16 +236,129 @@ export default function Editor(): React.JSX.Element {
     deleteTimers.current.set(utteranceId, timer)
   }
 
-  function undoDelete(utteranceId: string): void {
-    const timer = deleteTimers.current.get(utteranceId)
-    if (timer) clearTimeout(timer)
-    deleteTimers.current.delete(utteranceId)
+  /** Removes a speaker and every line attributed to them, undo included. */
+  function deleteSpeakerBulk(speakerId: string): void {
+    const target = speakers.find((s) => s.id === speakerId)
+    if (!target) return
+    const lineIds = utterances.filter((u) => u.speakerId === speakerId).map((u) => u.id)
+
     setHiddenIds((prev) => {
       const next = new Set(prev)
-      next.delete(utteranceId)
+      for (const id of lineIds) next.add(id)
       return next
     })
-    setPendingDelete((current) => (current?.id === utteranceId ? null : current))
+    setHiddenSpeakerIds((prev) => new Set(prev).add(speakerId))
+    setPendingAction({
+      kind: 'speaker',
+      id: speakerId,
+      lineIds,
+      label: `${target.displayName} deleted (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
+    })
+
+    const timer = setTimeout(() => {
+      deleteTimers.current.delete(speakerId)
+      setPendingAction((current) => (current?.id === speakerId ? null : current))
+      api.invoke('speakers:delete', { id: speakerId }).catch((err: unknown) => {
+        setActionError(err instanceof Error ? err.message : String(err))
+        setHiddenSpeakerIds((prev) => {
+          const next = new Set(prev)
+          next.delete(speakerId)
+          return next
+        })
+        setHiddenIds((prev) => {
+          const next = new Set(prev)
+          for (const id of lineIds) next.delete(id)
+          return next
+        })
+      })
+    }, UNDO_WINDOW_MS)
+    deleteTimers.current.set(speakerId, timer)
+  }
+
+  /** Folds one speaker into another, undoable for the same window as a delete. */
+  function mergeSpeakersUndoable(fromId: string, intoId: string): void {
+    const fromSpeaker = speakers.find((s) => s.id === fromId)
+    const intoSpeaker = speakers.find((s) => s.id === intoId)
+    if (!fromSpeaker || !intoSpeaker) return
+    const lineIds = utterances.filter((u) => u.speakerId === fromId).map((u) => u.id)
+
+    // Optimistic: the source chip disappears and its lines show under the
+    // target immediately, the same as the real merge would leave them —
+    // reverting either half on undo is what makes the undo convincing.
+    setHiddenSpeakerIds((prev) => new Set(prev).add(fromId))
+    setPendingReassign((prev) => {
+      const next = new Map(prev)
+      for (const lineId of lineIds) next.set(lineId, intoId)
+      return next
+    })
+    setPendingAction({
+      kind: 'merge',
+      id: fromId,
+      intoId,
+      lineIds,
+      label: `${fromSpeaker.displayName} merged into ${intoSpeaker.displayName} (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
+    })
+
+    const timer = setTimeout(() => {
+      deleteTimers.current.delete(fromId)
+      setPendingAction((current) => (current?.id === fromId ? null : current))
+      api
+        .invoke('speakers:merge', { recordingId, fromId, intoId })
+        .then(() => refetch())
+        .catch((err: unknown) => {
+          setActionError(err instanceof Error ? err.message : String(err))
+          setHiddenSpeakerIds((prev) => {
+            const next = new Set(prev)
+            next.delete(fromId)
+            return next
+          })
+          setPendingReassign((prev) => {
+            const next = new Map(prev)
+            for (const lineId of lineIds) next.delete(lineId)
+            return next
+          })
+        })
+    }, UNDO_WINDOW_MS)
+    deleteTimers.current.set(fromId, timer)
+  }
+
+  function undoPendingAction(): void {
+    const pending = pendingAction
+    if (!pending) return
+    const timer = deleteTimers.current.get(pending.id)
+    if (timer) clearTimeout(timer)
+    deleteTimers.current.delete(pending.id)
+
+    if (pending.kind === 'line') {
+      setHiddenIds((prev) => {
+        const next = new Set(prev)
+        next.delete(pending.id)
+        return next
+      })
+    } else if (pending.kind === 'speaker') {
+      setHiddenSpeakerIds((prev) => {
+        const next = new Set(prev)
+        next.delete(pending.id)
+        return next
+      })
+      setHiddenIds((prev) => {
+        const next = new Set(prev)
+        for (const id of pending.lineIds) next.delete(id)
+        return next
+      })
+    } else {
+      setHiddenSpeakerIds((prev) => {
+        const next = new Set(prev)
+        next.delete(pending.id)
+        return next
+      })
+      setPendingReassign((prev) => {
+        const next = new Map(prev)
+        for (const lineId of pending.lineIds) next.delete(lineId)
+        return next
+      })
+    }
+    setPendingAction(null)
   }
 
   async function exportAs(format: ExportFormat): Promise<void> {
@@ -222,11 +376,18 @@ export default function Editor(): React.JSX.Element {
     }
   }
 
-  // Guards against a filter left pointing at a speaker that a merge just
-  // folded away — the chip it came from is gone, so the filter should clear
-  // rather than silently hide the whole transcript.
-  const activeFilter = speakers.some((s) => s.id === speakerFilter) ? speakerFilter : null
-  const visibleUtterances = utterances.filter((u) => !hiddenIds.has(u.id))
+  const visibleSpeakers = speakers.filter((s) => !hiddenSpeakerIds.has(s.id))
+
+  // Guards against a filter left pointing at a speaker that a merge — or a
+  // pending delete — just removed. The chip it came from is gone, so the
+  // filter should clear rather than silently hide the whole transcript.
+  const activeFilter = visibleSpeakers.some((s) => s.id === speakerFilter) ? speakerFilter : null
+  const visibleUtterances = utterances
+    .filter((u) => !hiddenIds.has(u.id))
+    .map((u) => {
+      const reassignedTo = pendingReassign.get(u.id)
+      return reassignedTo ? { ...u, speakerId: reassignedTo } : u
+    })
 
   const showHours = (recording.durationMs ?? 0) >= 3_600_000
   // 'queued' is excluded on purpose — see jobActive above.
@@ -240,7 +401,7 @@ export default function Editor(): React.JSX.Element {
   const hasTranscript = utterances.length > 0
 
   return (
-    <div className="page">
+    <div className={playbackSrc ? 'page page--has-player' : 'page'}>
       <header className="page__header">
         <div>
           <Link className="page__back" to="/library">
@@ -351,7 +512,17 @@ export default function Editor(): React.JSX.Element {
       {playbackSrc && (
         <>
           <audio ref={audio.ref} src={playbackSrc} preload="metadata" {...audio.bind} />
-          <PlayerBar audio={audio} peaks={peaks} durationMs={recording.durationMs ?? 0} />
+          <div ref={playerSentinelRef}>
+            <PlayerBar audio={audio} peaks={peaks} durationMs={recording.durationMs ?? 0} />
+          </div>
+          {playerFloating && (
+            <PlayerBar
+              audio={audio}
+              peaks={peaks}
+              durationMs={recording.durationMs ?? 0}
+              floating
+            />
+          )}
         </>
       )}
 
@@ -359,7 +530,7 @@ export default function Editor(): React.JSX.Element {
 
       {hasTranscript && (
         <SpeakerBar
-          speakers={speakers}
+          speakers={visibleSpeakers}
           utterances={visibleUtterances}
           filter={activeFilter}
           onFilterChange={setSpeakerFilter}
@@ -367,11 +538,8 @@ export default function Editor(): React.JSX.Element {
             await api.invoke('speakers:rename', { id: speakerId, displayName })
             refetch()
           }}
-          onMerge={async (fromId, intoId) => {
-            await run(() =>
-              api.invoke('speakers:merge', { recordingId: recording.id, fromId, intoId })
-            )
-          }}
+          onMerge={mergeSpeakersUndoable}
+          onDelete={deleteSpeakerBulk}
         />
       )}
 
@@ -402,10 +570,10 @@ export default function Editor(): React.JSX.Element {
         </div>
       )}
 
-      {pendingDelete && (
+      {pendingAction && (
         <div className="toast">
-          <span>Line deleted.</span>
-          <button className="toast__action" onClick={() => undoDelete(pendingDelete.id)}>
+          <span>{pendingAction.label}</span>
+          <button className="toast__action" onClick={undoPendingAction}>
             Undo
           </button>
         </div>
@@ -414,7 +582,7 @@ export default function Editor(): React.JSX.Element {
       {hasTranscript ? (
         <Transcript
           utterances={visibleUtterances}
-          speakers={speakers}
+          speakers={visibleSpeakers}
           currentMs={audio.currentMs}
           showHours={showHours}
           query={query}

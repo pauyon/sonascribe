@@ -215,6 +215,13 @@ body {
   max-width: 1000px;
 }
 
+/* Room for the floating player at the bottom of the window, so the last few
+   transcript lines don't end up permanently hidden behind it once scrolled
+   all the way down. */
+.page--has-player {
+  padding-bottom: 130px;
+}
+
 .page__header {
   display: flex;
   align-items: flex-start;
@@ -332,6 +339,18 @@ body {
   background: transparent;
   border-color: transparent;
   color: var(--text-muted);
+}
+
+.btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-fg);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, black);
+  border-color: color-mix(in srgb, var(--danger) 85%, black);
+  color: var(--accent-fg);
 }
 
 .btn--ghost:hover:not(:disabled) {
@@ -568,6 +587,7 @@ body {
 .progress__bar {
   height: 100%;
   background: var(--accent);
+  border-radius: var(--r-pill);
   transition: width 0.18s linear;
 }
 
@@ -604,13 +624,23 @@ body {
   border-radius: var(--r-md);
   padding: 12px 16px;
   margin-bottom: 24px;
-  /* Floats at the top of the scroll area once the transcript scrolls the
-     player past it, so playback controls stay reachable in a long recording
-     instead of requiring a scroll back to the top. */
-  position: sticky;
-  top: 0;
-  z-index: 5;
   box-shadow: var(--shadow);
+}
+
+/* Floats above the bottom of the window at all times, not just once scrolled
+   past — a sticky top edge works because the player starts right at the top
+   of the page and only needs to catch itself before scrolling out; nothing
+   in the document is ever below the fold in the same way, so pinning it to
+   the bottom needs position: fixed rather than position: sticky. Left is
+   offset past the sidebar and the horizontal margins mirror .page's own
+   padding, so it lines up with the transcript column above it. */
+.player--floating {
+  position: fixed;
+  left: 220px;
+  right: 0;
+  bottom: 20px;
+  margin: 0 32px;
+  z-index: 15;
 }
 
 .player__play {
@@ -640,6 +670,28 @@ body {
 .player__scrub {
   flex: 1;
   accent-color: var(--accent);
+}
+
+/* Cycles 1× -> 1.5× -> 2× on click, the same "tap to advance" idiom podcast
+   players use — three states don't earn a dropdown's overhead. */
+.player__rate {
+  flex-shrink: 0;
+  min-width: 38px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.player__rate:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .player__error {
@@ -1033,10 +1085,45 @@ body {
   color: var(--accent-fg);
 }
 
+/* The ⋯ menu (Merge into… / Delete speaker), anchored to the chip's corner —
+   same pattern as the recording card's own ⋯ menu. Delete lives here instead
+   of as a standalone icon: a bare trash glyph at 12px read as noise more than
+   as a button, and burying it one click deep behind a labelled menu item
+   fixes both that and the risk of clipping it by habit. */
+.chip__menu {
+  position: relative;
+}
+
+.chip__menu .menu {
+  top: 24px;
+}
+
 .speakers__hint {
   margin: 10px 0 0;
   font-size: var(--fs-caption);
   color: var(--text-muted);
+}
+
+/* The confirm step before a merge or a speaker delete commits — both move or
+   remove a whole speaker's lines at once, so they get a deliberate second
+   click rather than the hover-and-undo flow a single line gets. */
+.speakers__confirm {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--r-md);
+}
+
+.speakers__confirm p {
+  margin: 0 0 10px;
+  font-size: var(--fs-small);
+  line-height: 1.5;
+}
+
+.speakers__confirm-actions {
+  display: flex;
+  gap: 8px;
 }
 
 
@@ -1330,6 +1417,137 @@ body {
 .live__kind--system {
   color: var(--ok-text);
   border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+/* ---------- mini controls window ---------- */
+
+/* The whole frameless window is this one column — no sidebar, no page
+   padding, just enough chrome to be draggable and closable. */
+.mini {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 10px 14px 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mini__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  margin: -10px -14px 8px;
+  padding: 0 10px 0 14px;
+  /* The window has no OS title bar (frame: false), so this row is what makes
+     it draggable — the same role .sidebar__drag plays for the main window. */
+  -webkit-app-region: drag;
+}
+
+.mini__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  animation: mini-pulse 1.6s ease-in-out infinite;
+}
+
+.mini__dot--paused {
+  background: var(--text-muted);
+  animation: none;
+}
+
+@keyframes mini-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.mini__status {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  flex: 1;
+}
+
+.mini__close {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  -webkit-app-region: no-drag;
+}
+
+.mini__close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.mini__empty {
+  margin: 8px 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.mini__time {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  margin: 4px 0 10px;
+}
+
+.mini__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Pause/Stop and Discard/Transcript sit as two separate rows, not four
+   buttons crammed into one 300px-wide row. */
+.mini__controls + .mini__controls {
+  margin-top: 8px;
+}
+
+.mini__controls .btn {
+  flex: 1;
+}
+
+.mini__disclosure {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  padding: 6px 4px;
+  white-space: nowrap;
+}
+
+.mini__disclosure:hover {
+  color: var(--text);
+}
+
+.mini__transcript {
+  margin-top: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.mini__transcript .live {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.mini__transcript .live__body {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Setup-time monitoring: meters and readiness before anything is recorded. */
@@ -2066,9 +2284,8 @@ select {
   background: var(--bg-hover);
 }
 
-.cards__job {
-  margin-top: -8px;
-  padding: 0 20px 12px;
+.rec__job {
+  margin-top: 14px;
 }
 
 /* The three-dot menu, anchored to the card's corner. */
@@ -2124,8 +2341,16 @@ select {
   background: var(--bg-hover);
 }
 
-.menu__danger {
+/* `.menu button` (class+element) outranks a bare `.menu__danger` (class
+   alone) on specificity regardless of source order, which was silently
+   winning back var(--text) here. Matched against the button element too so
+   this actually beats it. */
+.menu button.menu__danger {
   color: var(--danger-text);
+}
+
+.menu button.menu__danger:hover {
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg-hover));
 }
 
 /* A toggle inside a settings row was being flattened by `.settings-row label`,

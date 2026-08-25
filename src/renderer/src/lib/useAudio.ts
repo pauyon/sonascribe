@@ -8,6 +8,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * worse arrangement than one hook the parent holds.
  */
 
+/** Speeds offered on the player — the common set most players expose. */
+export const PLAYBACK_RATES = [1, 1.5, 2] as const
+export type PlaybackRate = (typeof PLAYBACK_RATES)[number]
+
 export interface AudioController {
   /** Attach to an <audio> element rendered by the caller. */
   ref: React.RefObject<HTMLAudioElement | null>
@@ -16,6 +20,8 @@ export interface AudioController {
   /** From the media element itself; null until metadata loads. */
   durationMs: number | null
   error: string | null
+  rate: PlaybackRate
+  setRate: (rate: PlaybackRate) => void
   toggle: () => void
   seek: (ms: number) => void
   /** Bind to the <audio> element to keep this hook's state in sync. */
@@ -35,15 +41,29 @@ export function useAudio(src: string | null): AudioController {
   const [currentMs, setCurrentMs] = useState(0)
   const [durationMs, setDurationMs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [rate, setRateState] = useState<PlaybackRate>(1)
 
   // Reset when switching recordings, or the previous position and duration
-  // briefly show against the new file.
+  // briefly show against the new file. Speed is left alone — it reads as a
+  // listening preference, not something tied to one recording.
   useEffect(() => {
     setPlaying(false)
     setCurrentMs(0)
     setDurationMs(null)
     setError(null)
   }, [src])
+
+  // The element's own playbackRate is the source of truth; this just keeps a
+  // freshly (re)mounted <audio> — a new src swaps the element's state, not
+  // the element itself, but this stays correct either way — in step with it.
+  useEffect(() => {
+    const el = ref.current
+    if (el) el.playbackRate = rate
+  }, [rate, src])
+
+  const setRate = useCallback((next: PlaybackRate) => {
+    setRateState(next)
+  }, [])
 
   const toggle = useCallback(() => {
     const el = ref.current
@@ -72,6 +92,8 @@ export function useAudio(src: string | null): AudioController {
     currentMs,
     durationMs,
     error,
+    rate,
+    setRate,
     toggle,
     seek,
     bind: {

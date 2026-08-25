@@ -10,6 +10,10 @@ import { repairMediaPaths, resetInterruptedJobs } from './db/repair-paths'
 import { cancelAllJobs } from './services/jobs'
 import { sweepOrphanedChunks } from './services/audio-chunks'
 import { sweepOrphanedMedia } from './services/media-cleanup'
+import { isRecording } from './services/recorder'
+import { getAutoPopOutOnMinimize } from './db/settings'
+import { closeMiniRecorderWindow, openMiniRecorderWindow } from './windows/mini-recorder'
+import { setMainWindow } from './windows/main-window'
 
 // Must run at module load: registerSchemesAsPrivileged is only honoured before
 // the app 'ready' event fires.
@@ -49,11 +53,24 @@ function createWindow(): void {
     }
   })
 
+  setMainWindow(mainWindow)
+
   // Avoid the white flash before React paints.
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    setMainWindow(null)
+    // A satellite of the main window — it must not be able to keep the app
+    // alive on its own once that window is gone.
+    closeMiniRecorderWindow()
+  })
+
+  // Opt-in convenience: only while a recording is actually running, and only
+  // for users who have asked for it — see getAutoPopOutOnMinimize's own doc
+  // for why this defaults off.
+  mainWindow.on('minimize', () => {
+    if (isRecording() && getAutoPopOutOnMinimize()) openMiniRecorderWindow()
   })
 
   // Any target="_blank" or external link opens in the user's browser, never in

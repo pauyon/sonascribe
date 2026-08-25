@@ -145,3 +145,24 @@ export function reassignUtterance(utteranceId: string, speakerId: string | null)
 export function deleteSpeakers(recordingId: string): void {
   getDb().prepare('DELETE FROM speakers WHERE recording_id = ?').run(recordingId)
 }
+
+/**
+ * Removes one speaker and every line attributed to them.
+ *
+ * For a cluster that turns out to be entirely background noise or a
+ * diarization artifact rather than a real person — reassigning individual
+ * lines covers a misattribution, this covers "this was never a speaker".
+ */
+export function deleteSpeaker(id: string): void {
+  const db = getDb()
+  db.exec('BEGIN')
+  try {
+    db.prepare('DELETE FROM utterances WHERE speaker_id = ?').run(id)
+    const result = db.prepare('DELETE FROM speakers WHERE id = ?').run(id)
+    if (result.changes === 0) throw new Error('That speaker no longer exists')
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}

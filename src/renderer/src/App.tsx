@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useEvent, useQuery } from './lib/api'
 import { formatDuration } from './lib/format'
 import Library from './routes/Library'
 import Record from './routes/Record'
 import Editor from './routes/Editor'
 import Models from './routes/Models'
+import MiniRecorder from './routes/MiniRecorder'
 
 /**
  * Nav icons, inline rather than from an icon package.
@@ -107,6 +108,7 @@ function currentTheme(): 'light' | 'dark' {
 export default function App(): React.JSX.Element {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { data: info } = useQuery('app:info')
+  const location = useLocation()
 
   const toggleTheme = useCallback(() => {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -121,6 +123,14 @@ export default function App(): React.JSX.Element {
     }
     setTheme(next)
   }, [theme])
+
+  // The mini controls window loads this same bundle at a different hash
+  // route and has no sidebar of its own — it's a bare, frameless utility
+  // window, not a second copy of the app shell. Below every hook, so this
+  // stays clean under the rules-of-hooks check regardless of route.
+  if (location.pathname === '/mini-recorder') {
+    return <MiniRecorder />
+  }
 
   return (
 

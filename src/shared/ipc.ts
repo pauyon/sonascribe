@@ -196,6 +196,17 @@ export interface ApiSchema {
     request: { utteranceId: string; speakerId: string | null }
     response: void
   }
+  /**
+   * Removes a speaker and every line attributed to them.
+   *
+   * For a cluster that turns out to be entirely background noise or a
+   * diarization artifact, rather than a real person worth keeping and just
+   * misattributed — reassigning covers that case instead.
+   */
+  'speakers:delete': {
+    request: { id: string }
+    response: void
+  }
 
   /**
    * Opens WAV writers and returns the new recording row.
@@ -234,6 +245,40 @@ export interface ApiSchema {
   /** Discards an in-progress recording and everything captured so far. */
   'recording:cancel': {
     request: void
+    response: void
+  }
+
+  /**
+   * Opens the mini controls window for the in-progress recording, or focuses
+   * it if it is already open. A small always-on-top window with pause/resume
+   * and the live transcript, so those stay reachable with the main window
+   * minimized.
+   */
+  'recording:openMiniControls': {
+    request: void
+    response: void
+  }
+  /**
+   * Current recording session, for the mini window to show the right state
+   * the moment it opens rather than waiting for the next broadcast — the
+   * same reason `transcribe:active` exists for Editor.tsx.
+   */
+  'recording:status': {
+    request: void
+    response: { recordingId: string; paused: boolean } | null
+  }
+  /**
+   * Relays the elapsed time Record.tsx already tracks (it alone accounts for
+   * paused spans) out to every window via `recording:elapsedTick`, so the
+   * mini window doesn't need its own copy of that bookkeeping.
+   */
+  'recording:elapsed': {
+    request: { elapsedMs: number }
+    response: void
+  }
+  /** Resizes the mini window between its collapsed and expanded presets. */
+  'recording:resizeMiniControls': {
+    request: { expanded: boolean }
     response: void
   }
 
@@ -287,6 +332,12 @@ export interface TranscriptionSettings {
   micDeviceId: string | null
   /** Last-used choice for whether to also capture system audio. */
   captureSystemAudio: boolean
+  /**
+   * Open the mini controls window automatically when the main window is
+   * minimized during a recording, rather than requiring "Pop out controls"
+   * to be clicked first.
+   */
+  autoPopOutOnMinimize: boolean
 }
 
 /** Payloads pushed from main to renderer. */
@@ -308,6 +359,36 @@ export interface EventSchema {
    * whole transcript through the bridge over and over. The renderer appends.
    */
   'live:transcript': LiveTranscriptChunk
+  /**
+   * Pause state changed, from whichever window (main or mini controls)
+   * toggled it. Both treat `paused` as derived from this rather than
+   * setting it locally, so either window's button stays correct no matter
+   * which one was clicked.
+   */
+  'recording:pauseChanged': { paused: boolean }
+  /** Relayed elapsed time, from Record.tsx's `recording:elapsed` calls. */
+  'recording:elapsedTick': { elapsedMs: number }
+  /**
+   * A stop has begun and the session is gone in main, ahead of the (possibly
+   * several-second) normalize/mixdown work `recording:stopped` waits for.
+   * Every window still forwarding audio blocks needs to stop immediately —
+   * writing to a session that's already gone otherwise fails silently, over
+   * and over, for however long that work takes.
+   */
+  'recording:sessionEnded': { recordingId: string }
+  /**
+   * A recording finished successfully (or failed for lack of any audio) and
+   * is fully processed — the same result `recording:stop` resolves with,
+   * broadcast so whichever window didn't initiate the stop can react too.
+   */
+  'recording:stopped': {
+    recordingId: string
+    durationMs: number
+    tracks: Array<{ kind: TrackKind; durationMs: number }>
+    silentTracks: TrackKind[]
+  }
+  /** A recording was discarded — mirrors `recording:stopped` for the cancel path. */
+  'recording:discarded': { recordingId: string }
 }
 
 
@@ -347,11 +428,16 @@ export const CHANNELS = [
   'speakers:rename',
   'speakers:merge',
   'speakers:reassign',
+  'speakers:delete',
   'recording:start',
   'recording:chunk',
   'recording:pause',
   'recording:stop',
   'recording:cancel',
+  'recording:openMiniControls',
+  'recording:status',
+  'recording:elapsed',
+  'recording:resizeMiniControls',
   'shell:showItemInFolder'
 ] as const satisfies readonly Channel[]
 
@@ -360,7 +446,12 @@ export const EVENTS = [
   'import:progress',
   'job:progress',
   'model:progress',
-  'live:transcript'
+  'live:transcript',
+  'recording:pauseChanged',
+  'recording:elapsedTick',
+  'recording:sessionEnded',
+  'recording:stopped',
+  'recording:discarded'
 ] as const satisfies readonly EventName[]
 
 /**

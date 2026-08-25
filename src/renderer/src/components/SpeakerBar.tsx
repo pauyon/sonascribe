@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Speaker, Utterance } from '@shared/types'
 
 /**
@@ -15,7 +15,8 @@ export default function SpeakerBar({
   filter,
   onFilterChange,
   onRename,
-  onMerge
+  onMerge,
+  onDelete
 }: {
   speakers: Speaker[]
   utterances: Utterance[]
@@ -23,11 +24,31 @@ export default function SpeakerBar({
   filter: string | null
   onFilterChange: (id: string | null) => void
   onRename: (id: string, name: string) => Promise<void>
-  onMerge: (fromId: string, intoId: string) => Promise<void>
+  /** Folds one speaker into another, once the confirm step below is accepted. */
+  onMerge: (fromId: string, intoId: string) => void
+  /** Removes a speaker and every line attributed to them. */
+  onDelete: (speakerId: string) => void
 }): React.JSX.Element | null {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [mergeFrom, setMergeFrom] = useState<string | null>(null)
+  /** Target picked for `mergeFrom`, awaiting the confirm/cancel step below. */
+  const [mergeTarget, setMergeTarget] = useState<string | null>(null)
+  /** Speaker armed for deletion, awaiting the confirm/cancel step below. */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  /** Chip whose ⋯ menu (Merge into… / Delete speaker) is open. */
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // A menu that cannot be dismissed by clicking away is a trap.
+  useEffect(() => {
+    if (!menuOpenId) return
+    const close = (e: MouseEvent): void => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpenId(null)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [menuOpenId])
 
   if (speakers.length === 0) return null
 
@@ -45,6 +66,9 @@ export default function SpeakerBar({
   }
 
   const from = mergeFrom ? speakers.find((s) => s.id === mergeFrom) : null
+  const into = mergeTarget ? speakers.find((s) => s.id === mergeTarget) : null
+  const deleting = confirmDeleteId ? speakers.find((s) => s.id === confirmDeleteId) : null
+  const deletingCount = deleting ? (counts.get(deleting.id) ?? 0) : 0
 
   return (
     <div className="speakers">
@@ -108,43 +132,141 @@ export default function SpeakerBar({
 
               <span className="chip__count">{count}</span>
 
-              {mergeFrom === null ? (
-                speakers.length > 1 && (
-                  <button
-                    className="chip__action"
-                    onClick={() => setMergeFrom(speaker.id)}
-                    title="Merge this speaker into another"
+              {/* Hidden once a merge target is picked — the confirm/cancel
+                  step below takes over and a chip click here would just be
+                  confusing mid-decision. */}
+              {mergeTarget === null &&
+                (mergeFrom === null ? (
+                  <div
+                    className="chip__menu"
+                    ref={menuOpenId === speaker.id ? menuRef : undefined}
                   >
-                    ⋯
+                    <button
+                      type="button"
+                      className="chip__action"
+                      onClick={() =>
+                        setMenuOpenId(menuOpenId === speaker.id ? null : speaker.id)
+                      }
+                      title="More actions"
+                      aria-label={`More actions for ${speaker.displayName}`}
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpenId === speaker.id}
+                    >
+                      ⋯
+                    </button>
+                    {menuOpenId === speaker.id && (
+                      <div className="menu" role="menu">
+                        {speakers.length > 1 && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setMenuOpenId(null)
+                              setMergeFrom(speaker.id)
+                            }}
+                          >
+                            Merge into…
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="menu__danger"
+                          onClick={() => {
+                            setMenuOpenId(null)
+                            setConfirmDeleteId(speaker.id)
+                          }}
+                        >
+                          Delete speaker
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : isMergeSource ? (
+                  <button className="chip__action" onClick={() => setMergeFrom(null)}>
+                    ✕
                   </button>
-                )
-              ) : isMergeSource ? (
-                <button className="chip__action" onClick={() => setMergeFrom(null)}>
-                  ✕
-                </button>
-              ) : (
-                <button
-                  className="chip__action chip__action--target"
-                  onClick={() => {
-                    const source = mergeFrom
-                    setMergeFrom(null)
-                    if (source) void onMerge(source, speaker.id)
-                  }}
-                  title={`Merge ${from?.displayName} into ${speaker.displayName}`}
-                >
-                  ←
-                </button>
-              )}
+                ) : (
+                  <button
+                    className="chip__action chip__action--target"
+                    // Arms the confirm step below rather than merging right away —
+                    // this is the one editing action here that reassigns a whole
+                    // speaker's lines at once, so it earns a second click.
+                    onClick={() => setMergeTarget(speaker.id)}
+                    title={`Merge ${from?.displayName} into ${speaker.displayName}`}
+                  >
+                    ←
+                  </button>
+                ))}
             </div>
           )
         })}
       </div>
 
-      {from && (
+      {from && !into && (
         <p className="speakers__hint">
           Merging <strong style={{ color: from.color }}>{from.displayName}</strong> — pick
           the speaker to merge into, or press ✕ to cancel.
         </p>
+      )}
+
+      {from && into && (
+        <div className="speakers__confirm">
+          <p>
+            Merge <strong style={{ color: from.color }}>{from.displayName}</strong>{' '}
+            ({counts.get(from.id) ?? 0} line{(counts.get(from.id) ?? 0) === 1 ? '' : 's'}) into{' '}
+            <strong style={{ color: into.color }}>{into.displayName}</strong>? This can still
+            be undone for a few seconds after confirming.
+          </p>
+          <div className="speakers__confirm-actions">
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={() => {
+                const source = mergeFrom
+                const target = mergeTarget
+                setMergeFrom(null)
+                setMergeTarget(null)
+                if (source && target) void onMerge(source, target)
+              }}
+            >
+              Merge
+            </button>
+            <button type="button" className="btn btn--ghost" onClick={() => setMergeTarget(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {deleting && (
+        <div className="speakers__confirm">
+          <p>
+            Delete <strong style={{ color: deleting.color }}>{deleting.displayName}</strong> and{' '}
+            {deletingCount} line{deletingCount === 1 ? '' : 's'}? This can still be undone for
+            a few seconds after confirming.
+          </p>
+          <div className="speakers__confirm-actions">
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={() => {
+                const id = confirmDeleteId
+                setConfirmDeleteId(null)
+                if (id) onDelete(id)
+              }}
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => setConfirmDeleteId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -27,7 +27,8 @@ export default function RecordingCard({
   onOpen,
   onRename,
   onDelete,
-  onRetry
+  onRetry,
+  job
 }: {
   recording: RecordingSummary
   /** Which card currently holds playback, or null when none does. */
@@ -37,6 +38,8 @@ export default function RecordingCard({
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => void
   onRetry: (id: string) => void
+  /** In-flight import or transcription progress for this recording, if any. */
+  job?: { label: string; fraction: number | null } | null
 }): React.JSX.Element {
   // useAudio owns the state; the element's source is the caller's job.
   const mediaSrc = recording.sourcePath ? sourceMediaUrl(recording.id) : null
@@ -271,6 +274,26 @@ export default function RecordingCard({
             one of them just to render the list. */}
         <audio ref={audio.ref} src={mediaSrc ?? undefined} preload="none" {...audio.bind} />
       </div>
+
+      {/* Inside the card's own box rather than a sibling underneath it — a
+          separate element here used to sit half off the card, straddling its
+          rounded bottom edge instead of reading as part of it. */}
+      {job && (
+        <div className="rec__job">
+          <div className="progress" title={job.label}>
+            <div
+              className={
+                job.fraction == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
+              }
+              style={job.fraction == null ? undefined : { width: `${Math.round(job.fraction * 100)}%` }}
+            />
+            <span className="progress__label">
+              {job.label}
+              {job.fraction != null && ` ${Math.round(job.fraction * 100)}%`}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

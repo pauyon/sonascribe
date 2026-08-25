@@ -10,6 +10,7 @@ import {
 } from '../db/tracks'
 import { recordingMediaPath, recordingMixPath } from '../paths'
 import { emit } from '../ipc/events'
+import { focusMainWindow } from '../windows/main-window'
 import { WavWriter } from './wav-writer'
 import { mixToWav, normalizeToWav } from './ffmpeg'
 import { measurePeak, SILENCE_PEAK_THRESHOLD } from './peaks'
@@ -128,6 +129,12 @@ export function writeChunk(kind: TrackKind, samples: Buffer): void {
 export function setPaused(paused: boolean): void {
   if (!session) throw new RecordingError('No recording in progress')
   session.paused = paused
+  emit('recording:pauseChanged', { paused })
+}
+
+/** Current session, for a freshly opened mini controls window to bootstrap from. */
+export function getRecordingStatus(): { recordingId: string; paused: boolean } | null {
+  return session ? { recordingId: session.recordingId, paused: session.paused } : null
 }
 
 export interface RecordingSummary {
@@ -143,6 +150,11 @@ export async function stopRecording(): Promise<RecordingSummary> {
   if (!session) throw new RecordingError('No recording in progress')
   const current = session
   session = null
+  // Every window still forwarding audio blocks (the renderer that owns the
+  // capture graph, wherever Stop was actually clicked from) needs to stop
+  // immediately — writing to a session that's already gone otherwise fails
+  // silently, over and over, for however long the work below takes.
+  emit('recording:sessionEnded', { recordingId: current.recordingId })
 
   const tracks: RecordingSummary['tracks'] = []
   const silentTracks: TrackKind[] = []
@@ -197,7 +209,10 @@ export async function stopRecording(): Promise<RecordingSummary> {
 
   if (tracks.length === 0) {
     setRecordingStatus(current.recordingId, 'failed', 'No audio was captured')
-    return { recordingId: current.recordingId, durationMs: 0, tracks: [], silentTracks }
+    const summary = { recordingId: current.recordingId, durationMs: 0, tracks: [], silentTracks }
+    emit('recording:stopped', summary)
+    focusMainWindow()
+    return summary
   }
 
   // One file that holds the whole conversation, for listening and for sharing.
@@ -236,7 +251,10 @@ export async function stopRecording(): Promise<RecordingSummary> {
   }
 
 
-  return { recordingId: current.recordingId, durationMs: longestMs, tracks, silentTracks }
+  const summary = { recordingId: current.recordingId, durationMs: longestMs, tracks, silentTracks }
+  emit('recording:stopped', summary)
+  focusMainWindow()
+  return summary
 }
 
 /** Aborts and deletes everything captured so far, including the row. */
@@ -244,6 +262,9 @@ export async function cancelRecording(): Promise<void> {
   if (!session) return
   const current = session
   session = null
+  // No lengthy work follows for a cancel, unlike stop — one event, right away.
+  emit('recording:discarded', { recordingId: current.recordingId })
+  focusMainWindow()
 
   await discardLiveTranscription(current.recordingId)
 

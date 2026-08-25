@@ -13,7 +13,8 @@ const KEYS = {
   echoCancellation: 'recording.echoCancellation',
   micSoloSpeaker: 'recording.micSoloSpeaker',
   micDeviceId: 'recording.micDeviceId',
-  captureSystemAudio: 'recording.captureSystemAudio'
+  captureSystemAudio: 'recording.captureSystemAudio',
+  autoPopOutOnMinimize: 'recording.autoPopOutOnMinimize'
 } as const
 
 function get(key: string): string | null {
@@ -180,4 +181,18 @@ export function getCaptureSystemAudio(): boolean {
 
 export function setCaptureSystemAudio(enabled: boolean): void {
   set(KEYS.captureSystemAudio, enabled ? 'true' : 'false')
+}
+
+/**
+ * Whether minimizing the main window during a recording should open the mini
+ * controls window on its own, rather than waiting for "Pop out controls" to
+ * be clicked. Off by default — an app deciding to open a new window on its
+ * own is the kind of thing that should be opted into, not sprung on someone.
+ */
+export function getAutoPopOutOnMinimize(): boolean {
+  return get(KEYS.autoPopOutOnMinimize) === 'true'
+}
+
+export function setAutoPopOutOnMinimize(enabled: boolean): void {
+  set(KEYS.autoPopOutOnMinimize, enabled ? 'true' : 'false')
 }
