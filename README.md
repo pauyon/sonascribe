@@ -57,6 +57,21 @@ Each platform must be built **on** that platform, and `npm run sidecars` must
 be run there first — the binaries are native and are not cross-fetched by
 default (`--os mac` can stage them, but signing still requires a Mac).
 
+### CI release
+
+`.github/workflows/release.yml` builds Windows and macOS on a pushed `v*.*.*`
+tag (or manually, via workflow_dispatch against an existing tag) and attaches
+the installers to a **draft** GitHub Release — nothing goes public until it's
+reviewed and published by hand. No Authenticode or Apple notarization
+credentials are wired in yet, so both builds are unsigned: Windows shows a
+SmartScreen warning, and macOS Gatekeeper blocks the app outright, the same
+tradeoff described in the macOS section below. Add `CSC_LINK` /
+`CSC_KEY_PASSWORD` (Windows) or `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` /
+`APPLE_TEAM_ID` (macOS) as repo secrets and wire them into the workflow's env
+when signing is ready — `electron-builder.config.cjs` already switches on
+their presence. Linux isn't in the workflow yet; `npm run dist:linux` would
+slot in the same way if wanted.
+
 Where the ~195 MB Windows installer goes:
 
 | Part | Size |

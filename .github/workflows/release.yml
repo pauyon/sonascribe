@@ -1,0 +1,92 @@
+name: Release
+
+# Tag-triggered so a release corresponds to a deliberate version bump, not
+# every push to master. `workflow_dispatch` is there for re-running a release
+# (e.g. after fixing a build issue) without having to move the tag.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and attach artifacts to (e.g. v0.2.0). Must already exist.'
+        required: true
+
+# Builders run unsigned: no Authenticode certificate or Apple notarization
+# credentials are configured yet. Windows shows a SmartScreen warning on first
+# run; the macOS build is unsigned and untested — see the README's macOS
+# section. electron-builder.config.cjs already degrades to this automatically
+# when the Apple env vars below are absent, which is the same path a local
+# build without credentials takes.
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Downloads ffmpeg + whisper.cpp/parakeet + sherpa-onnx for win-x64 into
+      # resources/bin/win/ — native binaries, not committed, per the README.
+      - run: npm run sidecars
+
+      - run: npm run dist:win
+
+      - name: Attach installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: dist/*.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # whisper.cpp publishes no macOS CLI (see README); Homebrew is the
+      # documented workaround and the sidecar resolver falls back to PATH.
+      # Best-effort: parakeet-cli ships only in the same missing archive and
+      # has no Homebrew formula, so the mac build ships without it either way
+      # — a pre-existing, documented gap this pipeline doesn't attempt to fix.
+      - run: brew install whisper-cpp
+        continue-on-error: true
+
+      - run: npm run sidecars
+
+      # No Authenticode/Apple credentials are configured as repo secrets, so
+      # this produces an unsigned, unnotarized build. Setting this explicitly
+      # (rather than leaving it unset) stops electron-builder from probing the
+      # runner's keychain for a signing identity that isn't there.
+      - run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Attach installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: dist/*.dmg
