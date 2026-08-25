@@ -1,6 +1,7 @@
 import { BrowserWindow, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { join } from 'node:path'
+import { focusMainWindow } from './main-window'
 
 /**
  * The mini recording-controls window: a small always-on-top pause/resume and
@@ -17,11 +18,11 @@ import { join } from 'node:path'
 let miniWindow: BrowserWindow | null = null
 
 const WIDTH = 300
-// Taller than the pause-only original — there are two rows of controls now
-// (pause/stop, then discard/transcript) instead of one. EXPANDED keeps the
-// same +290px transcript budget above whatever COLLAPSED is.
-const COLLAPSED_HEIGHT = 180
-const EXPANDED_HEIGHT = 470
+// Three rows of controls now (pause/stop, discard/transcript, screenshot)
+// plus room for the screenshot confirmation text. EXPANDED keeps the same
+// +290px transcript budget above whatever COLLAPSED is.
+const COLLAPSED_HEIGHT = 250
+const EXPANDED_HEIGHT = 540
 
 /** Opens the window, or focuses it if one is already open. */
 export function openMiniRecorderWindow(): void {
@@ -57,6 +58,12 @@ export function openMiniRecorderWindow(): void {
   miniWindow.on('ready-to-show', () => miniWindow?.show())
   miniWindow.on('closed', () => {
     miniWindow = null
+    // This is now the only route to the mini window (the manual "Pop out
+    // controls" button is gone), so losing it should read as "back to the
+    // main window" rather than leaving the user looking at whatever else was
+    // on screen. Harmless no-op if the main window is already visible, or
+    // gone too (e.g. the app is quitting).
+    focusMainWindow()
   })
   miniWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)

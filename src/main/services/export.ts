@@ -1,5 +1,6 @@
-import type { Speaker, TranscriptBundle, Utterance } from '@shared/types'
+import type { Screenshot, Speaker, TranscriptBundle, Utterance } from '@shared/types'
 import type { ExportFormat } from '@shared/export'
+import { screenshotFileName } from './screenshot-naming'
 
 /**
  * Transcript serialization.
@@ -52,20 +53,60 @@ function speakerName(speakers: Speaker[], utterance: Utterance): string | null {
   return speakers.find((s) => s.id === utterance.speakerId)?.displayName ?? null
 }
 
-function toTxt(bundle: TranscriptBundle): string {
+/**
+ * Utterances and screenshots merged into one chronological list. Only built
+ * when screenshots are actually being included — for every other case the
+ * plain `bundle.utterances` list is enough, and building this for nothing
+ * would just be a wasted sort.
+ */
+type TimelineItem =
+  | { kind: 'utterance'; at: number; utterance: Utterance }
+  | { kind: 'screenshot'; at: number; screenshot: Screenshot }
+
+function timeline(bundle: TranscriptBundle): TimelineItem[] {
+  const items: TimelineItem[] = [
+    ...bundle.utterances.map((u) => ({ kind: 'utterance' as const, at: u.startMs, utterance: u })),
+    ...bundle.screenshots.map((s) => ({ kind: 'screenshot' as const, at: s.timestampMs, screenshot: s }))
+  ]
+  return items.sort((a, b) => a.at - b.at)
+}
+
+/** `screenshots/screenshot-<id>.png` — relative, so the exported file stays portable. */
+function screenshotLink(relativeDir: string, screenshot: Screenshot): string {
+  return `${relativeDir}/${screenshotFileName(screenshot.id)}`
+}
+
+function toTxt(bundle: TranscriptBundle, screenshotsRelativeDir?: string): string {
   const withHours = (bundle.recording.durationMs ?? 0) >= 3_600_000
+
+  if (!screenshotsRelativeDir) {
+    return (
+      bundle.utterances
+        .map((u) => {
+          const who = speakerName(bundle.speakers, u)
+          const stamp = `[${plainTime(u.startMs, withHours)}]`
+          return who ? `${stamp} ${who}: ${u.text}` : `${stamp} ${u.text}`
+        })
+        .join('\n') + '\n'
+    )
+  }
+
   return (
-    bundle.utterances
-      .map((u) => {
-        const who = speakerName(bundle.speakers, u)
-        const stamp = `[${plainTime(u.startMs, withHours)}]`
-        return who ? `${stamp} ${who}: ${u.text}` : `${stamp} ${u.text}`
+    timeline(bundle)
+      .map((item) => {
+        if (item.kind === 'screenshot') {
+          const stamp = `[${plainTime(item.at, withHours)}]`
+          return `${stamp} Screenshot — ${item.screenshot.displayLabel}: ${screenshotLink(screenshotsRelativeDir, item.screenshot)}`
+        }
+        const who = speakerName(bundle.speakers, item.utterance)
+        const stamp = `[${plainTime(item.at, withHours)}]`
+        return who ? `${stamp} ${who}: ${item.utterance.text}` : `${stamp} ${item.utterance.text}`
       })
       .join('\n') + '\n'
   )
 }
 
-function toMarkdown(bundle: TranscriptBundle): string {
+function toMarkdown(bundle: TranscriptBundle, screenshotsRelativeDir?: string): string {
   const { recording } = bundle
   const withHours = (recording.durationMs ?? 0) >= 3_600_000
 
@@ -82,13 +123,28 @@ function toMarkdown(bundle: TranscriptBundle): string {
     .filter((line) => line !== null)
     .join('\n')
 
-  const body = bundle.utterances
-    .map((u) => {
-      const who = speakerName(bundle.speakers, u)
-      const stamp = `\`${plainTime(u.startMs, withHours)}\``
-      return who ? `**${who}** ${stamp}\n\n${u.text}\n` : `${stamp}\n\n${u.text}\n`
-    })
-    .join('\n')
+  const body = screenshotsRelativeDir
+    ? timeline(bundle)
+        .map((item) => {
+          if (item.kind === 'screenshot') {
+            const stamp = `\`${plainTime(item.at, withHours)}\``
+            const alt = `Screenshot at ${plainTime(item.at, withHours)} — ${item.screenshot.displayLabel}`
+            return `${stamp}\n\n![${alt}](${screenshotLink(screenshotsRelativeDir, item.screenshot)})\n`
+          }
+          const who = speakerName(bundle.speakers, item.utterance)
+          const stamp = `\`${plainTime(item.at, withHours)}\``
+          return who
+            ? `**${who}** ${stamp}\n\n${item.utterance.text}\n`
+            : `${stamp}\n\n${item.utterance.text}\n`
+        })
+        .join('\n')
+    : bundle.utterances
+        .map((u) => {
+          const who = speakerName(bundle.speakers, u)
+          const stamp = `\`${plainTime(u.startMs, withHours)}\``
+          return who ? `**${who}** ${stamp}\n\n${u.text}\n` : `${stamp}\n\n${u.text}\n`
+        })
+        .join('\n')
 
   return `${header}\n${body}`
 }
@@ -117,7 +173,7 @@ function toVtt(bundle: TranscriptBundle): string {
   return `WEBVTT\n\n${cues}`
 }
 
-function toJson(bundle: TranscriptBundle): string {
+function toJson(bundle: TranscriptBundle, screenshotsRelativeDir?: string): string {
   return JSON.stringify(
     {
       title: bundle.recording.title,
@@ -133,24 +189,47 @@ function toJson(bundle: TranscriptBundle): string {
         text: u.text,
         confidence: u.confidence,
         edited: u.edited
-      }))
+      })),
+      // Kept as its own array rather than interleaved — a JSON consumer can
+      // already sort utterances and screenshots together itself given both
+      // carry a timestamp, and two flat arrays are easier to consume than
+      // one array of two differently-shaped item kinds.
+      ...(screenshotsRelativeDir
+        ? {
+            screenshots: bundle.screenshots.map((s) => ({
+              timestampMs: s.timestampMs,
+              display: s.displayLabel,
+              file: screenshotLink(screenshotsRelativeDir, s)
+            }))
+          }
+        : {})
     },
     null,
     2
   )
 }
 
-export function renderTranscript(bundle: TranscriptBundle, format: ExportFormat): string {
+export function renderTranscript(
+  bundle: TranscriptBundle,
+  format: ExportFormat,
+  /**
+   * Present (and non-empty) only when screenshots should be included, naming
+   * the folder — relative to wherever the exported file ends up — that the
+   * caller has copied the actual image files into. `srt`/`vtt` ignore this:
+   * neither format has a sensible way to carry an inline image.
+   */
+  screenshotsRelativeDir?: string
+): string {
   switch (format) {
     case 'txt':
-      return toTxt(bundle)
+      return toTxt(bundle, screenshotsRelativeDir)
     case 'md':
-      return toMarkdown(bundle)
+      return toMarkdown(bundle, screenshotsRelativeDir)
     case 'srt':
       return toSrt(bundle)
     case 'vtt':
       return toVtt(bundle)
     case 'json':
-      return toJson(bundle)
+      return toJson(bundle, screenshotsRelativeDir)
   }
 }

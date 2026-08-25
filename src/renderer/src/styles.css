@@ -983,6 +983,208 @@ body {
   word-break: break-all;
 }
 
+/* ---------- screenshots ---------- */
+
+.shots {
+  margin-bottom: 18px;
+}
+
+.shots__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.shots__title {
+  font-size: var(--fs-small);
+  font-weight: 650;
+}
+
+.shots__count {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.shots__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* A card, like .rec — the same surface/border/radius/shadow recipe used
+   throughout rather than a one-off. */
+.shots__item {
+  position: relative;
+  width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.shots__thumb {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: var(--bg-hover);
+  cursor: pointer;
+}
+
+.shots__thumb img {
+  display: block;
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+}
+
+.shots__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+.shots__time {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.shots__time:hover {
+  text-decoration: underline;
+}
+
+.shots__display {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+/* Hidden until the card is pointed at — same reasoning as the transcript
+   line's own hover-reveal delete button. */
+.shots__delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(16, 24, 40, 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.shots__item:hover .shots__delete,
+.shots__item:focus-within .shots__delete,
+.shots__delete:focus {
+  opacity: 1;
+}
+
+.shots__delete:hover {
+  background: var(--danger);
+}
+
+/* Full-size preview, on top of everything else in the window including the
+   floating player. */
+.shots__lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  background: rgba(16, 24, 40, 0.72);
+}
+
+.shots__lightbox-panel {
+  position: relative;
+  max-width: min(90vw, 1100px);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.shots__lightbox-img {
+  display: block;
+  max-width: min(90vw, 1100px);
+  max-height: calc(90vh - 52px);
+  object-fit: contain;
+  background: #000;
+}
+
+.shots__lightbox-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(16, 24, 40, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+.shots__lightbox-close:hover {
+  background: rgba(16, 24, 40, 0.8);
+}
+
+.shots__lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(16, 24, 40, 0.55);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shots__lightbox-nav:hover {
+  background: rgba(16, 24, 40, 0.8);
+}
+
+.shots__lightbox-nav--prev {
+  left: 10px;
+}
+
+.shots__lightbox-nav--next {
+  right: 10px;
+}
+
+.shots__lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.shots__lightbox-info {
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+  margin-right: auto;
+}
+
 /* ---------- speaker chips ---------- */
 
 .speakers {
@@ -1181,6 +1383,14 @@ body {
   margin: 0;
   font-size: var(--fs-caption);
   color: var(--text-muted);
+}
+
+/* Brief screenshot-saved confirmation, inline with the transport buttons
+   rather than a banner — it's a nicety, not something worth interrupting
+   the layout for. */
+.recorder__toast {
+  font-size: var(--fs-caption);
+  color: var(--ok-text);
 }
 
 .btn--record {
@@ -1530,6 +1740,13 @@ body {
 
 .mini__disclosure:hover {
   color: var(--text);
+}
+
+.mini__notice {
+  margin: 6px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--ok-text);
+  text-align: center;
 }
 
 .mini__transcript {

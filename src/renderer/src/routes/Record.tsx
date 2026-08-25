@@ -52,6 +52,7 @@ export default function Record(): React.JSX.Element {
   const [live, setLive] = useState<LiveTranscriptChunk[]>([])
   const { data: info } = useQuery('app:info')
   const { data: settings, refetch: refetchSettings } = useQuery('settings:get')
+  const { data: displays } = useQuery('screenshots:listDisplays')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState<string>('')
@@ -66,6 +67,8 @@ export default function Record(): React.JSX.Element {
   const [levels, setLevels] = useState<Record<string, number>>({ mic: 0, system: 0 })
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
+  /** Brief "Screenshot saved" confirmation, not tied to anything cross-window. */
+  const [screenshotNotice, setScreenshotNotice] = useState<string | null>(null)
   const [sampleRate, setSampleRate] = useState<number | null>(null)
 
   /** Which sources the open capture graph actually has, monitoring or recording. */
@@ -94,6 +97,8 @@ export default function Record(): React.JSX.Element {
   const pauseStartRef = useRef(0)
   /** Guards against two monitor starts overlapping when settings change quickly. */
   const openingRef = useRef(false)
+  /** Set once `recording:start` resolves — a screenshot snap needs it, nothing else does. */
+  const recordingIdRef = useRef<string | null>(null)
 
   // Device labels are only populated once microphone permission has been
   // granted, so the list is refreshed after the stream opens too.
@@ -326,10 +331,11 @@ export default function Record(): React.JSX.Element {
     setSampleRate(rate)
 
     try {
-      await api.invoke('recording:start', {
+      const created = await api.invoke('recording:start', {
         kinds: session.tracks.map((t) => t.kind),
         sampleRate: rate
       })
+      recordingIdRef.current = created.id
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       return
@@ -381,6 +387,20 @@ export default function Record(): React.JSX.Element {
 
     try {
       await api.invoke('recording:cancel')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function snapScreenshot(): Promise<void> {
+    const recordingId = recordingIdRef.current
+    if (!recordingId) return
+    try {
+      const shots = await api.invoke('screenshots:capture', { recordingId, elapsedMs })
+      setScreenshotNotice(
+        shots.length > 1 ? `Screenshot saved (${shots.length} displays)` : 'Screenshot saved'
+      )
+      setTimeout(() => setScreenshotNotice(null), 2500)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -494,11 +514,12 @@ export default function Record(): React.JSX.Element {
               <button
                 type="button"
                 className="btn btn--ghost"
-                onClick={() => void api.invoke('recording:openMiniControls')}
-                title="Open a small always-on-top window with pause/resume and the live transcript"
+                onClick={() => void snapScreenshot()}
+                title="Snap a screenshot, tagged with the current time in the recording"
               >
-                Pop out controls
+                📷 Snap screenshot
               </button>
+              {screenshotNotice && <span className="recorder__toast">{screenshotNotice}</span>}
             </>
           ) : (
             <button className="btn btn--record" onClick={start} disabled={!captureOpen}>
@@ -536,6 +557,28 @@ export default function Record(): React.JSX.Element {
                   }}
                 />
               </div>
+
+              {/* Nothing to choose between on a single-display machine — "all
+                  displays" and "this one display" capture the same thing, so
+                  the picker only earns its place once there's an actual
+                  choice to make. */}
+              {displays && displays.length > 1 && (
+                <div className="recorder__field">
+                  <span id="screenshot-display-label">Screenshot capture</span>
+                  <Select
+                    value={settings?.screenshotDisplayId ?? ''}
+                    ariaLabel="Which display a screenshot snap captures"
+                    options={[
+                      { value: '', label: 'All displays' },
+                      ...displays.map((d) => ({ value: d.id, label: d.name }))
+                    ]}
+                    onChange={async (id) => {
+                      await api.invoke('settings:set', { screenshotDisplayId: id || null })
+                      refetchSettings()
+                    }}
+                  />
+                </div>
+              )}
 
               <label className="toolbar__toggle">
                 <input
@@ -616,9 +659,12 @@ export default function Record(): React.JSX.Element {
                 Pop out controls automatically when minimized
               </label>
               <p className="recorder__fine">
-                While recording, minimizing this window opens the small always-on-top
-                controls window on its own, instead of waiting for "Pop out controls" to
-                be clicked.
+                While recording, minimizing this window opens a small always-on-top
+                controls window — pause/resume, stop &amp; save, discard, and a
+                collapsible live transcript — so those stay reachable without this
+                window in view. This is the only way to reach it; leave it unticked
+                and minimizing behaves normally. Closing that window brings this one
+                back.
               </p>
             </div>
           )}

@@ -32,6 +32,7 @@ export default function MiniRecorder(): React.JSX.Element {
   const [elapsedMs, setElapsedMs] = useState(0)
   const [live, setLive] = useState<LiveTranscriptChunk[]>([])
   const [expanded, setExpanded] = useState(false)
+  const [screenshotNotice, setScreenshotNotice] = useState<string | null>(null)
   // Bootstraps from the query once; every toggle after that arrives as a
   // recording:pauseChanged broadcast instead, from whichever window sent it.
   const appliedStatusRef = useRef(false)
@@ -73,6 +74,23 @@ export default function MiniRecorder(): React.JSX.Element {
       await api.invoke('recording:cancel')
     } catch {
       // Same as stop() above.
+    }
+  }
+
+  async function snap(): Promise<void> {
+    if (!status) return
+    try {
+      const shots = await api.invoke('screenshots:capture', {
+        recordingId: status.recordingId,
+        elapsedMs
+      })
+      setScreenshotNotice(
+        shots.length > 1 ? `Saved (${shots.length} displays)` : 'Screenshot saved'
+      )
+      setTimeout(() => setScreenshotNotice(null), 2500)
+    } catch (err) {
+      setScreenshotNotice(err instanceof Error ? err.message : String(err))
+      setTimeout(() => setScreenshotNotice(null), 2500)
     }
   }
 
@@ -130,6 +148,14 @@ export default function MiniRecorder(): React.JSX.Element {
               {expanded ? '▾' : '▸'} Transcript
             </button>
           </div>
+
+          <div className="mini__controls">
+            <button type="button" className="btn btn--ghost" onClick={() => void snap()}>
+              📷 Snap screenshot
+            </button>
+          </div>
+
+          {screenshotNotice && <p className="mini__notice">{screenshotNotice}</p>}
 
           {expanded && (
             <div className="mini__transcript">

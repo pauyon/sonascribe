@@ -18,6 +18,7 @@ import type {
   Platform,
   Recording,
   RecordingSummary,
+  Screenshot,
   SpeakerSplitting,
   TrackKind,
   TranscriptBundle
@@ -171,9 +172,13 @@ export interface ApiSchema {
   /**
    * Renders the transcript and asks the user where to save it.
    * Returns the written path, or null if the save dialog was cancelled.
+   *
+   * `includeScreenshots` copies the recording's screenshots into a folder
+   * alongside the exported file and links them from it — ignored for `srt`
+   * and `vtt`, neither of which has a sensible way to carry an inline image.
    */
   'transcript:export': {
-    request: { id: string; format: ExportFormat }
+    request: { id: string; format: ExportFormat; includeScreenshots: boolean }
     response: string | null
   }
 
@@ -282,6 +287,26 @@ export interface ApiSchema {
     response: void
   }
 
+  /**
+   * Snaps a screenshot of every connected display (or just the one chosen in
+   * Settings, if any) and attaches it to the recording at the given elapsed
+   * time. One row per display — a two-monitor snap returns two.
+   */
+  'screenshots:capture': {
+    request: { recordingId: string; elapsedMs: number }
+    response: Screenshot[]
+  }
+  /** Removes one screenshot — the row and its file. */
+  'screenshots:delete': {
+    request: { id: string }
+    response: void
+  }
+  /** Currently connected displays, for the "which screen" Settings dropdown. */
+  'screenshots:listDisplays': {
+    request: void
+    response: Array<{ id: string; name: string }>
+  }
+
   /** Reveals a file in the OS file manager, selected — for jumping to an export. */
   'shell:showItemInFolder': {
     request: { path: string }
@@ -338,6 +363,13 @@ export interface TranscriptionSettings {
    * to be clicked first.
    */
   autoPopOutOnMinimize: boolean
+  /**
+   * Which display a screenshot snap captures, by `desktopCapturer` source id.
+   * Null (the default) means every connected display. A stale id — a
+   * monitor that's since been unplugged — falls back to every display
+   * rather than capturing nothing.
+   */
+  screenshotDisplayId: string | null
 }
 
 /** Payloads pushed from main to renderer. */
@@ -438,6 +470,9 @@ export const CHANNELS = [
   'recording:status',
   'recording:elapsed',
   'recording:resizeMiniControls',
+  'screenshots:capture',
+  'screenshots:delete',
+  'screenshots:listDisplays',
   'shell:showItemInFolder'
 ] as const satisfies readonly Channel[]
 
@@ -487,4 +522,9 @@ export function trackMediaUrl(trackId: string): string {
 /** URL for a recording's original, un-normalized file. */
 export function sourceMediaUrl(recordingId: string): string {
   return `${MEDIA_SCHEME}://source/${recordingId}`
+}
+
+/** URL for one screenshot's PNG. */
+export function screenshotMediaUrl(screenshotId: string): string {
+  return `${MEDIA_SCHEME}://screenshot/${screenshotId}`
 }

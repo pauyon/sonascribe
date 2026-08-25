@@ -6,25 +6,28 @@ import { Readable } from 'node:stream'
 import { MEDIA_SCHEME } from '@shared/ipc'
 import { getRecording } from './db/recordings'
 import { getTrackPath } from './db/tracks'
+import { getScreenshotPath } from './db/screenshots'
 
 /**
- * Serves recording audio to the renderer over `sonascribe-media://`.
+ * Serves recording audio (and screenshots) to the renderer over
+ * `sonascribe-media://`.
  *
  * The renderer never receives a filesystem path, and this handler never accepts
  * one: a URL carries only a row id, which is looked up in the database to find
  * the real file. That removes path traversal as a category rather than trying to
  * sanitise it, and it means `webSecurity` stays on.
  *
- *   sonascribe-media://track/<trackId>       normalized 16 kHz mono WAV
- *   sonascribe-media://source/<recordingId>  original imported/recorded file
+ *   sonascribe-media://track/<trackId>            normalized 16 kHz mono WAV
+ *   sonascribe-media://source/<recordingId>       original imported/recorded file
+ *   sonascribe-media://screenshot/<screenshotId>  a snapped screenshot PNG
  *
- * Note: this scheme is reachable from <audio src> and <video src>, but NOT from
- * fetch()/XHR — Chromium refuses cross-origin fetches to any scheme outside
- * http/https/data/chrome*, and the renderer's origin is file:// (or
- * http://localhost in dev). No response header lifts that. Anything needing the
- * actual samples in the renderer, such as waveform peaks, must come over IPC,
- * which is the better design regardless: a two-hour recording is ~230 MB of PCM
- * that has no business being decoded in the UI process.
+ * Note: this scheme is reachable from <audio src>, <video src> and <img src>,
+ * but NOT from fetch()/XHR — Chromium refuses cross-origin fetches to any
+ * scheme outside http/https/data/chrome*, and the renderer's origin is file://
+ * (or http://localhost in dev). No response header lifts that. Anything needing
+ * the actual samples in the renderer, such as waveform peaks, must come over
+ * IPC, which is the better design regardless: a two-hour recording is ~230 MB
+ * of PCM that has no business being decoded in the UI process.
  */
 
 export function registerMediaProtocolScheme(): void {
@@ -53,7 +56,8 @@ const MIME_TYPES: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.mkv': 'video/x-matroska',
   '.webm': 'video/webm',
-  '.avi': 'video/x-msvideo'
+  '.avi': 'video/x-msvideo',
+  '.png': 'image/png'
 }
 
 function contentType(filePath: string): string {
@@ -71,6 +75,8 @@ function resolveMediaPath(url: URL): string | null {
       return getTrackPath(id)
     case 'source':
       return getRecording(id)?.sourcePath ?? null
+    case 'screenshot':
+      return getScreenshotPath(id)
     default:
       return null
   }

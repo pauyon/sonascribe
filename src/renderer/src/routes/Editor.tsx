@@ -12,6 +12,7 @@ import PlayerBar from '../components/PlayerBar'
 import Transcript from '../components/Transcript'
 import JobProgress from '../components/JobProgress'
 import SpeakerBar from '../components/SpeakerBar'
+import ScreenshotGallery from '../components/ScreenshotGallery'
 import Select from '../components/Select'
 
 type PendingAction =
@@ -39,6 +40,10 @@ export default function Editor(): React.JSX.Element {
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [exportedPath, setExportedPath] = useState<string | null>(null)
+  // Defaults on: if a recording has screenshots, the export is more useful
+  // with them than without, and copying a handful of PNGs alongside a text
+  // file is cheap next to that.
+  const [includeScreenshots, setIncludeScreenshots] = useState(true)
   const [query, setQuery] = useState('')
   const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
   const [follow, setFollow] = useState(true)
@@ -187,7 +192,7 @@ export default function Editor(): React.JSX.Element {
     )
   }
 
-  const { speakers, utterances } = data
+  const { speakers, utterances, screenshots } = data
   // A plain string, unlike `recording` itself: TS doesn't carry the `!recording`
   // early-return's narrowing into the function declarations below (they're
   // hoisted, so in principle callable before that guard runs), and this
@@ -366,7 +371,7 @@ export default function Editor(): React.JSX.Element {
     setNotice(null)
     setExportedPath(null)
     try {
-      const path = await api.invoke('transcript:export', { id, format })
+      const path = await api.invoke('transcript:export', { id, format, includeScreenshots })
       if (path) {
         setNotice(`Saved to ${path}`)
         setExportedPath(path)
@@ -441,6 +446,16 @@ export default function Editor(): React.JSX.Element {
         </div>
 
         <div className="page__actions">
+          {hasTranscript && screenshots.length > 0 && (
+            <label className="toolbar__toggle" title="Copies the screenshots alongside the exported file and links them from it">
+              <input
+                type="checkbox"
+                checked={includeScreenshots}
+                onChange={(e) => setIncludeScreenshots(e.target.checked)}
+              />
+              Include screenshots
+            </label>
+          )}
           {hasTranscript && (
             <Select
               // Nothing stays chosen: picking a format performs the export
@@ -527,6 +542,15 @@ export default function Editor(): React.JSX.Element {
       )}
 
       {busy && <JobProgress job={job} startedAt={jobStartedAt || Date.now()} />}
+
+      <ScreenshotGallery
+        screenshots={screenshots}
+        showHours={showHours}
+        onSeek={audio.seek}
+        onDelete={(id) => {
+          void api.invoke('screenshots:delete', { id }).then(refetch)
+        }}
+      />
 
       {hasTranscript && (
         <SpeakerBar

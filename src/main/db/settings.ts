@@ -14,7 +14,8 @@ const KEYS = {
   micSoloSpeaker: 'recording.micSoloSpeaker',
   micDeviceId: 'recording.micDeviceId',
   captureSystemAudio: 'recording.captureSystemAudio',
-  autoPopOutOnMinimize: 'recording.autoPopOutOnMinimize'
+  autoPopOutOnMinimize: 'recording.autoPopOutOnMinimize',
+  screenshotDisplayId: 'recording.screenshotDisplayId'
 } as const
 
 function get(key: string): string | null {
@@ -195,4 +196,21 @@ export function getAutoPopOutOnMinimize(): boolean {
 
 export function setAutoPopOutOnMinimize(enabled: boolean): void {
   set(KEYS.autoPopOutOnMinimize, enabled ? 'true' : 'false')
+}
+
+/**
+ * `desktopCapturer` source id of the one display a screenshot snap should
+ * capture, or null for every connected display.
+ *
+ * Not validated here — an id from a monitor that's since been unplugged
+ * simply won't match anything the next time sources are enumerated, and the
+ * capture service falls back to every display rather than this needing to
+ * know that in advance.
+ */
+export function getScreenshotDisplayId(): string | null {
+  return get(KEYS.screenshotDisplayId)
+}
+
+export function setScreenshotDisplayId(displayId: string | null): void {
+  set(KEYS.screenshotDisplayId, displayId ?? '')
 }

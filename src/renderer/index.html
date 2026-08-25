@@ -8,15 +8,16 @@
       Locked-down CSP for the renderer. 'unsafe-inline' on style-src is required
       by React's inline style attributes; script-src stays strict.
 
-      media-src allows the sonascribe-media: scheme so the editor can play local
-      recordings. It is absent from connect-src on purpose: Chromium blocks
-      cross-origin fetch/XHR to custom schemes outright, so listing it would
-      only imply a capability that does not exist. Audio samples reach the
-      renderer over IPC instead.
+      media-src and img-src both allow the sonascribe-media: scheme, so the
+      editor can play local recordings and show screenshot thumbnails. Both
+      are absent from connect-src on purpose: Chromium blocks cross-origin
+      fetch/XHR to custom schemes outright, so listing it there would only
+      imply a capability that does not exist. Audio samples and peaks reach
+      the renderer over IPC instead.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' sonascribe-media: blob:; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: sonascribe-media:; media-src 'self' sonascribe-media: blob:; connect-src 'self'"
     />
   </head>
   <body>

@@ -98,5 +98,23 @@ export const MIGRATIONS: Migration[] = [
       -- hint so low-quality passages can be flagged for review.
       ALTER TABLE utterances ADD COLUMN confidence REAL;
     `
+  },
+  {
+    version: 3,
+    name: 'screenshots',
+    sql: /* sql */ `
+      -- One row per image, not per snap: a snap on a two-monitor machine
+      -- writes two rows sharing the same timestamp_ms.
+      CREATE TABLE screenshots (
+        id            TEXT    PRIMARY KEY,
+        recording_id  TEXT    NOT NULL REFERENCES recordings (id) ON DELETE CASCADE,
+        timestamp_ms  INTEGER NOT NULL,
+        display_label TEXT    NOT NULL,
+        file_name     TEXT    NOT NULL,
+        created_at    INTEGER NOT NULL
+      );
+
+      CREATE INDEX idx_screenshots_recording ON screenshots (recording_id, timestamp_ms);
+    `
   }
 ]

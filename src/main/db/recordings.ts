@@ -3,6 +3,7 @@ import type {
   CreateRecordingInput,
   Recording,
   RecordingSummary,
+  Screenshot,
   Speaker,
   Track,
   TranscriptBundle,
@@ -154,6 +155,15 @@ export function getTranscriptBundle(id: string): TranscriptBundle | null {
     color: string
   }>
 
+  const screenshotRows = db
+    .prepare('SELECT * FROM screenshots WHERE recording_id = ? ORDER BY timestamp_ms')
+    .all(id) as unknown as Array<{
+    id: string
+    recording_id: string
+    timestamp_ms: number
+    display_label: string
+  }>
+
   const utteranceRows = db
     .prepare('SELECT * FROM utterances WHERE recording_id = ? ORDER BY start_ms')
     .all(id) as unknown as Array<{
@@ -181,6 +191,13 @@ export function getTranscriptBundle(id: string): TranscriptBundle | null {
     clusterId: r.cluster_id,
     displayName: r.display_name,
     color: r.color
+  }))
+
+  const screenshots: Screenshot[] = screenshotRows.map((r) => ({
+    id: r.id,
+    recordingId: r.recording_id,
+    timestampMs: r.timestamp_ms,
+    displayLabel: r.display_label
   }))
 
   /*
@@ -230,5 +247,5 @@ export function getTranscriptBundle(id: string): TranscriptBundle | null {
   }))
 
 
-  return { recording, tracks, speakers, utterances }
+  return { recording, tracks, speakers, utterances, screenshots }
 }

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
 import type { Channel, Request, Response, TranscriptionSettings } from '@shared/ipc'
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { mediaPath, modelsPath, userDataPath } from '../paths'
@@ -14,6 +14,7 @@ import {
   getMicDeviceId,
   getMicSoloSpeaker,
   getNoiseSuppression,
+  getScreenshotDisplayId,
   getSpeakerCount,
   getSpeakerSplitting,
   setAutoPopOutOnMinimize,
@@ -24,11 +25,15 @@ import {
   setMicDeviceId,
   setMicSoloSpeaker,
   setNoiseSuppression,
+  setScreenshotDisplayId,
   setSelectedModelId,
   setSpeakerCount,
   setSpeakerSplitting
 } from '../db/settings'
 import { deleteSpeaker, mergeSpeakers, reassignUtterance, renameSpeaker } from '../db/speakers'
+import { deleteScreenshot, getScreenshotPath } from '../db/screenshots'
+import { captureScreenshots, listDisplaySources } from '../services/screenshots'
+import { screenshotFileName } from '../services/screenshot-naming'
 import {
   cancelModelDownload,
   deleteModel,
@@ -190,6 +195,9 @@ const handlers: Handlers = {
     if (patch.micDeviceId !== undefined) setMicDeviceId(patch.micDeviceId)
     if (patch.captureSystemAudio != null) setCaptureSystemAudio(patch.captureSystemAudio)
     if (patch.autoPopOutOnMinimize != null) setAutoPopOutOnMinimize(patch.autoPopOutOnMinimize)
+    // Same null-is-meaningful reasoning as micDeviceId above: null means
+    // "every display," not "not supplied."
+    if (patch.screenshotDisplayId !== undefined) setScreenshotDisplayId(patch.screenshotDisplayId)
     return currentSettings()
   },
 
@@ -215,7 +223,7 @@ const handlers: Handlers = {
     deleteUtterance(id)
   },
 
-  'transcript:export': async ({ id, format }) => {
+  'transcript:export': async ({ id, format, includeScreenshots }) => {
     const bundle = getTranscriptBundle(id)
     if (!bundle) throw new Error('Recording not found')
     if (bundle.utterances.length === 0) {
@@ -240,7 +248,28 @@ const handlers: Handlers = {
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return null
 
-    await writeFile(result.filePath, renderTranscript(bundle, format), 'utf8')
+    // Neither subtitle format has a sensible way to carry an inline image.
+    const withScreenshots =
+      includeScreenshots && bundle.screenshots.length > 0 && format !== 'srt' && format !== 'vtt'
+
+    let screenshotsRelativeDir: string | undefined
+    if (withScreenshots) {
+      // A sibling folder named after the exported file, not the recording —
+      // if the file gets renamed or moved, the two stay findable together.
+      screenshotsRelativeDir = `${basename(result.filePath, extname(result.filePath))}.screenshots`
+      const shotsDir = join(dirname(result.filePath), screenshotsRelativeDir)
+      await mkdir(shotsDir, { recursive: true })
+      for (const shot of bundle.screenshots) {
+        const src = getScreenshotPath(shot.id)
+        if (src) await copyFile(src, join(shotsDir, screenshotFileName(shot.id)))
+      }
+    }
+
+    await writeFile(
+      result.filePath,
+      renderTranscript(bundle, format, screenshotsRelativeDir),
+      'utf8'
+    )
     return result.filePath
   },
 
@@ -290,6 +319,21 @@ const handlers: Handlers = {
     resizeMiniRecorderWindow(expanded)
   },
 
+  'screenshots:capture': ({ recordingId, elapsedMs }) => {
+    const status = getRecordingStatus()
+    if (!status || status.recordingId !== recordingId) {
+      throw new Error('No recording in progress')
+    }
+    return captureScreenshots(recordingId, elapsedMs)
+  },
+
+  'screenshots:delete': async ({ id }) => {
+    const path = deleteScreenshot(id)
+    if (path) await rm(path, { force: true })
+  },
+
+  'screenshots:listDisplays': () => listDisplaySources(),
+
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)
   }
@@ -307,7 +351,8 @@ function currentSettings(): TranscriptionSettings {
     micSoloSpeaker: getMicSoloSpeaker(),
     micDeviceId: getMicDeviceId(),
     captureSystemAudio: getCaptureSystemAudio(),
-    autoPopOutOnMinimize: getAutoPopOutOnMinimize()
+    autoPopOutOnMinimize: getAutoPopOutOnMinimize(),
+    screenshotDisplayId: getScreenshotDisplayId()
   }
 }
 

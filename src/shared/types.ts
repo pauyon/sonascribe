@@ -110,12 +110,22 @@ export interface Word {
   text: string
 }
 
+export interface Screenshot {
+  id: string
+  recordingId: string
+  /** Elapsed time in the recording this was taken at. */
+  timestampMs: number
+  /** The source display's own name, e.g. "Screen 1" — shown when a snap covered more than one. */
+  displayLabel: string
+}
+
 /** A recording plus everything needed to render its editor view. */
 export interface TranscriptBundle {
   recording: Recording
   tracks: Track[]
   speakers: Speaker[]
   utterances: Utterance[]
+  screenshots: Screenshot[]
 }
 
 /**
