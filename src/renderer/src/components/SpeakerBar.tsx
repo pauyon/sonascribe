@@ -12,11 +12,16 @@ import type { Speaker, Utterance } from '@shared/types'
 export default function SpeakerBar({
   speakers,
   utterances,
+  filter,
+  onFilterChange,
   onRename,
   onMerge
 }: {
   speakers: Speaker[]
   utterances: Utterance[]
+  /** Speaker id the transcript is narrowed to, or null to show everyone. */
+  filter: string | null
+  onFilterChange: (id: string | null) => void
   onRename: (id: string, name: string) => Promise<void>
   onMerge: (fromId: string, intoId: string) => Promise<void>
 }): React.JSX.Element | null {
@@ -48,16 +53,32 @@ export default function SpeakerBar({
           const count = counts.get(speaker.id) ?? 0
           const isMergeSource = speaker.id === mergeFrom
 
+          const isFiltered = speaker.id === filter
+
           return (
             <div
               key={speaker.id}
-              className={isMergeSource ? 'chip chip--merging' : 'chip'}
+              className={
+                (isMergeSource ? 'chip chip--merging' : 'chip') +
+                (isFiltered ? ' chip--filtered' : '')
+              }
               // Handed to CSS as a variable rather than as a border colour, so the
               // stylesheet can derive the fill, the edge and the text from one hue
               // and stay right in both themes.
               style={{ '--speaker': speaker.color } as React.CSSProperties}
             >
-              <span className="chip__dot" style={{ background: speaker.color }} />
+              <button
+                type="button"
+                className="chip__dot"
+                style={{ background: speaker.color }}
+                onClick={() => onFilterChange(isFiltered ? null : speaker.id)}
+                title={
+                  isFiltered
+                    ? 'Showing only this speaker — click to show everyone'
+                    : `Show only ${speaker.displayName}`
+                }
+                aria-pressed={isFiltered}
+              />
 
               {editingId === speaker.id ? (
                 <input

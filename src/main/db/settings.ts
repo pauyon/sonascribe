@@ -9,8 +9,11 @@ const KEYS = {
   diarize: 'diarization.enabled',
   speakerCount: 'diarization.speakerCount',
   speakerSplitting: 'diarization.splitting',
-  micProcessing: 'recording.micProcessing',
-  micSoloSpeaker: 'recording.micSoloSpeaker'
+  noiseSuppression: 'recording.noiseSuppression',
+  echoCancellation: 'recording.echoCancellation',
+  micSoloSpeaker: 'recording.micSoloSpeaker',
+  micDeviceId: 'recording.micDeviceId',
+  captureSystemAudio: 'recording.captureSystemAudio'
 } as const
 
 function get(key: string): string | null {
@@ -100,18 +103,34 @@ export function setSpeakerSplitting(splitting: SpeakerSplitting): void {
 }
 
 /**
- * Whether to route the microphone through the browser's conferencing DSP.
+ * Whether to apply WebRTC noise suppression to the microphone.
  *
- * Off by default. Echo cancellation, noise suppression and automatic gain are
- * what give processed audio its "on a call" character, and on a decent
- * microphone they only remove quality.
+ * Off by default: on a decent microphone it still trades a little fidelity for
+ * the noise floor. Unlike echo cancellation below, it does not carry an
+ * "on a call" character, so it is safe to turn on generally.
  */
-export function getMicProcessing(): boolean {
-  return get(KEYS.micProcessing) === 'true'
+export function getNoiseSuppression(): boolean {
+  return get(KEYS.noiseSuppression) === 'true'
 }
 
-export function setMicProcessing(enabled: boolean): void {
-  set(KEYS.micProcessing, enabled ? 'true' : 'false')
+export function setNoiseSuppression(enabled: boolean): void {
+  set(KEYS.noiseSuppression, enabled ? 'true' : 'false')
+}
+
+/**
+ * Whether to route the microphone through WebRTC echo cancellation and
+ * automatic gain control.
+ *
+ * Off by default. This pair is what gives processed audio its "on a call"
+ * character; it earns its keep only when the mic can hear the app's own
+ * speaker output.
+ */
+export function getEchoCancellation(): boolean {
+  return get(KEYS.echoCancellation) === 'true'
+}
+
+export function setEchoCancellation(enabled: boolean): void {
+  set(KEYS.echoCancellation, enabled ? 'true' : 'false')
 }
 
 /**
@@ -131,4 +150,34 @@ export function getMicSoloSpeaker(): boolean {
 
 export function setMicSoloSpeaker(enabled: boolean): void {
   set(KEYS.micSoloSpeaker, enabled ? 'true' : 'false')
+}
+
+/**
+ * Device id of the last microphone picked on the Record screen, or null for
+ * the system default.
+ *
+ * A device that has since been unplugged simply will not appear in the next
+ * enumeration, so the caller falls back to the default rather than this
+ * needing to validate the id itself.
+ */
+export function getMicDeviceId(): string | null {
+  return get(KEYS.micDeviceId)
+}
+
+export function setMicDeviceId(deviceId: string | null): void {
+  set(KEYS.micDeviceId, deviceId ?? '')
+}
+
+/**
+ * Whether the last recording also captured system audio.
+ *
+ * Defaults to true — most recordings are of calls or meetings, where the
+ * other side only arrives through system audio.
+ */
+export function getCaptureSystemAudio(): boolean {
+  return get(KEYS.captureSystemAudio) !== 'false'
+}
+
+export function setCaptureSystemAudio(enabled: boolean): void {
+  set(KEYS.captureSystemAudio, enabled ? 'true' : 'false')
 }

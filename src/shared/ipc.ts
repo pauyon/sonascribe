@@ -157,6 +157,16 @@ export interface ApiSchema {
     request: { id: string; text: string }
     response: void
   }
+  /**
+   * Removes one line permanently — for a diarization false-positive (a cough or
+   * background noise mistaken for speech) rather than something worth keeping
+   * and just misattributed. The renderer defers this call behind an undo
+   * window, so by the time it arrives it is final.
+   */
+  'utterances:delete': {
+    request: { id: string }
+    response: void
+  }
 
   /**
    * Renders the transcript and asks the user where to save it.
@@ -226,6 +236,12 @@ export interface ApiSchema {
     request: void
     response: void
   }
+
+  /** Reveals a file in the OS file manager, selected — for jumping to an export. */
+  'shell:showItemInFolder': {
+    request: { path: string }
+    response: void
+  }
 }
 
 export interface TranscriptionSettings {
@@ -243,13 +259,22 @@ export interface TranscriptionSettings {
    */
   speakerSplitting: SpeakerSplitting
   /**
-   * Apply the browser's conferencing audio processing to the microphone.
+   * Apply WebRTC noise suppression to the microphone.
    *
-   * Off by default: it is what makes a recording sound like a phone call. Worth
-   * enabling only when recording a laptop mic with sound playing from speakers,
-   * where echo cancellation stops the far end being captured twice.
+   * Gates out steady background noise (fans, hum, keyboard) without echo
+   * cancellation or gain riding along, so — unlike `echoCancellation` below —
+   * it does not carry the "on a call" character. Off by default because on a
+   * decent microphone it still trades a little fidelity for the noise floor.
    */
-  micProcessing: boolean
+  noiseSuppression: boolean
+  /**
+   * Route the microphone through WebRTC echo cancellation and automatic gain.
+   *
+   * This is the pair that makes a recording sound like a phone call. Worth
+   * enabling only when recording a laptop mic with sound playing from its own
+   * speakers, where echo cancellation stops the far end being captured twice.
+   */
+  echoCancellation: boolean
   /**
    * The microphone carries only the local user's voice.
    *
@@ -258,6 +283,10 @@ export interface TranscriptionSettings {
    * several people sharing one microphone requires.
    */
   micSoloSpeaker: boolean
+  /** Last-used microphone, by device id, or null for the system default. */
+  micDeviceId: string | null
+  /** Last-used choice for whether to also capture system audio. */
+  captureSystemAudio: boolean
 }
 
 /** Payloads pushed from main to renderer. */
@@ -313,6 +342,7 @@ export const CHANNELS = [
   'transcribe:active',
   'peaks:get',
   'utterances:update',
+  'utterances:delete',
   'transcript:export',
   'speakers:rename',
   'speakers:merge',
@@ -321,7 +351,8 @@ export const CHANNELS = [
   'recording:chunk',
   'recording:pause',
   'recording:stop',
-  'recording:cancel'
+  'recording:cancel',
+  'shell:showItemInFolder'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [

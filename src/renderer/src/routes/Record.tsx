@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import type { LiveTranscriptChunk, TrackKind } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import {
@@ -52,9 +52,17 @@ export default function Record(): React.JSX.Element {
   const { data: info } = useQuery('app:info')
   const { data: settings, refetch: refetchSettings } = useQuery('settings:get')
 
+  const liveBodyRef = useRef<HTMLDivElement>(null)
+  // Only auto-scrolls while the user is already at the bottom, so scrolling up
+  // to reread an earlier line does not get yanked back down by the next chunk.
+  const stickToBottomRef = useRef(true)
+
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState<string>('')
   const [wantSystem, setWantSystem] = useState(true)
+  // Applied once, the first time settings arrive — later refetches (e.g. from
+  // toggling mic processing) must not stomp on a choice made mid-session.
+  const appliedStoredChoice = useRef(false)
 
   const [recording, setRecording] = useState(false)
   const [paused, setPaused] = useState(false)
@@ -108,6 +116,15 @@ export default function Record(): React.JSX.Element {
     setLive((prev) => [...prev, chunk])
   })
 
+  // Keeps the newest line in view as it's typed out, the way a chat log does —
+  // otherwise the scrollable transcript stays pinned to its first lines and
+  // visibly falls behind the recording.
+  useEffect(() => {
+    if (!stickToBottomRef.current) return
+    const el = liveBodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [live])
+
   const closeSession = useCallback(async () => {
     const session = sessionRef.current
     sessionRef.current = null
@@ -132,9 +149,16 @@ export default function Record(): React.JSX.Element {
     try {
       await closeSession()
 
-      const processing = settings?.micProcessing
-        ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        : CLEAN_MIC
+      // Independent on purpose: noise suppression alone does not carry the
+      // "on a call" character that echo cancellation (paired with the gain
+      // control it needs) does, so a user after less-noisy audio need not
+      // accept the phone-call sound to get it.
+      const processing = {
+        ...CLEAN_MIC,
+        noiseSuppression: settings?.noiseSuppression ?? false,
+        echoCancellation: settings?.echoCancellation ?? false,
+        autoGainControl: settings?.echoCancellation ?? false
+      }
 
       const streams: Array<{ kind: TrackKind; stream: MediaStream }> = []
       try {
@@ -178,13 +202,31 @@ export default function Record(): React.JSX.Element {
     } finally {
       openingRef.current = false
     }
-  }, [closeSession, deviceId, loadDevices, recording, settings?.micProcessing, wantSystem])
+  }, [
+    closeSession,
+    deviceId,
+    loadDevices,
+    recording,
+    settings?.noiseSuppression,
+    settings?.echoCancellation,
+    wantSystem
+  ])
 
   useEffect(() => {
     void loadDevices()
     navigator.mediaDevices.addEventListener('devicechange', loadDevices)
     return () => navigator.mediaDevices.removeEventListener('devicechange', loadDevices)
   }, [loadDevices])
+
+  // Recall last session's microphone and system-audio choice. A device that
+  // has since been unplugged just will not be in `devices`, and the <Select>
+  // falls back to "System default" on its own — no validation needed here.
+  useEffect(() => {
+    if (appliedStoredChoice.current || !settings) return
+    appliedStoredChoice.current = true
+    if (settings.micDeviceId) setDeviceId(settings.micDeviceId)
+    setWantSystem(settings.captureSystemAudio)
+  }, [settings])
 
   // Reopen whenever the source selection changes, but never mid-recording: the
   // dropdown is not shown then, and swapping the graph would break the take.
@@ -361,6 +403,13 @@ export default function Record(): React.JSX.Element {
 
       {error && <div className="banner banner--error">{error}</div>}
       {warning && <div className="banner banner--warn">{warning}</div>}
+      {settings && !settings.modelId && (
+        <div className="banner banner--warn">
+          No transcription model selected. This recording will still save, but the
+          live transcript and automatic transcription won't run until you pick one
+          on the <Link to="/settings">Settings</Link> page.
+        </div>
+      )}
 
       {/*
         One frame for both states. Setup and recording share the same slots —
@@ -429,7 +478,15 @@ export default function Record(): React.JSX.Element {
                   short windows as you speak, so there is nothing left to wait for when you stop.
                 </p>
               ) : (
-                <div className="live__body">
+                <div
+                  className="live__body"
+                  ref={liveBodyRef}
+                  onScroll={(e) => {
+                    const el = e.currentTarget
+                    stickToBottomRef.current =
+                      el.scrollHeight - el.scrollTop - el.clientHeight < 24
+                  }}
+                >
                   {orderedLive.map((chunk) => (
                     <p key={`${chunk.kind}-${chunk.startMs}`} className="live__line">
                       <span className="live__at">{formatDuration(chunk.startMs)}</span>
@@ -462,7 +519,10 @@ export default function Record(): React.JSX.Element {
                       label: d.label || `Microphone ${i + 1}`
                     }))
                   ]}
-                  onChange={setDeviceId}
+                  onChange={(id) => {
+                    setDeviceId(id)
+                    void api.invoke('settings:set', { micDeviceId: id || null })
+                  }}
                 />
               </div>
 
@@ -470,7 +530,11 @@ export default function Record(): React.JSX.Element {
                 <input
                   type="checkbox"
                   checked={wantSystem}
-                  onChange={(e) => setWantSystem(e.target.checked)}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                    setWantSystem(next)
+                    void api.invoke('settings:set', { captureSystemAudio: next })
+                  }}
                 />
                 Also capture system audio (for meetings and calls)
               </label>
@@ -479,19 +543,36 @@ export default function Record(): React.JSX.Element {
               <label className="toolbar__toggle">
                 <input
                   type="checkbox"
-                  checked={settings?.micProcessing ?? false}
+                  checked={settings?.noiseSuppression ?? false}
                   onChange={async (e) => {
-                    await api.invoke('settings:set', { micProcessing: e.target.checked })
+                    await api.invoke('settings:set', { noiseSuppression: e.target.checked })
                     refetchSettings()
                   }}
                 />
-                Apply call-style noise reduction to the microphone
+                Reduce background noise
               </label>
               <p className="recorder__fine">
-                Leave this off for an external or USB microphone — it is echo
-                cancellation and noise gating, and it is what makes a recording sound
-                like a phone call. Turn it on only for a laptop mic with sound coming
-                from speakers. The meter above updates as soon as you change it.
+                Gates out steady noise — fans, hum, keyboard clatter — on its own,
+                without the echo cancellation or gain riding along below. The meter
+                above updates as soon as you change it.
+              </p>
+
+              <label className="toolbar__toggle">
+                <input
+                  type="checkbox"
+                  checked={settings?.echoCancellation ?? false}
+                  onChange={async (e) => {
+                    await api.invoke('settings:set', { echoCancellation: e.target.checked })
+                    refetchSettings()
+                  }}
+                />
+                Cancel speaker echo
+              </label>
+              <p className="recorder__fine">
+                Leave this off for an external or USB microphone — this is what makes
+                a recording sound like a phone call. Turn it on only for a laptop mic
+                with sound coming from its own speakers, where it stops the far end
+                being recorded twice.
               </p>
 
               <label className="toolbar__toggle">

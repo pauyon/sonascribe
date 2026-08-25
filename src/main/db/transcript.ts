@@ -96,6 +96,22 @@ export function updateUtteranceText(id: string, text: string): void {
   }
 }
 
+/**
+ * Removes one utterance and its words (cascade).
+ *
+ * For diarization false positives — a cough or background noise that got
+ * transcribed as a line — rather than a misattribution, which `speakers:reassign`
+ * already covers.
+ */
+export function deleteUtterance(id: string): void {
+  const result = getDb().prepare('DELETE FROM utterances WHERE id = ?').run(id)
+  if (result.changes === 0) {
+    throw new Error(
+      'That line no longer exists. The transcript was replaced; reload and try again.'
+    )
+  }
+}
+
 export function countUtterances(recordingId: string): number {
   const row = getDb()
     .prepare('SELECT COUNT(*) AS c FROM utterances WHERE recording_id = ?')

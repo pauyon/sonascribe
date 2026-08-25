@@ -106,6 +106,7 @@ function currentTheme(): 'light' | 'dark' {
 
 export default function App(): React.JSX.Element {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
+  const { data: info } = useQuery('app:info')
 
   const toggleTheme = useCallback(() => {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -166,6 +167,7 @@ export default function App(): React.JSX.Element {
             {theme === 'dark' ? 'Light' : 'Dark'}
           </button>
           <span>Local-only · nothing leaves this device</span>
+          {info?.version && <span className="sidebar__version">v{info.version}</span>}
         </div>
       </aside>
 

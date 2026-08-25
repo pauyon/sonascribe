@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { sourceMediaUrl, trackMediaUrl } from '@shared/ipc'
 import { findModel } from '@shared/models'
@@ -33,9 +33,24 @@ export default function Editor(): React.JSX.Element {
   const [jobStartedAt, setJobStartedAt] = useState(0)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [exportedPath, setExportedPath] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
   const [follow, setFollow] = useState(true)
   const [peaks, setPeaks] = useState<number[] | null>(null)
+
+  /**
+   * Lines hidden immediately on delete, before the delete is actually
+   * committed. The real IPC call is deferred behind `deleteTimers` so a
+   * misclick — background noise turning out to be a word after all — has a
+   * few seconds to be undone before it is unrecoverable.
+   */
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; text: string } | null>(null)
+  // Deliberately never cleared on unmount: a delete the user didn't undo
+  // should still land even if they navigate away before the timer fires,
+  // rather than silently reverting.
+  const deleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const recording = data?.recording ?? null
   const tracks = data?.tracks ?? []
@@ -156,16 +171,62 @@ export default function Editor(): React.JSX.Element {
     refetch()
   }
 
+  const UNDO_WINDOW_MS = 6000
+
+  function deleteLine(utteranceId: string): void {
+    const target = utterances.find((u) => u.id === utteranceId)
+    if (!target) return
+
+    setHiddenIds((prev) => new Set(prev).add(utteranceId))
+    setPendingDelete({ id: utteranceId, text: target.text })
+
+    const timer = setTimeout(() => {
+      deleteTimers.current.delete(utteranceId)
+      setPendingDelete((current) => (current?.id === utteranceId ? null : current))
+      api.invoke('utterances:delete', { id: utteranceId }).catch((err: unknown) => {
+        setActionError(err instanceof Error ? err.message : String(err))
+        setHiddenIds((prev) => {
+          const next = new Set(prev)
+          next.delete(utteranceId)
+          return next
+        })
+      })
+    }, UNDO_WINDOW_MS)
+    deleteTimers.current.set(utteranceId, timer)
+  }
+
+  function undoDelete(utteranceId: string): void {
+    const timer = deleteTimers.current.get(utteranceId)
+    if (timer) clearTimeout(timer)
+    deleteTimers.current.delete(utteranceId)
+    setHiddenIds((prev) => {
+      const next = new Set(prev)
+      next.delete(utteranceId)
+      return next
+    })
+    setPendingDelete((current) => (current?.id === utteranceId ? null : current))
+  }
+
   async function exportAs(format: ExportFormat): Promise<void> {
     setActionError(null)
     setNotice(null)
+    setExportedPath(null)
     try {
       const path = await api.invoke('transcript:export', { id, format })
-      if (path) setNotice(`Saved to ${path}`)
+      if (path) {
+        setNotice(`Saved to ${path}`)
+        setExportedPath(path)
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     }
   }
+
+  // Guards against a filter left pointing at a speaker that a merge just
+  // folded away — the chip it came from is gone, so the filter should clear
+  // rather than silently hide the whole transcript.
+  const activeFilter = speakers.some((s) => s.id === speakerFilter) ? speakerFilter : null
+  const visibleUtterances = utterances.filter((u) => !hiddenIds.has(u.id))
 
   const showHours = (recording.durationMs ?? 0) >= 3_600_000
   // 'queued' is excluded on purpose — see jobActive above.
@@ -267,7 +328,19 @@ export default function Editor(): React.JSX.Element {
 
       {recording.error && <div className="banner banner--error">{recording.error}</div>}
       {actionError && <div className="banner banner--error">{actionError}</div>}
-      {notice && <div className="banner banner--ok">{notice}</div>}
+      {notice && (
+        <div className="banner banner--ok">
+          <span>{notice}</span>
+          {exportedPath && (
+            <button
+              className="banner__action"
+              onClick={() => void api.invoke('shell:showItemInFolder', { path: exportedPath })}
+            >
+              Open folder
+            </button>
+          )}
+        </div>
+      )}
       {!canTranscribe && tracks.length > 0 && (
         <div className="banner banner--warn">
           No transcription model selected. Pick one on the <Link to="/settings">Settings</Link>{' '}
@@ -287,7 +360,9 @@ export default function Editor(): React.JSX.Element {
       {hasTranscript && (
         <SpeakerBar
           speakers={speakers}
-          utterances={utterances}
+          utterances={visibleUtterances}
+          filter={activeFilter}
+          onFilterChange={setSpeakerFilter}
           onRename={async (speakerId, displayName) => {
             await api.invoke('speakers:rename', { id: speakerId, displayName })
             refetch()
@@ -317,17 +392,33 @@ export default function Editor(): React.JSX.Element {
             />
             Follow playback
           </label>
-          <span className="toolbar__hint">Double-click a line to edit</span>
+          {activeFilter ? (
+            <button className="btn btn--ghost" onClick={() => setSpeakerFilter(null)}>
+              Showing {speakers.find((s) => s.id === activeFilter)?.displayName} only ✕
+            </button>
+          ) : (
+            <span className="toolbar__hint">Double-click a line to edit</span>
+          )}
+        </div>
+      )}
+
+      {pendingDelete && (
+        <div className="toast">
+          <span>Line deleted.</span>
+          <button className="toast__action" onClick={() => undoDelete(pendingDelete.id)}>
+            Undo
+          </button>
         </div>
       )}
 
       {hasTranscript ? (
         <Transcript
-          utterances={utterances}
+          utterances={visibleUtterances}
           speakers={speakers}
           currentMs={audio.currentMs}
           showHours={showHours}
           query={query}
+          speakerFilter={activeFilter}
           follow={follow}
           onSeek={audio.seek}
           onEdit={async (utteranceId, text) => {
@@ -338,6 +429,7 @@ export default function Editor(): React.JSX.Element {
             await api.invoke('speakers:reassign', { utteranceId, speakerId })
             refetch()
           }}
+          onDelete={deleteLine}
         />
       ) : (
         <div className="empty">

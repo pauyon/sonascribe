@@ -37,31 +37,41 @@ export default function Transcript({
   currentMs,
   showHours,
   query,
+  speakerFilter,
   follow,
   onSeek,
   onEdit,
-  onReassign
+  onReassign,
+  onDelete
 }: {
   utterances: Utterance[]
   speakers: Speaker[]
   currentMs: number
   showHours: boolean
   query: string
+  /** Narrow the transcript to one speaker's lines, or null to show everyone. */
+  speakerFilter: string | null
   /** Auto-scroll the active line into view during playback. */
   follow: boolean
   onSeek: (ms: number) => void
   onEdit: (id: string, text: string) => Promise<void>
   onReassign: (utteranceId: string, speakerId: string) => Promise<void>
+  /** Removes one line — for a diarization false-positive, not a misattribution. */
+  onDelete: (utteranceId: string) => void
 }): React.JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const activeRef = useRef<HTMLDivElement>(null)
 
   const visible = useMemo(() => {
-    if (!query) return utterances
-    const needle = query.toLowerCase()
-    return utterances.filter((u) => u.text.toLowerCase().includes(needle))
-  }, [utterances, query])
+    let result = utterances
+    if (speakerFilter) result = result.filter((u) => u.speakerId === speakerFilter)
+    if (query) {
+      const needle = query.toLowerCase()
+      result = result.filter((u) => u.text.toLowerCase().includes(needle))
+    }
+    return result
+  }, [utterances, query, speakerFilter])
 
   /**
    * Index of the line covering the playhead.
@@ -95,8 +105,9 @@ export default function Transcript({
   if (visible.length === 0) {
     return (
       <div className="empty">
-        <h2>{query ? 'No matches' : 'No transcript yet'}</h2>
+        <h2>{query || speakerFilter ? 'No matches' : 'No transcript yet'}</h2>
         {query && <p>Nothing in this transcript matches “{query}”.</p>}
+        {!query && speakerFilter && <p>This speaker has no lines in this transcript.</p>}
       </div>
     )
   }
@@ -155,6 +166,15 @@ export default function Transcript({
                   low confidence
                 </span>
               )}
+              <button
+                type="button"
+                className="utterance__delete"
+                onClick={() => onDelete(u.id)}
+                title="Delete this line (e.g. background noise mistaken for speech)"
+                aria-label="Delete this line"
+              >
+                🗑
+              </button>
             </div>
 
             {isEditing ? (

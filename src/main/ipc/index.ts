@@ -1,21 +1,27 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Channel, Request, Response, TranscriptionSettings } from '@shared/ipc'
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { mediaPath, modelsPath, userDataPath } from '../paths'
 import {
+  getCaptureSystemAudio,
   getDiarizationEnabled,
+  getEchoCancellation,
   getLanguage,
   getSelectedModelId,
-  getMicProcessing,
+  getMicDeviceId,
   getMicSoloSpeaker,
+  getNoiseSuppression,
   getSpeakerCount,
   getSpeakerSplitting,
+  setCaptureSystemAudio,
   setDiarizationEnabled,
+  setEchoCancellation,
   setLanguage,
-  setMicProcessing,
+  setMicDeviceId,
   setMicSoloSpeaker,
+  setNoiseSuppression,
   setSelectedModelId,
   setSpeakerCount,
   setSpeakerSplitting
@@ -30,7 +36,7 @@ import {
 import { cancelJob, listActiveJobs, queueTranscription } from '../services/jobs'
 import { forgetLiveWords } from '../services/live-transcribe'
 import { getWaveformPath } from '../db/tracks'
-import { updateUtteranceText } from '../db/transcript'
+import { deleteUtterance, updateUtteranceText } from '../db/transcript'
 import { DEFAULT_BUCKETS, getPeaks } from '../services/peaks'
 import { renderTranscript } from '../services/export'
 import { EXPORT_FORMATS } from '@shared/export'
@@ -168,8 +174,13 @@ const handlers: Handlers = {
     // automatically", so the two cannot be collapsed.
     if (patch.speakerCount !== undefined) setSpeakerCount(patch.speakerCount)
     if (patch.speakerSplitting != null) setSpeakerSplitting(patch.speakerSplitting)
-    if (patch.micProcessing != null) setMicProcessing(patch.micProcessing)
+    if (patch.noiseSuppression != null) setNoiseSuppression(patch.noiseSuppression)
+    if (patch.echoCancellation != null) setEchoCancellation(patch.echoCancellation)
     if (patch.micSoloSpeaker != null) setMicSoloSpeaker(patch.micSoloSpeaker)
+    // undefined means "not supplied"; null explicitly means "system default",
+    // so — as with speakerCount above — the two cannot be collapsed.
+    if (patch.micDeviceId !== undefined) setMicDeviceId(patch.micDeviceId)
+    if (patch.captureSystemAudio != null) setCaptureSystemAudio(patch.captureSystemAudio)
     return currentSettings()
   },
 
@@ -189,6 +200,10 @@ const handlers: Handlers = {
 
   'utterances:update': ({ id, text }) => {
     updateUtteranceText(id, text.trim())
+  },
+
+  'utterances:delete': ({ id }) => {
+    deleteUtterance(id)
   },
 
   'transcript:export': async ({ id, format }) => {
@@ -246,7 +261,11 @@ const handlers: Handlers = {
 
   'recording:stop': () => stopRecording(),
 
-  'recording:cancel': () => cancelRecording()
+  'recording:cancel': () => cancelRecording(),
+
+  'shell:showItemInFolder': ({ path }) => {
+    shell.showItemInFolder(path)
+  }
 }
 
 function currentSettings(): TranscriptionSettings {
@@ -256,8 +275,11 @@ function currentSettings(): TranscriptionSettings {
     diarize: getDiarizationEnabled(),
     speakerCount: getSpeakerCount(),
     speakerSplitting: getSpeakerSplitting(),
-    micProcessing: getMicProcessing(),
-    micSoloSpeaker: getMicSoloSpeaker()
+    noiseSuppression: getNoiseSuppression(),
+    echoCancellation: getEchoCancellation(),
+    micSoloSpeaker: getMicSoloSpeaker(),
+    micDeviceId: getMicDeviceId(),
+    captureSystemAudio: getCaptureSystemAudio()
   }
 }
 
