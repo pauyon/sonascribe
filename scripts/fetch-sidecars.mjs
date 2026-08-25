@@ -16,7 +16,7 @@
  */
 
 import { createWriteStream } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { execFile } from 'node:child_process'
@@ -205,7 +205,7 @@ async function findMatching(dir, patterns, found = []) {
 
 async function extract(artifact, archivePath, workDir, destPath, destDir) {
   if (artifact.kind === 'raw') {
-    await rename(archivePath, destPath)
+    await moveFile(archivePath, destPath)
     return
   }
   if (artifact.kind === 'gz') {
@@ -237,7 +237,7 @@ async function extract(artifact, archivePath, workDir, destPath, destDir) {
     }
     let copied = 0
     for (const file of found) {
-      await rename(file, join(destDir, basename(file)))
+      await moveFile(file, join(destDir, basename(file)))
       copied++
     }
     console.log(`    extracted ${copied} files`)
@@ -246,7 +246,26 @@ async function extract(artifact, archivePath, workDir, destPath, destDir) {
 
   const found = await findFile(workDir, artifact.member ?? artifact.name)
   if (!found) throw new Error(`${artifact.member ?? artifact.name} not found inside ${artifact.url}`)
-  await rename(found, destPath)
+  await moveFile(found, destPath)
+}
+
+/**
+ * Moves a file, falling back to copy+delete when the source and destination
+ * are on different filesystems.
+ *
+ * `rename` is atomic but POSIX (and Windows) refuse it across devices — EXDEV
+ * — and the OS temp directory is not guaranteed to share a drive with the
+ * repo. It usually does on a dev machine, which is why this only surfaces on
+ * CI runners that put TEMP and the checkout on separate drives.
+ */
+async function moveFile(src, dest) {
+  try {
+    await rename(src, dest)
+  } catch (err) {
+    if (err.code !== 'EXDEV') throw err
+    await copyFile(src, dest)
+    await rm(src)
+  }
 }
 
 async function exists(path) {

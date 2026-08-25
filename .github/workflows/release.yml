@@ -41,7 +41,11 @@ jobs:
       # resources/bin/win/ — native binaries, not committed, per the README.
       - run: npm run sidecars
 
-      - run: npm run dist:win
+      # electron-builder auto-detects "publish" when it sees a CI environment
+      # plus a tag matching the version — it would otherwise try to publish to
+      # GitHub itself and fail for lack of a GH_TOKEN. Uploading is handled
+      # below instead, so that's turned off explicitly.
+      - run: npm run dist:win -- --publish never
 
       - name: Attach installer to the release
         uses: softprops/action-gh-release@v2
@@ -79,7 +83,8 @@ jobs:
       # this produces an unsigned, unnotarized build. Setting this explicitly
       # (rather than leaving it unset) stops electron-builder from probing the
       # runner's keychain for a signing identity that isn't there.
-      - run: npm run dist:mac
+      # Same auto-publish caveat as the Windows job — see the comment there.
+      - run: npm run dist:mac -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
