@@ -13,6 +13,7 @@ import {
 import { formatDuration } from '../lib/format'
 import Select from '../components/Select'
 import LiveTranscriptPanel from '../components/LiveTranscriptPanel'
+import HelpTip from '../components/HelpTip'
 
 /** Peak level meter for one track. */
 function Meter({
@@ -558,27 +559,30 @@ export default function Record(): React.JSX.Element {
                 />
               </div>
 
-              {/* Nothing to choose between on a single-display machine — "all
-                  displays" and "this one display" capture the same thing, so
-                  the picker only earns its place once there's an actual
-                  choice to make. */}
-              {displays && displays.length > 1 && (
-                <div className="recorder__field">
-                  <span id="screenshot-display-label">Screenshot capture</span>
-                  <Select
-                    value={settings?.screenshotDisplayId ?? ''}
-                    ariaLabel="Which display a screenshot snap captures"
-                    options={[
-                      { value: '', label: 'All displays' },
-                      ...displays.map((d) => ({ value: d.id, label: d.name }))
-                    ]}
-                    onChange={async (id) => {
-                      await api.invoke('settings:set', { screenshotDisplayId: id || null })
-                      refetchSettings()
-                    }}
-                  />
-                </div>
-              )}
+              {/* Always present rather than disappearing on a single-display
+                  machine — inert (disabled, labelled with the one real
+                  display) instead of vanishing, so there's still something
+                  here confirming where a snap will come from. */}
+              <div className="recorder__field">
+                <span id="screenshot-display-label">Screenshot capture</span>
+                <Select
+                  value={displays && displays.length > 1 ? (settings?.screenshotDisplayId ?? '') : ''}
+                  disabled={!displays || displays.length <= 1}
+                  ariaLabel="Which display a screenshot snap captures"
+                  options={
+                    displays && displays.length > 1
+                      ? [
+                          { value: '', label: 'All displays' },
+                          ...displays.map((d) => ({ value: d.id, label: d.name }))
+                        ]
+                      : [{ value: '', label: displays?.[0]?.name || 'Main screen' }]
+                  }
+                  onChange={async (id) => {
+                    await api.invoke('settings:set', { screenshotDisplayId: id || null })
+                    refetchSettings()
+                  }}
+                />
+              </div>
 
               <label className="toolbar__toggle">
                 <input
@@ -594,78 +598,65 @@ export default function Record(): React.JSX.Element {
               </label>
               {systemNote && <p className="recorder__fine recorder__fine--warn">{systemNote}</p>}
 
-              <label className="toolbar__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings?.noiseSuppression ?? false}
-                  onChange={async (e) => {
-                    await api.invoke('settings:set', { noiseSuppression: e.target.checked })
-                    refetchSettings()
-                  }}
-                />
-                Reduce background noise
-              </label>
-              <p className="recorder__fine">
-                Gates out steady noise — fans, hum, keyboard clatter — on its own,
-                without the echo cancellation or gain riding along below. The meter
-                above updates as soon as you change it.
-              </p>
+              <div className="toolbar__toggle-row">
+                <label className="toolbar__toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings?.noiseSuppression ?? false}
+                    onChange={async (e) => {
+                      await api.invoke('settings:set', { noiseSuppression: e.target.checked })
+                      refetchSettings()
+                    }}
+                  />
+                  Reduce background noise
+                </label>
+                <HelpTip text="Gates out steady noise — fans, hum, keyboard clatter — on its own, without the echo cancellation or gain riding along below. The meter above updates as soon as you change it." />
+              </div>
 
-              <label className="toolbar__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings?.echoCancellation ?? false}
-                  onChange={async (e) => {
-                    await api.invoke('settings:set', { echoCancellation: e.target.checked })
-                    refetchSettings()
-                  }}
-                />
-                Cancel speaker echo
-              </label>
-              <p className="recorder__fine">
-                Leave this off for an external or USB microphone — this is what makes
-                a recording sound like a phone call. Turn it on only for a laptop mic
-                with sound coming from its own speakers, where it stops the far end
-                being recorded twice.
-              </p>
+              <div className="toolbar__toggle-row">
+                <label className="toolbar__toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings?.echoCancellation ?? false}
+                    onChange={async (e) => {
+                      await api.invoke('settings:set', { echoCancellation: e.target.checked })
+                      refetchSettings()
+                    }}
+                  />
+                  Cancel speaker echo
+                </label>
+                <HelpTip text="Leave this off for an external or USB microphone — this is what makes a recording sound like a phone call. Turn it on only for a laptop mic with sound coming from its own speakers, where it stops the far end being recorded twice." />
+              </div>
 
-              <label className="toolbar__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings?.micSoloSpeaker ?? false}
-                  onChange={async (e) => {
-                    await api.invoke('settings:set', { micSoloSpeaker: e.target.checked })
-                    refetchSettings()
-                  }}
-                />
-                Only my voice is on this microphone
-              </label>
-              <p className="recorder__fine">
-                Tick this for a call, where you are on the mic and everyone else comes
-                through system audio — your side gets labelled “You” without guessing.
-                Leave it unticked when several people share one microphone, or everyone
-                in the room is merged into a single speaker.
-              </p>
+              <div className="toolbar__toggle-row">
+                <label className="toolbar__toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings?.micSoloSpeaker ?? false}
+                    onChange={async (e) => {
+                      await api.invoke('settings:set', { micSoloSpeaker: e.target.checked })
+                      refetchSettings()
+                    }}
+                  />
+                  Only my voice is on this microphone
+                </label>
+                <HelpTip text="Tick this for a call, where you are on the mic and everyone else comes through system audio — your side gets labelled “You” without guessing. Leave it unticked when several people share one microphone, or everyone in the room is merged into a single speaker." />
+              </div>
 
-              <label className="toolbar__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings?.autoPopOutOnMinimize ?? false}
-                  onChange={async (e) => {
-                    await api.invoke('settings:set', { autoPopOutOnMinimize: e.target.checked })
-                    refetchSettings()
-                  }}
-                />
-                Pop out controls automatically when minimized
-              </label>
-              <p className="recorder__fine">
-                While recording, minimizing this window opens a small always-on-top
-                controls window — pause/resume, stop &amp; save, discard, and a
-                collapsible live transcript — so those stay reachable without this
-                window in view. This is the only way to reach it; leave it unticked
-                and minimizing behaves normally. Closing that window brings this one
-                back.
-              </p>
+              <div className="toolbar__toggle-row">
+                <label className="toolbar__toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings?.autoPopOutOnMinimize ?? false}
+                    onChange={async (e) => {
+                      await api.invoke('settings:set', { autoPopOutOnMinimize: e.target.checked })
+                      refetchSettings()
+                    }}
+                  />
+                  Pop out controls automatically when minimized
+                </label>
+                <HelpTip text="While recording, minimizing this window opens a small always-on-top controls window — pause/resume, stop & save, discard, and a collapsible live transcript. This is the only way to reach it; leave it unticked and minimizing behaves normally. Closing that window brings this one back." />
+              </div>
             </div>
           )}
         </div>

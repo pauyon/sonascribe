@@ -906,6 +906,71 @@ body {
   user-select: none;
 }
 
+/* A HelpTip sits beside a toggle's label, not inside it — clicking anything
+   inside a <label> toggles the checkbox it's bound to, including a nested
+   button, so the tip has to be a sibling to keep its own click from also
+   flipping the setting. */
+.toolbar__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A checkbox's explanation, tucked behind a "?" instead of shown as a
+   standing paragraph — four of those in a row read as a wall of text for
+   what should be a quick pre-recording checklist. */
+.help-tip {
+  position: relative;
+  display: inline-flex;
+}
+
+.help-tip__icon {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: help;
+}
+
+.help-tip__icon:hover,
+.help-tip__icon:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* Same surface/border/radius/shadow recipe as .menu — the app's one
+   floating-panel look, not a one-off. */
+.help-tip__bubble {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 25;
+  width: 260px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--text-muted);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+
+.help-tip:hover .help-tip__bubble,
+.help-tip:focus-within .help-tip__bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
 .toolbar__hint {
   font-size: var(--fs-caption);
   color: var(--text-muted);
