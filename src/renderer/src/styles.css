@@ -3034,3 +3034,58 @@ label.toolbar__toggle {
 .toast__action:hover {
   text-decoration: underline;
 }
+
+/* ---------- modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  background: rgba(16, 24, 40, 0.72);
+}
+
+.modal {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal__header h2 {
+  margin: 0;
+}
+
+.modal__log {
+  flex: 1;
+  min-height: 320px;
+  resize: none;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-hover);
+  color: var(--text);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+}

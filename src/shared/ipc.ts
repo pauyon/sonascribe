@@ -73,6 +73,8 @@ export interface ApiSchema {
       userDataPath: string
       mediaPath: string
       modelsPath: string
+      /** Current log file, so Settings can offer "Open logs folder". */
+      logPath: string
       /** False when the ffmpeg sidecar is missing, so the UI can explain why. */
       ffmpegAvailable: boolean
       /** False when whisper-cli is missing — the common case on macOS. */
@@ -338,6 +340,16 @@ export interface ApiSchema {
     request: { path: string }
     response: void
   }
+
+  /**
+   * The current log file's contents, for the in-app viewer — so a user who
+   * hits a problem can copy diagnostics without hunting down the file path
+   * themselves. Empty string if nothing has been logged yet.
+   */
+  'logs:read': {
+    request: void
+    response: string
+  }
 }
 
 export interface TranscriptionSettings {
@@ -502,7 +514,8 @@ export const CHANNELS = [
   'screenshots:capture',
   'screenshots:delete',
   'screenshots:listDisplays',
-  'shell:showItemInFolder'
+  'shell:showItemInFolder',
+  'logs:read'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [

@@ -24,6 +24,10 @@ exact module boundaries, an AI-testing recipe, and a maintenance instruction.
 - ML engines (whisper.cpp, Parakeet, sherpa-onnx) and ffmpeg are **spawned CLI
   sidecars**, not native addons — see README for why. Fetched by
   `npm run sidecars` into `resources/bin/<platform>/` (git-ignored).
+- **`electron-log`** — the only logging dependency. `src/main/log.ts` calls
+  `Object.assign(console, log.functions)` once at startup, so every existing
+  `console.*` call writes to `<userData>/logs/main.log` for free; nothing
+  should ever call `log.*` directly instead of `console.*`.
 
 ## Directory map
 
@@ -31,6 +35,7 @@ exact module boundaries, an AI-testing recipe, and a maintenance instruction.
 src/
   main/
     index.ts, protocol.ts, paths.ts        entry point, sonascribe-media:// scheme, on-disk layout
+    log.ts                                  electron-log init — console override, log file path, crash handlers
     display-media.ts                        desktopCapturer plumbing for system audio
     db/                                      ALL SQL lives here
       index.ts            getDb()/initDb(), WAL mode, migration runner
@@ -55,7 +60,7 @@ src/
     models.ts, export.ts
   renderer/src/
     routes/       Library, Editor, Record, Models (settings), MiniRecorder
-    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, ...
+    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, LogViewer, ...
     lib/api.ts     useQuery/useEvent/api.invoke — the only way renderer talks to main
 resources/bin/<platform>/    sidecar binaries, git-ignored, fetched by scripts/fetch-sidecars.mjs
 scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
@@ -138,6 +143,10 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
    live two-track recording but can't validate diarization accuracy; use a
    real audio fixture (e.g. the two-speaker WAV `smoke.mjs` already downloads)
    imported via `recordings:import` for anything accuracy-related.
+
+   `window.api.invoke('logs:read')` returns the current log file as a string
+   — often faster than re-reading `<userData>/logs/main.log` from disk when
+   verifying that something actually logged what you expected.
 
 ## Release
 

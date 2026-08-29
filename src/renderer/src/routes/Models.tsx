@@ -9,6 +9,7 @@ import type { SpeakerSplitting } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatBytes } from '../lib/format'
 import Select from '../components/Select'
+import LogViewer from '../components/LogViewer'
 
 /** Languages the Whisper models accept, in the order the picker shows them. */
 const LANGUAGES = [
@@ -44,6 +45,7 @@ export default function Models(): React.JSX.Element {
 
   const [progress, setProgress] = useState<Record<string, ModelDownloadProgress>>({})
   const [error, setError] = useState<string | null>(null)
+  const [showLogs, setShowLogs] = useState(false)
 
   useEvent('model:progress', (payload) => {
     setProgress((prev) => ({ ...prev, [payload.modelId]: payload }))
@@ -354,7 +356,25 @@ export default function Models(): React.JSX.Element {
         </p>
       </section>
 
-      {info && <p className="page__path">Models are stored in {info.modelsPath}</p>}
+      {info && (
+        <p className="page__path">
+          Models are stored in {info.modelsPath}
+          <br />
+          Logs are stored in {info.logPath}{' '}
+          <button type="button" className="banner__action" onClick={() => setShowLogs(true)}>
+            View
+          </button>{' '}
+          <button
+            type="button"
+            className="banner__action"
+            onClick={() => void api.invoke('shell:showItemInFolder', { path: info.logPath })}
+          >
+            Open folder
+          </button>
+        </p>
+      )}
+
+      {showLogs && <LogViewer onClose={() => setShowLogs(false)} />}
     </div>
   )
 }

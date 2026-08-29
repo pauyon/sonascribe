@@ -1,9 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import type { Channel, Request, Response, TranscriptionSettings } from '@shared/ipc'
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { mediaPath, modelsPath, userDataPath } from '../paths'
+import { logFilePath } from '../log'
 import {
   getAutoPopOutOnMinimize,
   getCaptureSystemAudio,
@@ -162,6 +163,7 @@ const handlers: Handlers = {
     userDataPath: userDataPath(),
     mediaPath: mediaPath(),
     modelsPath: modelsPath(),
+    logPath: logFilePath(),
     ffmpegAvailable: hasSidecar('ffmpeg'),
     whisperAvailable: hasSidecar('whisper-cli'),
     parakeetAvailable: hasSidecar('parakeet-cli'),
@@ -352,7 +354,9 @@ const handlers: Handlers = {
 
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)
-  }
+  },
+
+  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => '')
 }
 
 function currentSettings(): TranscriptionSettings {

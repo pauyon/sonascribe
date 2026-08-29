@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
+import { initLogging } from './log'
 import { closeDb, initDb } from './db'
 import { registerIpcHandlers } from './ipc'
 import { registerMediaProtocolHandler, registerMediaProtocolScheme } from './protocol'
@@ -14,6 +15,9 @@ import { isRecording } from './services/recorder'
 import { getAutoPopOutOnMinimize } from './db/settings'
 import { closeMiniRecorderWindow, openMiniRecorderWindow } from './windows/mini-recorder'
 import { setMainWindow } from './windows/main-window'
+
+// First, so nothing logged during the setup below is lost.
+initLogging()
 
 // Must run at module load: registerSchemesAsPrivileged is only honoured before
 // the app 'ready' event fires.

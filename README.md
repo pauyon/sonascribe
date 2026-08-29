@@ -314,3 +314,15 @@ machine stays usable during a long transcription.
 Chromium's CoreAudio Tap API. It does require `NSAudioCaptureUsageDescription`
 in Info.plist (already in `electron-builder.yml`) — there is no fallback if it's
 missing, and the failure is silent.
+
+**Logging persists to a file, because a packaged build has no terminal.**
+`src/main/log.ts` calls `electron-log`'s `Object.assign(console, log.functions)`
+once at startup, so every existing `console.log`/`warn`/`error` call — no
+rewriting needed — writes to `<userData>/logs/main.log` as well as the
+terminal. An uncaught exception or unhandled rejection is logged the same way
+and then exits the process, preserving the crash-on-fatal-error behavior Node
+had by default rather than quietly limping on in an untested state. Settings
+has a "View" button (`LogViewer.tsx`) that reads the file over IPC
+(`logs:read`) into a read-only textarea with a copy-to-clipboard button, so a
+user hitting a problem can hand over diagnostics without being asked to go
+find a file path themselves.
