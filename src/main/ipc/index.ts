@@ -5,6 +5,7 @@ import type { Channel, Request, Response, TranscriptionSettings } from '@shared/
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { mediaPath, modelsPath, userDataPath } from '../paths'
 import { logFilePath } from '../log'
+import { searchChunks } from '../services/search'
 import {
   getAutoPopOutOnMinimize,
   getCaptureSystemAudio,
@@ -356,7 +357,9 @@ const handlers: Handlers = {
     shell.showItemInFolder(path)
   },
 
-  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => '')
+  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => ''),
+
+  'search:query': ({ query, recordingId }) => searchChunks(query, recordingId)
 }
 
 function currentSettings(): TranscriptionSettings {

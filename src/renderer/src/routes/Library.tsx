@@ -4,6 +4,7 @@ import type { ImportProgress, JobProgress, RecordingSummary } from '@shared/type
 import { SUPPORTED_MEDIA_EXTENSIONS } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import RecordingCard from '../components/RecordingCard'
+import SearchBox from '../components/SearchBox'
 
 const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
   copying: 'Copying',
@@ -130,6 +131,13 @@ export default function Library(): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      <SearchBox
+        placeholder="Search every recording by meaning…"
+        onResultClick={(hit) =>
+          navigate(`/recordings/${hit.recordingId}`, { state: { seekMs: hit.startMs } })
+        }
+      />
 
       {ffmpegMissing && (
         <div className="banner banner--warn">

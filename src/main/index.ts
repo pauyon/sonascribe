@@ -9,6 +9,7 @@ import { registerDisplayMediaHandler } from './display-media'
 import { migrateLegacyUserData } from './migrate-legacy-data'
 import { repairMediaPaths, resetInterruptedJobs } from './db/repair-paths'
 import { cancelAllJobs } from './services/jobs'
+import { stopEmbeddingServer } from './services/embeddings'
 import { sweepOrphanedChunks } from './services/audio-chunks'
 import { sweepOrphanedMedia } from './services/media-cleanup'
 import { isRecording } from './services/recorder'
@@ -139,6 +140,9 @@ app.on('window-all-closed', () => {
  */
 app.on('before-quit', () => {
   cancelAllJobs()
+  // Same reasoning as cancelAllJobs above: this is a process of its own, and
+  // nothing else stops it from outliving the app if it's left running.
+  stopEmbeddingServer()
 })
 
 app.on('will-quit', () => {

@@ -28,6 +28,12 @@ exact module boundaries, an AI-testing recipe, and a maintenance instruction.
   `Object.assign(console, log.functions)` once at startup, so every existing
   `console.*` call writes to `<userData>/logs/main.log` for free; nothing
   should ever call `log.*` directly instead of `console.*`.
+- **`llama.cpp`** (`llama-server`, same `ggml-org` family as whisper.cpp) —
+  the sidecar behind offline semantic search. Unlike every other sidecar it's
+  a long-lived local HTTP server, not a run-to-completion CLI — see
+  `services/embeddings.ts`. Real releases are the `b<number>` prerelease
+  tags, not the semver-looking "latest" GitHub release (which ships no
+  binaries at all) — `LLAMA_TAG` in `fetch-sidecars.mjs` must point at one.
 
 ## Directory map
 
@@ -40,12 +46,15 @@ src/
     db/                                      ALL SQL lives here
       index.ts            getDb()/initDb(), WAL mode, migration runner
       migrations.ts        forward-only, numbered — NEVER edit a shipped one, append
-      recordings.ts, tracks.ts, transcript.ts, speakers.ts, profiles.ts, screenshots.ts, settings.ts
+      recordings.ts, tracks.ts, transcript.ts, speakers.ts, profiles.ts, chunks.ts, screenshots.ts, settings.ts
     services/                               everything that isn't SQL or IPC wiring
       jobs.ts                serial job queue: status transitions, persistence, error handling
       transcription-pipeline.ts   the actual ASR+diarization+anchor-matching pipeline (called by jobs.ts)
       diarize.ts, merge.ts        sherpa-onnx wrapper; word-level speaker alignment + absorption
       profiles.ts             voice-profile enrollment/refresh/matching (auto, no user action)
+      chunking.ts             groups utterances into embedding-sized chunks
+      embeddings.ts           llama-server lifecycle (start/health-check/stop) + embed calls
+      search.ts               reindexRecording (post-transcription) + searchChunks (cosine similarity, no vector DB)
       whisper.ts, parakeet.ts, parakeet-parse.ts, transcription.ts   ASR engine runners (engine-neutral output)
       ffmpeg.ts, wav.ts, wav-writer.ts, peaks.ts    audio normalize/concat/extract/waveform
       recorder.ts, live-transcribe.ts, audio-chunks.ts   live capture + streamed transcription
@@ -60,7 +69,7 @@ src/
     models.ts, export.ts
   renderer/src/
     routes/       Library, Editor, Record, Models (settings), MiniRecorder
-    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, LogViewer, ...
+    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, LogViewer, SearchBox, ...
     lib/api.ts     useQuery/useEvent/api.invoke — the only way renderer talks to main
 resources/bin/<platform>/    sidecar binaries, git-ignored, fetched by scripts/fetch-sidecars.mjs
 scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
@@ -93,8 +102,15 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
    least-recently-matched eviction. The only manual control is
    `profiles:clearAll` (Settings → "Clear remembered voices").
 6. **Editor** (`Editor.tsx`, `Transcript.tsx`, `SpeakerBar.tsx`) — playback,
-   inline edit, speaker rename/merge/delete/color, search, export
-   (`services/export.ts`).
+   inline edit, speaker rename/merge/delete/color, exact-text search
+   (client-side filter), export (`services/export.ts`).
+7. **Semantic search** (`services/search.ts`) — after every successful
+   transcription, the transcript is chunked (`services/chunking.ts`),
+   embedded (`services/embeddings.ts`), and stored in `chunk_embeddings`,
+   replacing that recording's old rows wholesale. `SearchBox.tsx` queries it
+   from the Editor (one recording) and Library (every recording) — distinct
+   from the exact-text filter above, this finds a passage by meaning even if
+   it shares no words with the query.
 
 ## Patterns to follow
 
@@ -111,6 +127,12 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
 - **All audio the ML sidecars touch is 16 kHz mono PCM WAV** — never assume
   otherwise when adding an ffmpeg step.
 - **`shared/` must stay Electron-free** — it's compiled into the renderer too.
+- **Two sidecar lifecycles exist — pick the right one.** whisper/parakeet/
+  sherpa-onnx/ffmpeg are spawned per job and parsed from stdout to
+  completion. `llama-server` is the one exception: started lazily, kept
+  running, talked to over local HTTP, and stopped in `index.ts`'s
+  `before-quit` handler. Don't spawn-per-call a model server — the model
+  load alone is the dominant cost.
 
 ## Testing (no framework — do this instead)
 

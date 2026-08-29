@@ -4,6 +4,7 @@ import { listTracks, setRecordingStatus } from '../db/tracks'
 import { saveMergedTranscript } from '../db/transcript'
 import { ensureSpeaker } from '../db/speakers'
 import { runAutoEnrollment } from './profiles'
+import { reindexRecording } from './search'
 import {
   getDiarizationEnabled,
   getLanguage,
@@ -345,6 +346,14 @@ async function prepareAndQueue(
           await runAutoEnrollment(recordingId)
         } catch (err) {
           console.warn(`[jobs] voice-profile enrollment failed for ${recordingId}:`, err)
+        }
+
+        // Same reasoning: a search index that failed to build is not a
+        // reason to fail a finished transcription.
+        try {
+          await reindexRecording(recordingId)
+        } catch (err) {
+          console.warn(`[jobs] search indexing failed for ${recordingId}:`, err)
         }
 
         setRecordingStatus(recordingId, 'ready')

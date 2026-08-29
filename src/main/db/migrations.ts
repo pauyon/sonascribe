@@ -163,5 +163,28 @@ export const MIGRATIONS: Migration[] = [
       -- did, until it's matched again and gets one recorded.
       ALTER TABLE voice_profiles ADD COLUMN color TEXT;
     `
+  },
+  {
+    version: 7,
+    name: 'chunk_embeddings',
+    sql: /* sql */ `
+      -- Text chunks (a few consecutive utterances, or a long one split up —
+      -- see services/chunking.ts) with an embedding vector for offline
+      -- semantic search. Replaced wholesale per recording whenever its
+      -- transcript is re-saved, the same way utterances themselves are, since
+      -- utterance ids aren't stable across a re-transcription.
+      CREATE TABLE chunk_embeddings (
+        id           TEXT    PRIMARY KEY,
+        recording_id TEXT    NOT NULL REFERENCES recordings (id) ON DELETE CASCADE,
+        start_ms     INTEGER NOT NULL,
+        end_ms       INTEGER NOT NULL,
+        text         TEXT    NOT NULL,
+        embedding    BLOB    NOT NULL,
+        model_id     TEXT    NOT NULL,
+        created_at   INTEGER NOT NULL
+      );
+
+      CREATE INDEX idx_chunk_embeddings_recording ON chunk_embeddings (recording_id);
+    `
   }
 ]

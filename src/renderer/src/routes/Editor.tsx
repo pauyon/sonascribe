@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { sourceMediaUrl, trackMediaUrl } from '@shared/ipc'
 import { findModel } from '@shared/models'
 import { EXPORT_FORMATS, type ExportFormat } from '@shared/export'
@@ -12,6 +12,7 @@ import PlayerBar from '../components/PlayerBar'
 import Transcript from '../components/Transcript'
 import JobProgress from '../components/JobProgress'
 import SpeakerBar from '../components/SpeakerBar'
+import SearchBox from '../components/SearchBox'
 import ScreenshotGallery from '../components/ScreenshotGallery'
 import Select from '../components/Select'
 
@@ -22,6 +23,7 @@ type PendingAction =
 
 export default function Editor(): React.JSX.Element {
   const { id = '' } = useParams<{ id: string }>()
+  const location = useLocation()
   const { data, error, loading, refetch } = useQuery('recordings:get', { id })
   const { data: settings } = useQuery('settings:get')
 
@@ -93,6 +95,21 @@ export default function Editor(): React.JSX.Element {
     : null
 
   const audio = useAudio(playbackSrc)
+
+  // Arriving from a cross-recording search result (Library.tsx passes the
+  // target timestamp via router state rather than a URL param, so it isn't
+  // shareable/bookmarkable — this is a one-shot jump, not a deep link).
+  // Waits for duration to be known because seeking an <audio> element before
+  // its metadata has loaded is unreliable.
+  const seekOnLoadMs = (location.state as { seekMs?: number } | null)?.seekMs ?? null
+  useEffect(() => {
+    if (seekOnLoadMs != null && audio.durationMs != null) {
+      audio.seek(seekOnLoadMs)
+    }
+    // audio.seek is stable (useCallback with no deps); only re-run when the
+    // duration actually becomes known.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audio.durationMs, seekOnLoadMs])
 
   useEffect(() => {
     const sentinel = playerSentinelRef.current
@@ -595,6 +612,14 @@ export default function Editor(): React.JSX.Element {
             <span className="toolbar__hint">Double-click a line to edit</span>
           )}
         </div>
+      )}
+
+      {hasTranscript && (
+        <SearchBox
+          recordingId={recordingId}
+          placeholder="Search this recording by meaning…"
+          onResultClick={(hit) => audio.seek(hit.startMs)}
+        />
       )}
 
       {pendingAction && (

@@ -42,6 +42,10 @@ const SHERPA_TAG = 'v1.13.6'
 const SHERPA_SEG_TAG = 'speaker-segmentation-models'
 const SHERPA_EMB_TAG = 'speaker-recongition-models' // upstream's spelling
 
+// llama.cpp's real releases are per-build tags like this, not the semver-looking
+// "latest" GitHub release (which carries no binaries at all).
+const LLAMA_TAG = 'b10679'
+
 /**
  * @typedef {object} Artifact
  * @property {string} name          Label used in logs, and the filename for single-member artifacts.
@@ -79,6 +83,16 @@ function modelArtifacts() {
       url: `https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_EMB_TAG}/nemo_en_titanet_small.onnx`,
       kind: 'raw',
       dest: 'models'
+    },
+    {
+      // 768-dim text embeddings for offline semantic search over transcripts
+      // (services/embeddings.ts). Q4_K_M quantization: ~84 MB, small enough
+      // to bundle outright rather than gate a whole feature behind a
+      // separate download the way a choice of Whisper model is.
+      name: 'embedding-model.gguf',
+      url: 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf',
+      kind: 'raw',
+      dest: 'models'
     }
   ]
 }
@@ -95,8 +109,15 @@ function artifactsFor(os, arch) {
     `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_TAG}/${asset}`
   const sherpa = (asset) =>
     `https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_TAG}/${asset}`
+  const llama = (asset) =>
+    `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${asset}`
   // The diarization CLI plus the shared libraries it loads from beside itself.
   const sherpaMembers = (exe) => [exe, '*.dll', '*.dylib', '*.so', '*.so.1']
+  // Same idea for llama-server: the release archive ships two dozen CLIs we
+  // don't use (llama-cli, llama-quantize, vision tools, ...) — grab only the
+  // server and every shared library, the same glob-not-hardcode approach as
+  // sherpaMembers, since the archive's exact DLL set shifts between builds.
+  const llamaServerMembers = (exe) => [exe, '*.dll', '*.dylib', '*.so', '*.so.1']
 
   if (os === 'win') {
     const slug = arch === 'arm64' ? 'winarm64-lgpl-8.1' : 'win64-lgpl-8.1'
@@ -123,6 +144,16 @@ function artifactsFor(os, arch) {
         members: sherpaMembers('sherpa-onnx-offline-speaker-diarization.exe'),
         sentinel: 'sherpa-onnx-offline-speaker-diarization.exe'
       },
+      {
+        // CPU-only build: this app has no GPU-acceleration path for anything
+        // else either, and a CUDA/Vulkan build would multiply the download
+        // for a backend most machines can't use.
+        name: 'llama-server.exe',
+        url: llama(`llama-${LLAMA_TAG}-bin-win-cpu-${arch === 'arm64' ? 'arm64' : 'x64'}.zip`),
+        kind: 'zip',
+        members: llamaServerMembers('llama-server.exe'),
+        sentinel: 'llama-server.exe'
+      },
       ...modelArtifacts()
     ]
   }
@@ -145,6 +176,13 @@ function artifactsFor(os, arch) {
         members: sherpaMembers('sherpa-onnx-offline-speaker-diarization'),
         sentinel: 'sherpa-onnx-offline-speaker-diarization'
       },
+      {
+        name: 'llama-server',
+        url: llama(`llama-${LLAMA_TAG}-bin-ubuntu-${arch === 'arm64' ? 'arm64' : 'x64'}.tar.gz`),
+        kind: 'tarxz',
+        members: llamaServerMembers('llama-server'),
+        sentinel: 'llama-server'
+      },
       ...modelArtifacts()
     ]
   }
@@ -160,6 +198,13 @@ function artifactsFor(os, arch) {
         kind: 'tarxz',
         members: sherpaMembers('sherpa-onnx-offline-speaker-diarization'),
         sentinel: 'sherpa-onnx-offline-speaker-diarization'
+      },
+      {
+        name: 'llama-server',
+        url: llama(`llama-${LLAMA_TAG}-bin-macos-${arch}.tar.gz`),
+        kind: 'tarxz',
+        members: llamaServerMembers('llama-server'),
+        sentinel: 'llama-server'
       },
       ...modelArtifacts()
     ]

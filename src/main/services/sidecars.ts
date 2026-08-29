@@ -20,16 +20,22 @@ export type SidecarName =
   // Ships inside the same whisper.cpp release archive as whisper-cli.
   | 'parakeet-cli'
   | 'sherpa-onnx-offline-speaker-diarization'
+  // A long-lived HTTP server, not a run-to-completion CLI like the others —
+  // see services/embeddings.ts for the lifecycle that implies.
+  | 'llama-server'
 
 /**
  * Models shipped with the app rather than downloaded.
  *
- * Only the diarization pair qualifies: together they are ~47 MB, and the
+ * The diarization pair qualifies because together they are ~47 MB, and the
  * segmentation model is published only inside a .tar.bz2, so fetching it at
- * runtime would mean shipping an archive extractor for a single file. Whisper
- * models are a runtime download because they reach 1.6 GB.
+ * runtime would mean shipping an archive extractor for a single file. The
+ * embedding model qualifies on size alone (~84 MB, a single direct download)
+ * — it's the only offline path to semantic search over transcripts, so it
+ * isn't optional the way a choice of Whisper model is. Whisper models stay a
+ * runtime download because they reach 1.6 GB.
  */
-export type BundledModel = 'segmentation.onnx' | 'speaker-embedding.onnx'
+export type BundledModel = 'segmentation.onnx' | 'speaker-embedding.onnx' | 'embedding-model.gguf'
 
 function exeName(name: SidecarName): string {
   return process.platform === 'win32' ? `${name}.exe` : name

@@ -350,6 +350,22 @@ export interface ApiSchema {
     request: void
     response: string
   }
+
+  /**
+   * Offline semantic search over transcripts. Omitting `recordingId`
+   * searches every recording; results are ranked best-match first.
+   */
+  'search:query': {
+    request: { query: string; recordingId?: string }
+    response: Array<{
+      recordingId: string
+      recordingTitle: string
+      text: string
+      startMs: number
+      endMs: number
+      score: number
+    }>
+  }
 }
 
 export interface TranscriptionSettings {
@@ -515,7 +531,8 @@ export const CHANNELS = [
   'screenshots:delete',
   'screenshots:listDisplays',
   'shell:showItemInFolder',
-  'logs:read'
+  'logs:read',
+  'search:query'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [

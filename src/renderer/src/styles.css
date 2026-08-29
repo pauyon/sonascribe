@@ -3089,3 +3089,65 @@ label.toolbar__toggle {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ---------- semantic search ---------- */
+
+.search {
+  margin-bottom: 20px;
+}
+
+.search__input {
+  width: 100%;
+  max-width: 480px;
+}
+
+.search__status {
+  margin: 10px 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.search__status--error {
+  color: var(--danger-text);
+}
+
+.search__results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  max-width: 720px;
+}
+
+.search__result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.search__result:hover {
+  background: var(--bg-hover);
+}
+
+.search__result-meta {
+  display: flex;
+  gap: 10px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.search__result-title {
+  font-weight: 600;
+}
+
+.search__result-text {
+  color: var(--text);
+}
