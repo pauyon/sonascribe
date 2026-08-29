@@ -40,6 +40,7 @@ export default function Models(): React.JSX.Element {
   const { data: statuses, refetch } = useQuery('models:list')
   const { data: settings, refetch: refetchSettings } = useQuery('settings:get')
   const { data: info } = useQuery('app:info')
+  const { data: profiles, refetch: refetchProfiles } = useQuery('profiles:list')
 
   const [progress, setProgress] = useState<Record<string, ModelDownloadProgress>>({})
   const [error, setError] = useState<string | null>(null)
@@ -68,6 +69,19 @@ export default function Models(): React.JSX.Element {
       refetch()
     },
     [refetch]
+  )
+
+  const actProfiles = useCallback(
+    async (fn: () => Promise<unknown>): Promise<void> => {
+      setError(null)
+      try {
+        await fn()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+      refetchProfiles()
+    },
+    [refetchProfiles]
   )
 
   const byId = new Map<string, ModelStatus>((statuses ?? []).map((s) => [s.id, s]))
@@ -279,10 +293,7 @@ export default function Models(): React.JSX.Element {
         <p className="settings-row__hint">
           Telling it the headcount is noticeably more accurate than letting it
           guess. It acts as a ceiling rather than a quota — you will not get
-          invented speakers to fill it. On a recording with
-          separate microphone and system tracks it only applies when the
-          microphone is marked as just you, since the count cannot be split
-          between tracks.
+          invented speakers to fill it.
         </p>
         <Select
           id="splitting"
@@ -312,6 +323,35 @@ export default function Models(): React.JSX.Element {
             The diarization helper is missing. Run <code>npm run sidecars</code>.
           </p>
         )}
+      </section>
+
+      <section className="settings-row">
+        <label>Voice recognition</label>
+        <div
+          className="settings-row__inline"
+          style={{ display: 'flex', alignItems: 'center', gap: 14 }}
+        >
+          <span>
+            {profiles && profiles.length > 0
+              ? `${profiles.length} voice${profiles.length === 1 ? '' : 's'} remembered`
+              : 'No voices remembered yet'}
+          </span>
+          {profiles && profiles.length > 0 && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => actProfiles(async () => api.invoke('profiles:clearAll'))}
+            >
+              Clear remembered voices
+            </button>
+          )}
+        </div>
+        <p className="settings-row__hint">
+          After each recording, this app quietly remembers voices it hasn't matched to anyone
+          heard before, so a regular speaker is recognised instead of splitting into a new
+          speaker every time. It only affects how many speakers are detected — it does not name
+          anyone. Nothing to set up; clear it here if it ever seems off.
+        </p>
       </section>
 
       {info && <p className="page__path">Models are stored in {info.modelsPath}</p>}

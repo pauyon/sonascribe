@@ -1331,6 +1331,11 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.chip__profile {
+  color: var(--speaker, var(--text-muted));
+  font-size: var(--fs-caption);
+}
+
 .chip__action {
   background: var(--bg-hover);
   border: none;
@@ -2633,6 +2638,34 @@ select {
 
 .menu button.menu__danger:hover {
   background: color-mix(in srgb, var(--danger) 14%, var(--bg-hover));
+}
+
+.menu--colors {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  min-width: 0;
+  max-width: 176px;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.color-swatch:hover {
+  border-color: var(--border-strong);
 }
 
 /* A toggle inside a settings row was being flattened by `.settings-row label`,

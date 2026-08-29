@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Speaker } from '@shared/types'
-import { speakerColor } from '../services/merge'
+import { pickSpeakerColor } from '@shared/colors'
 import { getDb } from './index'
 
 /**
@@ -17,6 +17,7 @@ interface SpeakerRow {
   cluster_id: number
   display_name: string
   color: string
+  profile_id: string | null
 }
 
 function toSpeaker(row: SpeakerRow): Speaker {
@@ -25,7 +26,8 @@ function toSpeaker(row: SpeakerRow): Speaker {
     recordingId: row.recording_id,
     clusterId: row.cluster_id,
     displayName: row.display_name,
-    color: row.color
+    color: row.color,
+    profileId: row.profile_id
   }
 }
 
@@ -42,15 +44,30 @@ export function listSpeakers(recordingId: string): Speaker[] {
  *
  * The UNIQUE (recording_id, cluster_id) constraint is what makes a re-merge
  * reuse the existing row — and therefore keep the user's chosen name.
+ *
+ * `profile` is passed when a voice profile's anchor matched this cluster. An
+ * existing row just gets the link — its name is left alone, since it may
+ * already carry a rename the user made by hand. A new row is named after the
+ * profile outright rather than "Speaker N".
  */
-export function ensureSpeaker(recordingId: string, clusterId: number): Speaker {
+export function ensureSpeaker(
+  recordingId: string,
+  clusterId: number,
+  profile?: { id: string; displayName: string } | null
+): Speaker {
   const existing = getDb()
     .prepare('SELECT * FROM speakers WHERE recording_id = ? AND cluster_id = ?')
     .get(recordingId, clusterId) as unknown as SpeakerRow | undefined
 
-  if (existing) return toSpeaker(existing)
+  if (existing) {
+    if (profile && existing.profile_id !== profile.id) {
+      getDb().prepare('UPDATE speakers SET profile_id = ? WHERE id = ?').run(profile.id, existing.id)
+      existing.profile_id = profile.id
+    }
+    return toSpeaker(existing)
+  }
 
-  // Named and coloured by arrival, not by cluster index.
+  // Named by arrival, not by cluster index.
   //
   // Cluster indices are an internal artefact: they start wherever the diarizer
   // happened to start, and tracks are offset past one another so they cannot
@@ -62,28 +79,80 @@ export function ensureSpeaker(recordingId: string, clusterId: number): Speaker {
     .get(recordingId) as unknown as { n: number }
   const position = named.n
 
+  // Coloured against every speaker already in this recording — including
+  // "You" — rather than by position, so two speakers can never start out
+  // sharing a color no matter which order they were discovered in.
+  const usedColors = (
+    getDb().prepare('SELECT color FROM speakers WHERE recording_id = ?').all(recordingId) as unknown as Array<{
+      color: string
+    }>
+  ).map((r) => r.color)
+
   const speaker: Speaker = {
     id: randomUUID(),
     recordingId,
     clusterId,
-    displayName: clusterId < 0 ? 'You' : `Speaker ${position + 1}`,
-    color: speakerColor(clusterId < 0 ? 0 : position)
+    displayName: profile ? profile.displayName : clusterId < 0 ? 'You' : `Speaker ${position + 1}`,
+    color: pickSpeakerColor(usedColors),
+    profileId: profile?.id ?? null
   }
 
   getDb()
     .prepare(
-      `INSERT INTO speakers (id, recording_id, cluster_id, display_name, color)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO speakers (id, recording_id, cluster_id, display_name, color, profile_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(
       speaker.id,
       speaker.recordingId,
       speaker.clusterId,
       speaker.displayName,
-      speaker.color
+      speaker.color,
+      speaker.profileId
     )
 
   return speaker
+}
+
+/**
+ * Sets a speaker's color, swapping it with whoever in the recording currently
+ * has it.
+ *
+ * Swapping rather than just overwriting is what keeps every color in a
+ * recording unique without the picker needing to grey out anything — pick any
+ * color you like and the one who had it takes the color you're giving up.
+ */
+export function setSpeakerColor(recordingId: string, id: string, color: string): void {
+  const db = getDb()
+  db.exec('BEGIN')
+  try {
+    const target = db
+      .prepare('SELECT color FROM speakers WHERE id = ? AND recording_id = ?')
+      .get(id, recordingId) as unknown as { color: string } | undefined
+    if (!target) throw new Error('That speaker no longer exists')
+
+    const holder = db
+      .prepare('SELECT id FROM speakers WHERE recording_id = ? AND color = ? AND id != ?')
+      .get(recordingId, color, id) as unknown as { id: string } | undefined
+
+    if (holder) {
+      db.prepare('UPDATE speakers SET color = ? WHERE id = ?').run(target.color, holder.id)
+    }
+    db.prepare('UPDATE speakers SET color = ? WHERE id = ?').run(color, id)
+
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
+/** Links a speaker to a voice profile, after automatic enrollment or a match. */
+export function linkSpeakerToProfile(speakerId: string, profileId: string): void {
+  const result = getDb()
+    .prepare('UPDATE speakers SET profile_id = ? WHERE id = ?')
+    .run(profileId, speakerId)
+  if (result.changes === 0) throw new Error('That speaker no longer exists')
 }
 
 export function renameSpeaker(id: string, displayName: string): Speaker {

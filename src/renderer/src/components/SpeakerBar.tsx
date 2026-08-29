@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Speaker, Utterance } from '@shared/types'
+import { SPEAKER_COLORS } from '@shared/colors'
 
 /**
  * Speaker chips: rename, merge, and a per-speaker line count.
@@ -16,7 +17,8 @@ export default function SpeakerBar({
   onFilterChange,
   onRename,
   onMerge,
-  onDelete
+  onDelete,
+  onSetColor
 }: {
   speakers: Speaker[]
   utterances: Utterance[]
@@ -28,6 +30,8 @@ export default function SpeakerBar({
   onMerge: (fromId: string, intoId: string) => void
   /** Removes a speaker and every line attributed to them. */
   onDelete: (speakerId: string) => void
+  /** Sets a speaker's color. Swaps with whoever already has it, so colors always stay unique. */
+  onSetColor: (speakerId: string, color: string) => void
 }): React.JSX.Element | null {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -38,17 +42,22 @@ export default function SpeakerBar({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   /** Chip whose ⋯ menu (Merge into… / Delete speaker) is open. */
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
+  /** Chip whose color swatch picker is open. Mutually exclusive with the ⋯ menu. */
+  const [colorPickerId, setColorPickerId] = useState<string | null>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
 
-  // A menu that cannot be dismissed by clicking away is a trap.
+  // A popover that cannot be dismissed by clicking away is a trap.
   useEffect(() => {
-    if (!menuOpenId) return
+    if (!menuOpenId && !colorPickerId) return
     const close = (e: MouseEvent): void => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpenId(null)
+      if (!popoverRef.current?.contains(e.target as Node)) {
+        setMenuOpenId(null)
+        setColorPickerId(null)
+      }
     }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
-  }, [menuOpenId])
+  }, [menuOpenId, colorPickerId])
 
   if (speakers.length === 0) return null
 
@@ -130,6 +139,12 @@ export default function SpeakerBar({
                 </button>
               )}
 
+              {speaker.profileId && (
+                <span className="chip__profile" title="Recognised — this app has heard this voice before">
+                  ✓
+                </span>
+              )}
+
               <span className="chip__count">{count}</span>
 
               {/* Hidden once a merge target is picked — the confirm/cancel
@@ -139,14 +154,19 @@ export default function SpeakerBar({
                 (mergeFrom === null ? (
                   <div
                     className="chip__menu"
-                    ref={menuOpenId === speaker.id ? menuRef : undefined}
+                    ref={
+                      menuOpenId === speaker.id || colorPickerId === speaker.id
+                        ? popoverRef
+                        : undefined
+                    }
                   >
                     <button
                       type="button"
                       className="chip__action"
-                      onClick={() =>
+                      onClick={() => {
+                        setColorPickerId(null)
                         setMenuOpenId(menuOpenId === speaker.id ? null : speaker.id)
-                      }
+                      }}
                       title="More actions"
                       aria-label={`More actions for ${speaker.displayName}`}
                       aria-haspopup="menu"
@@ -171,6 +191,16 @@ export default function SpeakerBar({
                         <button
                           type="button"
                           role="menuitem"
+                          onClick={() => {
+                            setMenuOpenId(null)
+                            setColorPickerId(speaker.id)
+                          }}
+                        >
+                          Change color…
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
                           className="menu__danger"
                           onClick={() => {
                             setMenuOpenId(null)
@@ -179,6 +209,26 @@ export default function SpeakerBar({
                         >
                           Delete speaker
                         </button>
+                      </div>
+                    )}
+                    {colorPickerId === speaker.id && (
+                      <div className="menu menu--colors" role="menu">
+                        {SPEAKER_COLORS.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            className="color-swatch"
+                            style={{ background: color }}
+                            aria-label={`Use this color for ${speaker.displayName}`}
+                            aria-pressed={color === speaker.color}
+                            onClick={() => {
+                              setColorPickerId(null)
+                              onSetColor(speaker.id, color)
+                            }}
+                          >
+                            {color === speaker.color ? '✓' : null}
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>

@@ -564,6 +564,9 @@ export default function Editor(): React.JSX.Element {
           }}
           onMerge={mergeSpeakersUndoable}
           onDelete={deleteSpeakerBulk}
+          onSetColor={(speakerId, color) =>
+            void run(() => api.invoke('speakers:setColor', { recordingId, id: speakerId, color }))
+          }
         />
       )}
 

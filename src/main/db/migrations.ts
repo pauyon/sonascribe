@@ -116,5 +116,42 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX idx_screenshots_recording ON screenshots (recording_id, timestamp_ms);
     `
+  },
+  {
+    version: 4,
+    name: 'voice_profiles',
+    sql: /* sql */ `
+      -- A saved sample of one person's voice, matched against future
+      -- recordings by anchoring it ahead of the real audio in a diarization
+      -- pass rather than by comparing embedding vectors directly.
+      CREATE TABLE voice_profiles (
+        id           TEXT    PRIMARY KEY,
+        display_name TEXT    NOT NULL,
+        sample_path  TEXT    NOT NULL,
+        sample_ms    INTEGER NOT NULL,
+        auto_match   INTEGER NOT NULL DEFAULT 1,
+        created_at   INTEGER NOT NULL
+      );
+
+      ALTER TABLE speakers ADD COLUMN profile_id TEXT REFERENCES voice_profiles (id) ON DELETE SET NULL;
+
+      -- Which track an utterance's audio actually came from, so enrolling a
+      -- voice profile can pull clean samples for a speaker who was heard on
+      -- more than one track.
+      ALTER TABLE utterances ADD COLUMN track_id TEXT REFERENCES tracks (id) ON DELETE SET NULL;
+    `
+  },
+  {
+    version: 5,
+    name: 'voice_profiles_auto_enroll',
+    sql: /* sql */ `
+      -- Enrollment and matching are both fully automatic now — a profile is
+      -- no longer opted in or out one at a time.
+      ALTER TABLE voice_profiles DROP COLUMN auto_match;
+
+      -- Drives which profile gets evicted once the cap is reached: the one
+      -- least recently recognised, not the one created longest ago.
+      ALTER TABLE voice_profiles ADD COLUMN last_matched_at INTEGER NOT NULL DEFAULT 0;
+    `
   }
 ]

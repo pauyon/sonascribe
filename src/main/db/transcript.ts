@@ -26,6 +26,8 @@ export function saveMergedTranscript(input: {
     text: string
     confidence: number | null
     speakerId: string | null
+    /** Which track this line's audio came from — the source enrollment reads from. */
+    trackId: string | null
     words: Array<{ startMs: number; endMs: number; text: string }>
   }>
 }): void {
@@ -37,8 +39,8 @@ export function saveMergedTranscript(input: {
 
     const insertUtterance = db.prepare(
       `INSERT INTO utterances
-         (id, recording_id, speaker_id, start_ms, end_ms, text, edited, confidence)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`
+         (id, recording_id, speaker_id, start_ms, end_ms, text, edited, confidence, track_id)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
     )
     const insertWord = db.prepare(
       `INSERT INTO words (id, utterance_id, start_ms, end_ms, text)
@@ -54,7 +56,8 @@ export function saveMergedTranscript(input: {
         utterance.startMs,
         utterance.endMs,
         utterance.text,
-        utterance.confidence
+        utterance.confidence,
+        utterance.trackId
       )
       for (const word of utterance.words) {
         insertWord.run(randomUUID(), utteranceId, word.startMs, word.endMs, word.text)
@@ -110,6 +113,26 @@ export function deleteUtterance(id: string): void {
       'That line no longer exists. The transcript was replaced; reload and try again.'
     )
   }
+}
+
+/**
+ * A speaker's utterance audio ranges, for building a voice-profile sample.
+ *
+ * Ranges from before `track_id` existed (or an import re-saved without it)
+ * come back empty — there is no track to know which file to cut the sample
+ * from.
+ */
+export function listUtteranceRangesForSpeaker(
+  speakerId: string
+): Array<{ trackId: string; startMs: number; endMs: number }> {
+  const rows = getDb()
+    .prepare(
+      `SELECT track_id, start_ms, end_ms FROM utterances
+        WHERE speaker_id = ? AND track_id IS NOT NULL
+        ORDER BY start_ms`
+    )
+    .all(speakerId) as unknown as Array<{ track_id: string; start_ms: number; end_ms: number }>
+  return rows.map((r) => ({ trackId: r.track_id, startMs: r.start_ms, endMs: r.end_ms }))
 }
 
 export function countUtterances(recordingId: string): number {

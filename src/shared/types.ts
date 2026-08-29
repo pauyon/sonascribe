@@ -79,6 +79,28 @@ export interface Speaker {
   clusterId: number
   displayName: string
   color: string
+  /** Voice profile this speaker was recognised as, or linked to by hand. */
+  profileId: string | null
+}
+
+/**
+ * A saved sample of one person's voice, enrolled and matched automatically —
+ * there is no per-profile control, only a global "forget everything."
+ *
+ * Matching works by anchoring the sample ahead of the real audio in a
+ * diarization pass, not by comparing embedding vectors — the bundled
+ * diarization CLI never exposes those. `sampleMs` is the anchor's own length,
+ * needed to know how much of the analysis audio belongs to it rather than to
+ * the recording being diarized. The name carries no meaning beyond whatever
+ * generic label the speaker had when the profile was created — identifying
+ * who's who is never the point, only telling one recurring voice apart from a
+ * new one.
+ */
+export interface VoiceProfile {
+  id: string
+  displayName: string
+  sampleMs: number
+  createdAt: number
 }
 
 export interface Utterance {

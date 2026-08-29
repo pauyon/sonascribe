@@ -343,3 +343,126 @@ export async function mixToWav(options: MixOptions): Promise<void> {
     { onProgress: options.onProgress, signal: options.signal }
   )
 }
+
+export interface ExtractSegment {
+  startMs: number
+  endMs: number
+}
+
+/**
+ * Cuts several ranges out of one WAV and joins them into a new file, in the
+ * order given.
+ *
+ * Used to build a voice-profile sample from a speaker's own lines: rather than
+ * recording a fresh clip, the cleanest few lines already on disk are stitched
+ * together into one anchor.
+ */
+export async function extractSegmentsToWav(options: {
+  inputPath: string
+  segments: ExtractSegment[]
+  outputPath: string
+  signal?: AbortSignal
+}): Promise<void> {
+  const { inputPath, segments, outputPath, signal } = options
+  if (segments.length === 0) {
+    throw new Error('extractSegmentsToWav needs at least one segment')
+  }
+
+  const trims = segments.map(
+    (s, i) =>
+      `[0:a]atrim=start=${(s.startMs / 1000).toFixed(3)}:end=${(s.endMs / 1000).toFixed(3)},asetpts=PTS-STARTPTS[s${i}]`
+  )
+  const labels = segments.map((_, i) => `[s${i}]`).join('')
+  const filter = [...trims, `${labels}concat=n=${segments.length}:v=0:a=1[out]`].join(';')
+
+  await runFfmpeg(
+    [
+      ...baseArgs(),
+      '-i',
+      inputPath,
+      '-filter_complex',
+      filter,
+      '-map',
+      '[out]',
+      '-ac',
+      String(TARGET_CHANNELS),
+      '-ar',
+      String(TARGET_SAMPLE_RATE),
+      '-c:a',
+      'pcm_s16le',
+      ...progressArgs(),
+      outputPath
+    ],
+    { signal }
+  )
+}
+
+export interface ConcatPart {
+  inputPath: string
+  durationMs: number
+}
+
+export interface ConcatResult {
+  /** Start time of each part in the concatenated output, in the same order as `parts`. */
+  offsets: number[]
+}
+
+/**
+ * Concatenates several tracks into one WAV with real silence between them, for
+ * joint diarization across tracks that were captured separately.
+ *
+ * The gap has to be actual silence in the audio, not just a timestamp offset:
+ * the segmentation model ends a speech segment where it hears quiet, and a
+ * hard cut straight from one track into the next gives it nothing to stop at,
+ * so a segment can bridge the seam and merge two different tracks' voices into
+ * one. `durationMs` is trusted rather than probed from the output — the parts'
+ * own recorded lengths already fix the geometry, so the offsets are exact
+ * without a second pass over the file.
+ */
+export async function concatToWav(options: {
+  parts: ConcatPart[]
+  gapMs: number
+  outputPath: string
+  signal?: AbortSignal
+}): Promise<ConcatResult> {
+  const { parts, gapMs, outputPath, signal } = options
+  if (parts.length < 2) {
+    throw new Error('concatToWav needs at least two parts')
+  }
+
+  const gapSec = (gapMs / 1000).toFixed(3)
+  const lastIndex = parts.length - 1
+  // Every part but the last gets silence appended to its own end; the concat
+  // filter then simply runs them back to back.
+  const padded = parts.slice(0, lastIndex).map((_, i) => `[${i}:a]apad=pad_dur=${gapSec}[a${i}]`)
+  const labels = parts.slice(0, lastIndex).map((_, i) => `[a${i}]`).join('') + `[${lastIndex}:a]`
+  const filter = [...padded, `${labels}concat=n=${parts.length}:v=0:a=1[out]`].join(';')
+
+  await runFfmpeg(
+    [
+      ...baseArgs(),
+      ...parts.flatMap((p) => ['-i', p.inputPath]),
+      '-filter_complex',
+      filter,
+      '-map',
+      '[out]',
+      '-ac',
+      String(TARGET_CHANNELS),
+      '-ar',
+      String(TARGET_SAMPLE_RATE),
+      '-c:a',
+      'pcm_s16le',
+      ...progressArgs(),
+      outputPath
+    ],
+    { signal }
+  )
+
+  const offsets: number[] = []
+  let cursor = 0
+  for (const part of parts) {
+    offsets.push(cursor)
+    cursor += part.durationMs + gapMs
+  }
+  return { offsets }
+}

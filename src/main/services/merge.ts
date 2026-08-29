@@ -417,28 +417,3 @@ function coalesceAdjacent(utterances: MergedUtterance[], maxGapMs = 2000): Merge
   }
   return out
 }
-
-/**
- * Distinct colours for speaker labels.
- *
- * Chosen to stay legible on the dark background and to remain distinguishable
- * for the most common forms of colour blindness — speaker identity is carried
- * by the name as well, so colour is reinforcement rather than the only signal.
- */
-export const SPEAKER_COLORS = [
-  // Drawn from the brand palette first, then hues far enough apart to stay
-  // distinct once a recording runs past four people. Each is used as a hue to
-  // mix from rather than painted directly, so they hold up on white and on navy.
-  '#4f7cff',
-  '#32a071',
-  '#e5a43b',
-  '#d94c4c',
-  '#7a5af8',
-  '#0ba5a5',
-  '#db4f9e',
-  '#667085'
-]
-
-export function speakerColor(index: number): string {
-  return SPEAKER_COLORS[index % SPEAKER_COLORS.length]
-}

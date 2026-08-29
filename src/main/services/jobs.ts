@@ -1,8 +1,12 @@
+import { join } from 'node:path'
+import { rm } from 'node:fs/promises'
 import type { ActiveJob, JobProgress, JobStage, TrackKind } from '@shared/types'
 import { getRecording } from '../db/recordings'
 import { listTracks, setRecordingStatus } from '../db/tracks'
 import { saveMergedTranscript } from '../db/transcript'
 import { ensureSpeaker } from '../db/speakers'
+import { listProfilesForMatching } from '../db/profiles'
+import { runAutoEnrollment } from './profiles'
 import {
   getDiarizationEnabled,
   getLanguage,
@@ -16,8 +20,9 @@ import { emit } from '../ipc/events'
 import { resolveModelPath } from './models'
 import { transcribeWithWhisper } from './whisper'
 import { transcribeWithParakeet } from './parakeet'
-import { TranscriptionError, engineSidecar } from './transcription'
-import { diarize, DiarizationError, minDurationOnFor, SPLITTING_PRESETS } from './diarize'
+import { TranscriptionError, engineSidecar, type TranscriptSegment } from './transcription'
+import { diarize, DiarizationError, minDurationOnFor, SPLITTING_PRESETS, type SpeakerSegment } from './diarize'
+import { concatToWav } from './ffmpeg'
 import {
   absorbTinySpeakers,
   LOCAL_SPEAKER,
@@ -29,6 +34,7 @@ import { hasBundledModel, hasSidecar } from './sidecars'
 import { measurePeak, SILENCE_PEAK_THRESHOLD } from './peaks'
 import { takeLiveWords } from './live-transcribe'
 import { groupWordsIntoSegments } from './transcription'
+import { recordingMediaPath } from '../paths'
 
 /**
  * Serial job queue for the transcription pipeline.
@@ -73,6 +79,30 @@ export class JobError extends Error {}
  */
 function trackOrder(kind: TrackKind): number {
   return kind === 'mic' ? 0 : kind === 'system' ? 1 : 2
+}
+
+/**
+ * Picks out one track's slice of a joint diarization pass and rebases it to
+ * track-local time.
+ *
+ * A segment that starts inside this track's window but runs past the end of
+ * it has bled into the silence gap or the next track — the segmentation model
+ * bridging across a boundary it should have stopped at. Real speech never
+ * needs to do that, so the segment is dropped rather than clipped.
+ */
+function segmentsForPart(
+  segments: SpeakerSegment[],
+  windowStart: number,
+  windowDurationMs: number
+): SpeakerSegment[] {
+  const windowEnd = windowStart + windowDurationMs
+  const result: SpeakerSegment[] = []
+  for (const segment of segments) {
+    if (segment.startMs < windowStart || segment.startMs >= windowEnd) continue
+    if (segment.endMs > windowEnd) continue
+    result.push({ ...segment, startMs: segment.startMs - windowStart, endMs: segment.endMs - windowStart })
+  }
+  return result
 }
 
 /**
@@ -276,44 +306,18 @@ async function prepareAndQueue(
         // How long the recording actually is, which decides how suspicious the
         // pipeline should be of a speaker who barely says anything.
         const longestTrackMs = Math.max(0, ...tracks.map((t) => t.durationMs ?? 0))
-        const merged: MergedUtterance[] = []
+        const merged: Array<MergedUtterance & { trackId: string }> = []
         let resolvedLanguage: string | null = null
         const emptyTracks: TrackKind[] = []
         // Tracks that carry signal but came back with nothing — a fault, not silence.
         const failedTracks: TrackKind[] = []
 
-        // Cluster indices restart at zero on every track, so each track's are
-        // shifted past the last. Without it, mic cluster 0 and system cluster 0
-        // map to one speaker row and two different people are fused together.
-        let clusterBase = 0
-
-        // Which tracks will actually be clustered — the mic is exempt when the
-        // user has declared it carries only their own voice.
-        const clusteredTracks = ordered.filter((t) => !(t.kind === 'mic' && micIsSolo))
-
-        /**
-         * A speaker count describes the recording, not each track in it.
-         *
-         * Passing the same count to every track multiplies it: "2 speakers" on a
-         * mic+system recording asked for two clusters per track and produced
-         * four people. It can only be honoured when exactly one track is
-         * clustered — an import, or a call whose microphone is declared to be the
-         * local user, in which case the remaining participants number one fewer.
-         *
-         * Otherwise the count is left unset and the threshold does the work; the
-         * absorption pass afterwards trims what it over-splits.
-         */
-        const forcedCount =
-          numSpeakers && numSpeakers > 0 && clusteredTracks.length === 1
-            ? clusteredTracks.length < ordered.length
-              ? Math.max(1, numSpeakers - 1)
-              : numSpeakers
-            : null
-        if (numSpeakers && numSpeakers > 0 && forcedCount == null) {
-          console.log(
-            `[jobs] ignoring the ${numSpeakers}-speaker setting: ${clusteredTracks.length} tracks are clustered separately and the count cannot be divided between them`
-          )
-        }
+        // Stage 1: transcribe every track first. Diarization runs afterwards,
+        // once, over whichever tracks actually came back with speech — so a
+        // track that turns out to be empty never claims a share of the
+        // clustering budget below.
+        const transcribed: Array<{ track: (typeof ordered)[number]; segments: TranscriptSegment[] }> =
+          []
 
         for (const [index, track] of ordered.entries()) {
           const share = 1 / ordered.length
@@ -376,44 +380,170 @@ async function prepareAndQueue(
             continue
           }
 
+          transcribed.push({ track, segments: result.segments })
+        }
+
+        // Stage 2: split off tracks that need no diarization — the mic when
+        // it's declared to carry only the local user, or diarization is off
+        // altogether — and merge those immediately.
+        const toDiarize: typeof transcribed = []
+        for (const { track, segments } of transcribed) {
           if (track.kind === 'mic' && micIsSolo) {
             // Declared to carry only the local user, so diarizing it could only
             // rediscover something already known — or get it wrong. Cluster -1
             // is reserved for "You".
             merged.push(
-              ...mergeTranscriptWithSpeakers(result.segments, [], { forceSpeaker: LOCAL_SPEAKER })
+              ...mergeTranscriptWithSpeakers(segments, [], { forceSpeaker: LOCAL_SPEAKER }).map(
+                (u) => ({ ...u, trackId: track.id })
+              )
             )
             continue
           }
-
           if (!diarizationEnabled) {
-            merged.push(...mergeTranscriptWithSpeakers(result.segments, []))
+            merged.push(
+              ...mergeTranscriptWithSpeakers(segments, []).map((u) => ({ ...u, trackId: track.id }))
+            )
             continue
           }
+          toDiarize.push({ track, segments })
+        }
 
+        /**
+         * A speaker count describes the recording, not each track in it. The
+         * mic is the only track ever excluded from clustering (when declared
+         * solo), so it's the only adjustment needed here. Computed even when
+         * nothing ends up needing diarization, since the absorption pass below
+         * also uses it to tell an asserted headcount from a guess.
+         */
+        const forcedCount =
+          numSpeakers && numSpeakers > 0
+            ? micIsSolo && transcribed.some((t) => t.track.kind === 'mic')
+              ? Math.max(1, numSpeakers - 1)
+              : numSpeakers
+            : null
+
+        // Known voices to try to recognise in this recording. Each one is
+        // prepended as an anchor ahead of the real audio, and whichever
+        // cluster ends up covering an anchor's window is that person — this
+        // runs inside the same embedding space diarization already uses, with
+        // no separate comparison step.
+        const profiles = listProfilesForMatching()
+        // Cluster index -> the profile whose anchor claimed it.
+        const matchedProfiles = new Map<number, { id: string; displayName: string }>()
+
+        // Stage 3: one diarization pass across every remaining track, so a
+        // speaker heard on both mic and system is one cluster instead of two,
+        // and a headcount describes the whole recording instead of being
+        // divided between tracks that can't agree on how to split it.
+        if (toDiarize.length > 0) {
           setRecordingStatus(recordingId, 'diarizing')
           publishRecording(recordingId)
           progress(recordingId, 'diarizing', 0)
 
-          const speakerSegments = await diarize({
-            wavPath: track.wavPath,
-            numSpeakers: forcedCount,
-            threshold: splitting.threshold,
-            // Tempered on short recordings, where the threshold that protects a
-            // long meeting from fragmenting would instead delete a brief reply.
-            minDurationOn: minDurationOnFor(splitting.minDurationOn, track.durationMs ?? undefined),
-            onProgress: (fraction) => progress(recordingId, 'diarizing', fraction),
-            signal: controller.signal
-          })
+          let byTrackId: Map<string, SpeakerSegment[]>
+
+          if (toDiarize.length === 1 && profiles.length === 0) {
+            const only = toDiarize[0].track
+            const segments = await diarize({
+              wavPath: only.wavPath,
+              numSpeakers: forcedCount,
+              threshold: splitting.threshold,
+              // Tempered on short recordings, where the threshold that protects
+              // a long meeting from fragmenting would instead delete a brief
+              // reply.
+              minDurationOn: minDurationOnFor(splitting.minDurationOn, only.durationMs ?? undefined),
+              onProgress: (fraction) => progress(recordingId, 'diarizing', fraction),
+              signal: controller.signal
+            })
+            byTrackId = new Map([[only.id, segments]])
+          } else {
+            // Anchors go first, then the real tracks. Real gaps between every
+            // part in the concatenated audio, not just offsets: the
+            // segmentation model needs actual silence to end a speech segment
+            // at a boundary rather than bridging across it.
+            const gapMs = 2000
+            const analysisPath = join(recordingMediaPath(recordingId), 'diarize-analysis.wav')
+            const trackDurations = toDiarize.map((t) => t.track.durationMs ?? 0)
+            const parts = [
+              ...profiles.map((p) => ({ inputPath: p.samplePath, durationMs: p.sampleMs })),
+              ...toDiarize.map((t, i) => ({ inputPath: t.track.wavPath, durationMs: trackDurations[i] }))
+            ]
+            const { offsets } = await concatToWav({
+              parts,
+              gapMs,
+              outputPath: analysisPath,
+              signal: controller.signal
+            })
+            const totalDurationMs =
+              parts.reduce((sum, p) => sum + p.durationMs, 0) + gapMs * (parts.length - 1)
+            // An anchor consumes one of the requested clusters same as a real
+            // participant, so the ceiling has to cover both — a profile whose
+            // person didn't show up this time contributes no real segments
+            // (see segmentsForPart below) and its slot goes unused rather than
+            // stealing one from somebody who did.
+            const clusterCeiling = forcedCount != null ? forcedCount + profiles.length : null
+
+            try {
+              const allSegments = await diarize({
+                wavPath: analysisPath,
+                numSpeakers: clusterCeiling,
+                threshold: splitting.threshold,
+                minDurationOn: minDurationOnFor(splitting.minDurationOn, totalDurationMs),
+                onProgress: (fraction) => progress(recordingId, 'diarizing', fraction),
+                signal: controller.signal
+              })
+
+              // Whichever cluster covers the most of an anchor's window is that
+              // person. An anchor that ties with another for the same cluster,
+              // or that overlaps nothing, is left unmatched rather than guessed.
+              const claims = new Map<number, string[]>()
+              const claimedBy = new Map<string, number>()
+              for (const [i, profile] of profiles.entries()) {
+                const windowStart = offsets[i]
+                const windowEnd = windowStart + profile.sampleMs
+                let best: number | null = null
+                let bestOverlap = 0
+                for (const segment of allSegments) {
+                  const amount =
+                    Math.min(segment.endMs, windowEnd) - Math.max(segment.startMs, windowStart)
+                  if (amount > bestOverlap) {
+                    bestOverlap = amount
+                    best = segment.speaker
+                  }
+                }
+                if (best == null) continue
+                claims.set(best, [...(claims.get(best) ?? []), profile.id])
+                claimedBy.set(profile.id, best)
+              }
+              for (const [profileId, cluster] of claimedBy) {
+                if ((claims.get(cluster)?.length ?? 0) > 1) continue
+                const profile = profiles.find((p) => p.id === profileId)
+                if (profile) matchedProfiles.set(cluster, { id: profile.id, displayName: profile.displayName })
+              }
+
+              // Real tracks start after the anchor parts; segmentsForPart's own
+              // windowing is what keeps an anchor's audio (and an absent
+              // profile's dead cluster) out of the transcript.
+              byTrackId = new Map(
+                toDiarize.map(({ track }, i) => [
+                  track.id,
+                  segmentsForPart(allSegments, offsets[profiles.length + i], trackDurations[i])
+                ])
+              )
+            } finally {
+              await rm(analysisPath, { force: true })
+            }
+          }
           if (controller.signal.aborted) return
 
-          const shifted = speakerSegments.map((segment) => ({
-            ...segment,
-            speaker: segment.speaker + clusterBase
-          }))
-          clusterBase += speakerSegments.reduce((max, s) => Math.max(max, s.speaker + 1), 0)
-
-          merged.push(...mergeTranscriptWithSpeakers(result.segments, shifted))
+          for (const { track, segments } of toDiarize) {
+            merged.push(
+              ...mergeTranscriptWithSpeakers(segments, byTrackId.get(track.id) ?? []).map((u) => ({
+                ...u,
+                trackId: track.id
+              }))
+            )
+          }
         }
 
         // Only when nothing anywhere produced speech is this a real failure —
@@ -447,22 +577,31 @@ async function prepareAndQueue(
         // Skipped when a count was honoured: the user asserted the headcount and
         // the clusterer was capped by it, so a thin cluster is one of the speakers
         // they told us about, not an artefact to tidy away.
-        const cleaned =
+        // absorbTinySpeakers only ever reassigns `speaker` (by spreading the
+        // original utterance) or drops nothing, so `trackId` survives even
+        // though its own signature is typed in terms of the untracked shape.
+        const cleaned = (
           forcedCount == null
             ? absorbTinySpeakers(merged, minSpeakerSpeechFor(longestTrackMs))
             : merged
+        ) as Array<MergedUtterance & { trackId: string }>
         if (cleaned.length !== merged.length) {
           console.log(
             `[jobs] absorbed negligible speakers: ${merged.length} utterances -> ${cleaned.length}`
           )
         }
 
-        // Map cluster indices to speaker rows, creating any that are new.
-        // Existing rows are reused, so renames survive a re-run.
+        // Map cluster indices to speaker rows, creating any that are new. A
+        // cluster an anchor claimed is created under that profile's name
+        // instead of "Speaker N". Existing rows are reused, so renames (and a
+        // profile link from a previous run) survive a re-run.
         const speakerIds = new Map<number, string>()
         for (const utterance of cleaned) {
           if (utterance.speaker == null || speakerIds.has(utterance.speaker)) continue
-          speakerIds.set(utterance.speaker, ensureSpeaker(recordingId, utterance.speaker).id)
+          speakerIds.set(
+            utterance.speaker,
+            ensureSpeaker(recordingId, utterance.speaker, matchedProfiles.get(utterance.speaker)).id
+          )
         }
 
         saveMergedTranscript({
@@ -475,6 +614,7 @@ async function prepareAndQueue(
             text: u.text,
             confidence: u.confidence,
             speakerId: u.speaker == null ? null : (speakerIds.get(u.speaker) ?? null),
+            trackId: u.trackId,
             words: u.words.map((w) => ({
               startMs: w.startMs,
               endMs: w.endMs,
@@ -482,6 +622,15 @@ async function prepareAndQueue(
             }))
           }))
         })
+
+        // Background bookkeeping, not part of the transcript itself — a
+        // failure here must never turn a finished transcription into a failed
+        // job, so it's isolated and only ever logged.
+        try {
+          await runAutoEnrollment(recordingId)
+        } catch (err) {
+          console.warn(`[jobs] voice-profile enrollment failed for ${recordingId}:`, err)
+        }
 
         setRecordingStatus(recordingId, 'ready')
         publishRecording(recordingId)

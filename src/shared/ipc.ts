@@ -21,7 +21,8 @@ import type {
   Screenshot,
   SpeakerSplitting,
   TrackKind,
-  TranscriptBundle
+  TranscriptBundle,
+  VoiceProfile
 } from './types'
 import type { ModelDownloadProgress, ModelStatus } from './models'
 import type { ExportFormat } from './export'
@@ -210,6 +211,31 @@ export interface ApiSchema {
    */
   'speakers:delete': {
     request: { id: string }
+    response: void
+  }
+  /**
+   * Sets a speaker's color, swapping it with whoever currently has it — every
+   * color in a recording stays unique, so there's nothing to disable in the picker.
+   */
+  'speakers:setColor': {
+    request: { recordingId: string; id: string; color: string }
+    response: void
+  }
+
+  /**
+   * Every saved voice profile, for the Settings summary count.
+   *
+   * Enrollment and matching both happen automatically at the end of every
+   * transcription job — there is nothing here to create, rename or toggle by
+   * hand, only `profiles:clearAll` to forget everything.
+   */
+  'profiles:list': {
+    request: void
+    response: VoiceProfile[]
+  }
+  /** Forgets every remembered voice and deletes their saved samples. */
+  'profiles:clearAll': {
+    request: void
     response: void
   }
 
@@ -461,6 +487,9 @@ export const CHANNELS = [
   'speakers:merge',
   'speakers:reassign',
   'speakers:delete',
+  'speakers:setColor',
+  'profiles:list',
+  'profiles:clearAll',
   'recording:start',
   'recording:chunk',
   'recording:pause',

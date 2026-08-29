@@ -37,6 +37,15 @@ export function modelsPath(): string {
   return ensure(join(userDataPath(), 'models'))
 }
 
+function voiceProfilesPath(): string {
+  return ensure(join(userDataPath(), 'voice-profiles'))
+}
+
+/** WAV sample for one saved voice profile, whether or not it exists yet. */
+export function voiceProfilePath(id: string): string {
+  return join(voiceProfilesPath(), `${id}.wav`)
+}
+
 /** Per-recording media directory, holding the original plus derived WAV tracks. */
 export function recordingMediaPath(recordingId: string): string {
   return ensure(join(mediaPath(), recordingId))

@@ -153,6 +153,7 @@ export function getTranscriptBundle(id: string): TranscriptBundle | null {
     cluster_id: number
     display_name: string
     color: string
+    profile_id: string | null
   }>
 
   const screenshotRows = db
@@ -190,7 +191,8 @@ export function getTranscriptBundle(id: string): TranscriptBundle | null {
     recordingId: r.recording_id,
     clusterId: r.cluster_id,
     displayName: r.display_name,
-    color: r.color
+    color: r.color,
+    profileId: r.profile_id
   }))
 
   const screenshots: Screenshot[] = screenshotRows.map((r) => ({

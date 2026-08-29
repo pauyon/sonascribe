@@ -30,7 +30,15 @@ import {
   setSpeakerCount,
   setSpeakerSplitting
 } from '../db/settings'
-import { deleteSpeaker, mergeSpeakers, reassignUtterance, renameSpeaker } from '../db/speakers'
+import {
+  deleteSpeaker,
+  mergeSpeakers,
+  reassignUtterance,
+  renameSpeaker,
+  setSpeakerColor
+} from '../db/speakers'
+import { listProfiles } from '../db/profiles'
+import { clearAllProfiles } from '../services/profiles'
 import { deleteScreenshot, getScreenshotPath } from '../db/screenshots'
 import { captureScreenshots, listDisplaySources } from '../services/screenshots'
 import { screenshotFileName } from '../services/screenshot-naming'
@@ -288,6 +296,14 @@ const handlers: Handlers = {
   'speakers:delete': ({ id }) => {
     deleteSpeaker(id)
   },
+
+  'speakers:setColor': ({ recordingId, id, color }) => {
+    setSpeakerColor(recordingId, id, color)
+  },
+
+  'profiles:list': () => listProfiles(),
+
+  'profiles:clearAll': () => clearAllProfiles(),
 
   'recording:start': ({ title, kinds, sampleRate }) =>
     startRecording({ title, kinds, sampleRate }),
