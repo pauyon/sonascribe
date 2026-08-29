@@ -61,7 +61,18 @@ export default function SearchBox({
         type="search"
         placeholder={placeholder}
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          const next = e.target.value
+          setQuery(next)
+          // Emptying the box — by backspacing or the input's own clear
+          // button — should clear stale results immediately rather than
+          // leaving the last search's answer on screen until Enter is
+          // pressed again.
+          if (!next.trim()) {
+            setResults(null)
+            setError(null)
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') void runSearch()
         }}

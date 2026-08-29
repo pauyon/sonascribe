@@ -34,10 +34,18 @@ function trackOrder(kind: TrackKind): number {
  * Picks out one track's slice of a joint diarization pass and rebases it to
  * track-local time.
  *
- * A segment that starts inside this track's window but runs past the end of
- * it has bled into the silence gap or the next track — the segmentation model
- * bridging across a boundary it should have stopped at. Real speech never
- * needs to do that, so the segment is dropped rather than clipped.
+ * A segment overlapping this window at all is clamped to it rather than
+ * dropped whenever it runs past either edge — including the very common case
+ * of the last real segment in the whole file, which the segmentation model
+ * routinely rounds a few tens of milliseconds past the file's true end (its
+ * own frame quantization, not the model bridging into content that doesn't
+ * exist). Dropping the whole segment for that used to throw away everything
+ * from the boundary crossing on, taking a real speaker's entire tail — in one
+ * observed case, all 36 seconds of a person's only remaining segment,
+ * because it ended 20ms past the window. The 2-second silence gap between
+ * parts (see concatToWav below) is what actually protects against a segment
+ * genuinely bleeding into a neighbour's content; clamping a boundary overrun
+ * of a few tens of milliseconds can't reach across that.
  */
 function segmentsForPart(
   segments: SpeakerSegment[],
@@ -47,9 +55,10 @@ function segmentsForPart(
   const windowEnd = windowStart + windowDurationMs
   const result: SpeakerSegment[] = []
   for (const segment of segments) {
-    if (segment.startMs < windowStart || segment.startMs >= windowEnd) continue
-    if (segment.endMs > windowEnd) continue
-    result.push({ ...segment, startMs: segment.startMs - windowStart, endMs: segment.endMs - windowStart })
+    const startMs = Math.max(segment.startMs, windowStart)
+    const endMs = Math.min(segment.endMs, windowEnd)
+    if (endMs <= startMs) continue
+    result.push({ ...segment, startMs: startMs - windowStart, endMs: endMs - windowStart })
   }
   return result
 }
