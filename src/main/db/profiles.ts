@@ -18,6 +18,7 @@ interface VoiceProfileRow {
   sample_ms: number
   created_at: number
   last_matched_at: number
+  color: string | null
 }
 
 function toProfile(row: VoiceProfileRow): VoiceProfile {
@@ -25,7 +26,8 @@ function toProfile(row: VoiceProfileRow): VoiceProfile {
     id: row.id,
     displayName: row.display_name,
     sampleMs: row.sample_ms,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    color: row.color
   }
 }
 
@@ -77,23 +79,31 @@ export function insertProfile(input: {
   displayName: string
   samplePath: string
   sampleMs: number
+  /** The enrolling speaker's color, so a recognised voice keeps it next time too. */
+  color: string
 }): VoiceProfile {
   const now = Date.now()
   const profile: VoiceProfile = {
     id: input.id,
     displayName: input.displayName,
     sampleMs: input.sampleMs,
-    createdAt: now
+    createdAt: now,
+    color: input.color
   }
 
   getDb()
     .prepare(
-      `INSERT INTO voice_profiles (id, display_name, sample_path, sample_ms, created_at, last_matched_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO voice_profiles (id, display_name, sample_path, sample_ms, created_at, last_matched_at, color)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(profile.id, profile.displayName, input.samplePath, input.sampleMs, now, now)
+    .run(profile.id, profile.displayName, input.samplePath, input.sampleMs, now, now, input.color)
 
   return profile
+}
+
+/** Records the color a linked speaker was just given, so it carries over next time. */
+export function setProfileColor(id: string, color: string): void {
+  getDb().prepare('UPDATE voice_profiles SET color = ? WHERE id = ?').run(color, id)
 }
 
 /** Replaces a profile's sample in place, when a later recording offers a better one. */

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { Speaker } from '@shared/types'
 import { pickSpeakerColor } from '@shared/colors'
 import { getDb } from './index'
+import { getLocalSpeakerColor, setLocalSpeakerColor } from './settings'
+import { setProfileColor } from './profiles'
 
 /**
  * Speaker rows.
@@ -48,12 +50,13 @@ export function listSpeakers(recordingId: string): Speaker[] {
  * `profile` is passed when a voice profile's anchor matched this cluster. An
  * existing row just gets the link — its name is left alone, since it may
  * already carry a rename the user made by hand. A new row is named after the
- * profile outright rather than "Speaker N".
+ * profile outright rather than "Speaker N", and coloured to match it too if
+ * that color is free in this recording.
  */
 export function ensureSpeaker(
   recordingId: string,
   clusterId: number,
-  profile?: { id: string; displayName: string } | null
+  profile?: { id: string; displayName: string; color?: string | null } | null
 ): Speaker {
   const existing = getDb()
     .prepare('SELECT * FROM speakers WHERE recording_id = ? AND cluster_id = ?')
@@ -88,12 +91,19 @@ export function ensureSpeaker(
     }>
   ).map((r) => r.color)
 
+  // A recurring voice (or "You") keeps its remembered color when it's free
+  // this time; otherwise it falls back to picking a fresh one exactly as if
+  // it had never had a preference, rather than fighting over it.
+  const preferredColor = profile ? profile.color : clusterId < 0 ? getLocalSpeakerColor() : null
+  const color =
+    preferredColor && !usedColors.includes(preferredColor) ? preferredColor : pickSpeakerColor(usedColors)
+
   const speaker: Speaker = {
     id: randomUUID(),
     recordingId,
     clusterId,
     displayName: profile ? profile.displayName : clusterId < 0 ? 'You' : `Speaker ${position + 1}`,
-    color: pickSpeakerColor(usedColors),
+    color,
     profileId: profile?.id ?? null
   }
 
@@ -111,6 +121,11 @@ export function ensureSpeaker(
       speaker.profileId
     )
 
+  // Whatever color it ended up with — reused or freshly picked — becomes the
+  // preference for next time. A collision-driven fallback today is a better
+  // guess for tomorrow than a stale preference that lost to it once.
+  rememberColorPreference(clusterId, profile?.id ?? null, speaker.color)
+
   return speaker
 }
 
@@ -121,30 +136,48 @@ export function ensureSpeaker(
  * Swapping rather than just overwriting is what keeps every color in a
  * recording unique without the picker needing to grey out anything — pick any
  * color you like and the one who had it takes the color you're giving up.
+ *
+ * Either side of the swap that's "You" or linked to a voice profile has this
+ * remembered as its new preferred color too, the same as a fresh pick during
+ * diarization would be — a manual choice is exactly the kind of signal that
+ * preference exists to capture.
  */
 export function setSpeakerColor(recordingId: string, id: string, color: string): void {
   const db = getDb()
   db.exec('BEGIN')
   try {
     const target = db
-      .prepare('SELECT color FROM speakers WHERE id = ? AND recording_id = ?')
-      .get(id, recordingId) as unknown as { color: string } | undefined
+      .prepare('SELECT color, cluster_id, profile_id FROM speakers WHERE id = ? AND recording_id = ?')
+      .get(id, recordingId) as unknown as
+      | { color: string; cluster_id: number; profile_id: string | null }
+      | undefined
     if (!target) throw new Error('That speaker no longer exists')
 
     const holder = db
-      .prepare('SELECT id FROM speakers WHERE recording_id = ? AND color = ? AND id != ?')
-      .get(recordingId, color, id) as unknown as { id: string } | undefined
+      .prepare(
+        'SELECT id, cluster_id, profile_id FROM speakers WHERE recording_id = ? AND color = ? AND id != ?'
+      )
+      .get(recordingId, color, id) as unknown as
+      | { id: string; cluster_id: number; profile_id: string | null }
+      | undefined
 
     if (holder) {
       db.prepare('UPDATE speakers SET color = ? WHERE id = ?').run(target.color, holder.id)
+      rememberColorPreference(holder.cluster_id, holder.profile_id, target.color)
     }
     db.prepare('UPDATE speakers SET color = ? WHERE id = ?').run(color, id)
+    rememberColorPreference(target.cluster_id, target.profile_id, color)
 
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')
     throw err
   }
+}
+
+function rememberColorPreference(clusterId: number, profileId: string | null, color: string): void {
+  if (clusterId < 0) setLocalSpeakerColor(color)
+  else if (profileId) setProfileColor(profileId, color)
 }
 
 /** Links a speaker to a voice profile, after automatic enrollment or a match. */
@@ -208,11 +241,6 @@ export function reassignUtterance(utteranceId: string, speakerId: string | null)
     .prepare('UPDATE utterances SET speaker_id = ? WHERE id = ?')
     .run(speakerId, utteranceId)
   if (result.changes === 0) throw new Error('That line no longer exists')
-}
-
-/** Clears every speaker for a recording. Used before re-diarizing. */
-export function deleteSpeakers(recordingId: string): void {
-  getDb().prepare('DELETE FROM speakers WHERE recording_id = ?').run(recordingId)
 }
 
 /**

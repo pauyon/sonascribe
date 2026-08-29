@@ -15,7 +15,8 @@ const KEYS = {
   micDeviceId: 'recording.micDeviceId',
   captureSystemAudio: 'recording.captureSystemAudio',
   autoPopOutOnMinimize: 'recording.autoPopOutOnMinimize',
-  screenshotDisplayId: 'recording.screenshotDisplayId'
+  screenshotDisplayId: 'recording.screenshotDisplayId',
+  localSpeakerColor: 'diarization.localSpeakerColor'
 } as const
 
 function get(key: string): string | null {
@@ -213,4 +214,17 @@ export function getScreenshotDisplayId(): string | null {
 
 export function setScreenshotDisplayId(displayId: string | null): void {
   set(KEYS.screenshotDisplayId, displayId ?? '')
+}
+
+/**
+ * The color "You" was last given, so it carries over recording to recording
+ * the same way a recognised voice's does — null until it's ever been set,
+ * at which point a fresh one is picked the same way any other speaker's is.
+ */
+export function getLocalSpeakerColor(): string | null {
+  return get(KEYS.localSpeakerColor)
+}
+
+export function setLocalSpeakerColor(color: string): void {
+  set(KEYS.localSpeakerColor, color)
 }

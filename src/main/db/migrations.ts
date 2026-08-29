@@ -153,5 +153,15 @@ export const MIGRATIONS: Migration[] = [
       -- least recently recognised, not the one created longest ago.
       ALTER TABLE voice_profiles ADD COLUMN last_matched_at INTEGER NOT NULL DEFAULT 0;
     `
+  },
+  {
+    version: 6,
+    name: 'voice_profile_color',
+    sql: /* sql */ `
+      -- Nullable: a profile enrolled before this migration has no color of
+      -- its own yet and falls back to picking one fresh, same as it always
+      -- did, until it's matched again and gets one recorded.
+      ALTER TABLE voice_profiles ADD COLUMN color TEXT;
+    `
   }
 ]

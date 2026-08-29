@@ -101,6 +101,8 @@ export interface VoiceProfile {
   displayName: string
   sampleMs: number
   createdAt: number
+  /** Color to give a speaker matched to this profile, or null before it's ever had one. */
+  color: string | null
 }
 
 export interface Utterance {

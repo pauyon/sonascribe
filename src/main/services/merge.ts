@@ -20,6 +20,19 @@ export interface MergedUtterance {
   speaker: number | null
   words: TranscriptWord[]
   confidence: number | null
+  /**
+   * Which track this audio actually came from, or null when it no longer
+   * corresponds to a single track.
+   *
+   * Every utterance starts out on exactly one track — `mergeTranscriptWithSpeakers`
+   * runs once per track and stamps its result accordingly. `coalesceAdjacent`
+   * is the one place two utterances are fused into one after that, and it
+   * nulls this out when they disagree rather than keeping whichever side
+   * happened to survive, since a stored (trackId, startMs, endMs) is trusted
+   * downstream (voice-profile enrollment) to describe real audio in that one
+   * file.
+   */
+  trackId: string | null
 }
 
 /**
@@ -46,7 +59,8 @@ export interface MergeOptions {
 }
 
 /** Overlap in milliseconds between two intervals; 0 when they are disjoint. */
-function overlap(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+/** Exported for reuse by anchor-matching (services/profiles.ts), which is the same "how much do these two spans overlap" question. */
+export function overlap(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
 }
 
@@ -209,9 +223,10 @@ function snapBoundariesToPauses(assigned: Array<{ word: TranscriptWord; speaker:
 }
 
 export function mergeTranscriptWithSpeakers(
-
   transcript: TranscriptSegment[],
   speakers: SpeakerSegment[],
+  /** The track this transcript and these speaker segments were both produced from. */
+  trackId: string,
   options: MergeOptions = {}
 ): MergedUtterance[] {
   const maxGapMs = options.maxGapMs ?? 2000
@@ -262,7 +277,8 @@ export function mergeTranscriptWithSpeakers(
         text: word.text,
         speaker,
         words: [word],
-        confidence: null
+        confidence: null,
+        trackId
       }
       utterances.push(current)
       continue
@@ -411,6 +427,11 @@ function coalesceAdjacent(utterances: MergedUtterance[], maxGapMs = 2000): Merge
         last.words.length > 0
           ? last.words.reduce((sum, w) => sum + w.probability, 0) / last.words.length
           : null
+      // The absorbed utterance came from its own track. Keeping either side's
+      // trackId once the two disagree would claim the merged range is entirely
+      // on one track when it isn't — null marks it as no longer trustworthy
+      // for pulling a single-track audio sample from.
+      if (last.trackId !== u.trackId) last.trackId = null
       continue
     }
     out.push({ ...u })

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { rename, rm } from 'node:fs/promises'
 import {
   allProfileSamplePaths,
   countProfiles,
@@ -16,7 +16,9 @@ import { linkSpeakerToProfile, listSpeakers } from '../db/speakers'
 import { listUtteranceRangesForSpeaker } from '../db/transcript'
 import { listTracks } from '../db/tracks'
 import { voiceProfilePath } from '../paths'
+import type { SpeakerSegment } from './diarize'
 import { extractSegmentsToWav } from './ffmpeg'
+import { overlap } from './merge'
 
 /**
  * Enrollment and refresh happen automatically at the end of every
@@ -105,7 +107,12 @@ function buildSampleCandidate(recordingId: string, speakerId: string): SampleCan
 }
 
 /** Creates a new profile from a speaker who isn't linked to one yet, evicting to stay under the cap. */
-async function enrollSpeaker(recordingId: string, speakerId: string, displayName: string): Promise<void> {
+async function enrollSpeaker(
+  recordingId: string,
+  speakerId: string,
+  displayName: string,
+  color: string
+): Promise<void> {
   const candidate = buildSampleCandidate(recordingId, speakerId)
   if (!candidate) return
 
@@ -122,7 +129,7 @@ async function enrollSpeaker(recordingId: string, speakerId: string, displayName
     outputPath: samplePath
   })
 
-  const profile = insertProfile({ id, displayName, samplePath, sampleMs: candidate.totalMs })
+  const profile = insertProfile({ id, displayName, samplePath, sampleMs: candidate.totalMs, color })
   linkSpeakerToProfile(speakerId, profile.id)
 }
 
@@ -142,13 +149,76 @@ async function refreshProfileIfBetter(
   const candidate = buildSampleCandidate(recordingId, speakerId)
   if (!profile || !candidate || candidate.totalMs <= profile.sampleMs * REFRESH_MARGIN) return
 
+  // Extracted beside the live sample and swapped in by rename rather than
+  // written over it directly — ffmpeg can't read and write the same file
+  // anyway, and this is also what protects the existing, working anchor if
+  // the app dies or the disk fills up mid-extraction: a failure here leaves
+  // the temp file orphaned instead of leaving every future recording's
+  // diarization pass reading a truncated one.
   const samplePath = voiceProfilePath(profileId)
-  await extractSegmentsToWav({
-    inputPath: candidate.trackWavPath,
-    segments: candidate.ranges,
-    outputPath: samplePath
-  })
+  const tempPath = `${samplePath}.tmp.wav`
+  try {
+    await extractSegmentsToWav({
+      inputPath: candidate.trackWavPath,
+      segments: candidate.ranges,
+      outputPath: tempPath
+    })
+  } catch (err) {
+    await rm(tempPath, { force: true })
+    throw err
+  }
+  await rename(tempPath, samplePath)
   updateProfileSample(profileId, { samplePath, sampleMs: candidate.totalMs })
+}
+
+/** Who a profile's anchor turned out to belong to, once diarized. */
+export interface ProfileMatch {
+  id: string
+  displayName: string
+  color: string | null
+}
+
+/**
+ * Matches diarized clusters against the anchored voice-profile windows that
+ * were prepended ahead of the real audio.
+ *
+ * Whichever cluster covers the most of an anchor's window is that person. An
+ * anchor that ties with another for the same cluster, or overlaps nothing, is
+ * left unmatched rather than guessed — a wrong identity is worse than none.
+ */
+export function matchProfilesToClusters(
+  profiles: Array<{ id: string; displayName: string; sampleMs: number; color: string | null }>,
+  /** Each profile's anchor start time in the diarized audio, same order as `profiles`. */
+  offsets: number[],
+  segments: SpeakerSegment[]
+): Map<number, ProfileMatch> {
+  const claims = new Map<number, string[]>()
+  const claimedBy = new Map<string, number>()
+
+  for (const [i, profile] of profiles.entries()) {
+    const windowStart = offsets[i]
+    const windowEnd = windowStart + profile.sampleMs
+    let best: number | null = null
+    let bestOverlap = 0
+    for (const segment of segments) {
+      const amount = overlap(segment.startMs, segment.endMs, windowStart, windowEnd)
+      if (amount > bestOverlap) {
+        bestOverlap = amount
+        best = segment.speaker
+      }
+    }
+    if (best == null) continue
+    claims.set(best, [...(claims.get(best) ?? []), profile.id])
+    claimedBy.set(profile.id, best)
+  }
+
+  const matched = new Map<number, ProfileMatch>()
+  for (const [profileId, cluster] of claimedBy) {
+    if ((claims.get(cluster)?.length ?? 0) > 1) continue
+    const profile = profiles.find((p) => p.id === profileId)
+    if (profile) matched.set(cluster, { id: profile.id, displayName: profile.displayName, color: profile.color })
+  }
+  return matched
 }
 
 /**
@@ -169,7 +239,7 @@ export async function runAutoEnrollment(recordingId: string): Promise<void> {
       if (speaker.profileId) {
         await refreshProfileIfBetter(recordingId, speaker.id, speaker.profileId)
       } else {
-        await enrollSpeaker(recordingId, speaker.id, speaker.displayName)
+        await enrollSpeaker(recordingId, speaker.id, speaker.displayName, speaker.color)
       }
     } catch (err) {
       console.warn(`[profiles] enrollment skipped for speaker ${speaker.id}:`, err)

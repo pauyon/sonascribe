@@ -117,11 +117,16 @@ update channel, which is a distribution decision rather than a build one.
 src/
   main/       Node side: window, SQLite, IPC handlers, ML sidecar orchestration
     db/       all SQL lives here — migrations + repositories
+    services/ everything else: jobs.ts (queue/status) calls transcription-pipeline.ts
+              (ASR + diarization + voice-profile matching); profiles.ts owns
+              automatic enrollment; merge.ts aligns words to speakers
   preload/    the only renderer↔main bridge; allowlists channels
-  shared/     types + the IPC contract both processes compile against
+  shared/     types + the IPC contract both processes compile against + colors.ts
   renderer/   React UI
 resources/bin/<platform>/   ML sidecar binaries (git-ignored)
 ```
+
+See `CLAUDE.md` for a fuller module map and the AI-assisted testing recipe.
 
 ### Decisions worth knowing
 
@@ -141,11 +146,13 @@ the preload allowlist, the main-process handler map and the renderer's typing ar
 all derived from it. Adding a channel on one side without the other fails to
 compile.
 
-**Recording captures mic and system audio as separate tracks** (Phase 6). The mic
-track is by definition the local user, so it needs no speaker detection at all —
-only the system track (remote participants) gets diarized. This is the single
-biggest accuracy win available and it's why the schema has a `tracks` table
-rather than one audio file per recording.
+**Recording captures mic and system audio as separate tracks** (Phase 6). When
+the microphone is declared to carry only the local user (a call), that track
+needs no speaker detection at all and only the system track (remote
+participants) gets diarized. Otherwise — several people around one mic, or a
+hybrid meeting — both tracks are diarized **together in one pass** (see "One
+diarization pass across every track" below); the `tracks` table is what makes
+either shape possible from the same schema.
 
 **Audio reaches the renderer over a custom `sonascribe-media://` scheme, keyed by
 row id** — never a filesystem path. A URL names a track or recording id, which
@@ -223,12 +230,48 @@ WebM/Opus encode-and-decode round trip losing quality on the way. The worklet is
 served from `public/` rather than a blob: URL because the renderer's CSP is
 `script-src 'self'`, which applies to worklet modules too.
 
-**The two-track payoff is realised here.** The mic track is passed through the
-merge with `forceSpeaker: -1` — the local user is known, so diarizing that
-track could only spend time to rediscover it and risk getting it wrong. Only the
-system track is clustered. Both start at t=0, so sorting the combined utterances
-by start time interleaves the conversation correctly. Verified end to end: mic
-audio lands under "You", remote voices under Speaker 1/2, one ordered timeline.
+**The two-track payoff is realised here.** When the mic is declared solo it's
+passed through the merge with `forceSpeaker: -1` — the local user is known, so
+diarizing that track could only spend time to rediscover it and risk getting it
+wrong. Both tracks start at t=0, so sorting the combined utterances by start
+time interleaves the conversation correctly regardless of which tracks were
+clustered. Verified end to end: mic audio lands under "You", remote voices
+under Speaker 1/2, one ordered timeline.
+
+**One diarization pass across every track that needs it, not one per track.**
+Diarizing mic and system separately and offsetting their cluster ids (the
+original Phase 6 design) meant a voice heard on both tracks was always two
+speakers, and a set headcount was silently dropped whenever more than one
+track had speech — the ceiling describes the whole recording, not a fraction
+of it split across independent clustering runs. Fixed by concatenating every
+track that needs diarizing into one file (`services/ffmpeg.ts::concatToWav`,
+2 s of real silence between parts so the segmentation model has something to
+stop at) and diarizing that once. `services/transcription-pipeline.ts` owns
+this; `services/jobs.ts` only sequences status/persistence around it.
+
+**Voice profiles recognise a recurring speaker automatically — no save
+button.** After a job finishes, `services/profiles.ts::runAutoEnrollment`
+anchors any speaker with enough clean audio (5–10 s, pulled from their own
+lines) who isn't linked to a profile yet, and refreshes a matched profile's
+sample when this recording offers a better one. Matching works by
+**prepending each profile's anchor ahead of the real audio** in the same
+diarization pass and seeing which cluster claims the anchor's window
+(`matchProfilesToClusters`) — not by comparing embedding vectors directly,
+since the bundled sherpa-onnx CLI never exposes those. Capped at 10 profiles
+with least-recently-matched eviction, so a one-off caller ages out instead of
+lengthening every future diarization pass forever. The only manual control is
+forgetting everything at once (`profiles:clearAll`) — identifying *who*
+someone is was deliberately never the goal, only telling one recurring voice
+apart from a new one.
+
+**Speaker colors are unique within a recording, and persistent across them.**
+`shared/colors.ts::pickSpeakerColor` refuses to hand out a color already used
+by another speaker in the same recording (falling back to a generated hue
+past the 8-color curated palette). A voice profile — and "You", via a
+`localSpeakerColor` setting — records whichever color it was last given and
+reuses it on a future match, swapping instead of colliding if that color is
+already taken this time. `db/speakers.ts::setSpeakerColor` does the same
+swap-and-remember when a color is changed by hand from the speaker chip menu.
 
 **Losing system audio degrades rather than fails.** If the loopback request is
 declined the microphone half is still recorded, with a warning — half a
