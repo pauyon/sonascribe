@@ -62,19 +62,24 @@ async function sizeOf(path: string): Promise<number> {
  */
 const GGML_MAGIC = 0x67676d6c
 
+/** GGUF's magic is the literal ASCII bytes "GGUF" at offset 0 — no byte-order flip, unlike ggml's. */
+const GGUF_MAGIC = Buffer.from('GGUF', 'ascii')
+
 /**
- * Verifies a file is really a ggml model.
+ * Verifies a file is really a model in the given format.
  *
- * A truncated download or an HTML error page saved under a .bin name would
- * otherwise only surface as a confusing whisper-cli crash much later.
+ * A truncated download or an HTML error page saved under the model's
+ * filename would otherwise only surface as a confusing engine crash much
+ * later.
  */
-async function hasGgmlMagic(path: string): Promise<boolean> {
+async function hasValidMagic(path: string, format: ModelSpec['format']): Promise<boolean> {
   try {
     const handle = await open(path, 'r')
     try {
       const buf = Buffer.alloc(4)
       const { bytesRead } = await handle.read(buf, 0, 4, 0)
-      return bytesRead === 4 && buf.readUInt32LE(0) === GGML_MAGIC
+      if (bytesRead !== 4) return false
+      return format === 'gguf' ? buf.equals(GGUF_MAGIC) : buf.readUInt32LE(0) === GGML_MAGIC
     } finally {
       await handle.close()
     }
@@ -84,8 +89,9 @@ async function hasGgmlMagic(path: string): Promise<boolean> {
 }
 
 export async function isModelInstalled(id: string): Promise<boolean> {
+  const spec = specFor(id)
   const path = finalPath(id)
-  return (await sizeOf(path)) > 0 && (await hasGgmlMagic(path))
+  return (await sizeOf(path)) > 0 && (await hasValidMagic(path, spec.format))
 }
 
 /** Absolute path to an installed model, or null if it is not present. */
@@ -206,7 +212,7 @@ export async function downloadModel(id: string): Promise<string> {
       createWriteStream(part, { flags: resuming ? 'a' : 'w' })
     )
 
-    if (!(await hasGgmlMagic(part))) {
+    if (!(await hasValidMagic(part, spec.format))) {
       await rm(part, { force: true })
       throw new ModelDownloadError(
         'Downloaded file is not a valid model. It may have been truncated — try again.'

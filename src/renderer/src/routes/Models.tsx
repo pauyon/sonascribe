@@ -115,7 +115,9 @@ export default function Models(): React.JSX.Element {
             ? true
             : engine.id === 'parakeet'
               ? info.parakeetAvailable
-              : info.whisperAvailable
+              : engine.id === 'llama'
+                ? info.answeringAvailable
+                : info.whisperAvailable
 
         return (
         <section key={engine.id} className="engine">
@@ -148,13 +150,15 @@ export default function Models(): React.JSX.Element {
                   <span className="model__size">{formatBytes(spec.sizeBytes)}</span>
                 </div>
                 <p className="model__note">{spec.note}</p>
-                <div className="model__ratings">
-                  <Rating value={spec.speed} label="Speed" />
-                  <Rating value={spec.accuracy} label="Accuracy" />
-                  <span className="model__lang">
-                    {spec.languages === 'english' ? 'English only' : 'All languages'}
-                  </span>
-                </div>
+                {spec.speed != null && spec.accuracy != null && (
+                  <div className="model__ratings">
+                    <Rating value={spec.speed} label="Speed" />
+                    <Rating value={spec.accuracy} label="Accuracy" />
+                    <span className="model__lang">
+                      {spec.languages === 'english' ? 'English only' : 'All languages'}
+                    </span>
+                  </div>
+                )}
 
                 {downloading && (
                   <div className="progress progress--wide">
@@ -189,18 +193,20 @@ export default function Models(): React.JSX.Element {
               <div className="model__actions">
                 {status?.installed ? (
                   <>
-                    <button
-                      className="btn btn--primary btn--sm"
-                      disabled={isSelected}
-                      onClick={() =>
-                        act(async () => {
-                          await api.invoke('settings:set', { modelId: spec.id })
-                          refetchSettings()
-                        })
-                      }
-                    >
-                      {isSelected ? 'Selected' : 'Use this'}
-                    </button>
+                    {engine.id !== 'llama' && (
+                      <button
+                        className="btn btn--primary btn--sm"
+                        disabled={isSelected}
+                        onClick={() =>
+                          act(async () => {
+                            await api.invoke('settings:set', { modelId: spec.id })
+                            refetchSettings()
+                          })
+                        }
+                      >
+                        {isSelected ? 'Selected' : 'Use this'}
+                      </button>
+                    )}
                     <button
                       className="btn btn--ghost btn--sm"
                       onClick={() => act(() => api.invoke('models:delete', { id: spec.id }))}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Speaker, Utterance } from '@shared/types'
+import type { Speaker, TranscriptWordSpan, Utterance } from '@shared/types'
 import { formatTimestamp } from '../lib/format'
 import Select from './Select'
 
@@ -29,6 +29,37 @@ function highlight(text: string, query: string): React.ReactNode {
   if (from === 0) return text
   if (from < text.length) nodes.push(text.slice(from))
   return nodes
+}
+
+/** Roughly how many characters a paragraph is allowed to reach before the next sentence end splits it. */
+const PARAGRAPH_TARGET_CHARS = 500
+
+/**
+ * Breaks one utterance's words into readable paragraphs, splitting only at
+ * sentence ends.
+ *
+ * A monologue with no 2s pause stays a single utterance in the data model
+ * (see merge.ts) — one speaker turn can run for minutes. Rendered as one
+ * block it reads as an unbroken wall of text under a single timestamp, which
+ * makes a paragraph near the end look like it happened in the same instant
+ * as the one at the top. Splitting is display-only: it doesn't touch the
+ * utterance, so editing/reassigning/deleting still act on the whole thing.
+ */
+function paragraphize(words: TranscriptWordSpan[]): TranscriptWordSpan[][] {
+  const paragraphs: TranscriptWordSpan[][] = []
+  let current: TranscriptWordSpan[] = []
+  let currentChars = 0
+  for (const word of words) {
+    current.push(word)
+    currentChars += word.text.length + 1
+    if (/[.!?]["')\]]?$/.test(word.text) && currentChars >= PARAGRAPH_TARGET_CHARS) {
+      paragraphs.push(current)
+      current = []
+      currentChars = 0
+    }
+  }
+  if (current.length > 0) paragraphs.push(current)
+  return paragraphs
 }
 
 export default function Transcript({
@@ -194,6 +225,52 @@ export default function Transcript({
                   if (e.key === 'Escape') setEditingId(null)
                 }}
               />
+            ) : /*
+                Word by word (broken into paragraphs) when the timings are
+                there, and the whole line otherwise — an edited line has no
+                usable word timings, and a search is asking for its matches to
+                be marked rather than the playhead. Falling back keeps both
+                cases correct instead of showing one of them wrongly.
+              */
+            u.words.length > 0 && !query ? (
+              paragraphize(u.words).map((paragraph, pi) => (
+                <p
+                  key={pi}
+                  className="utterance__text"
+                  onDoubleClick={() => {
+                    setEditingId(u.id)
+                    setDraft(u.text)
+                  }}
+                  title="Double-click to edit"
+                >
+                  {pi > 0 && (
+                    <button
+                      type="button"
+                      className="utterance__time utterance__time--inline"
+                      onClick={() => onSeek(paragraph[0].startMs)}
+                      title="Jump to this moment"
+                    >
+                      {formatTimestamp(paragraph[0].startMs, showHours)}
+                    </button>
+                  )}
+                  {paragraph.map((word, i) => {
+                    const spoken = currentMs >= word.startMs
+                    const now = spoken && currentMs < word.endMs
+                    return (
+                      <span
+                        key={i}
+                        className={now ? 'word word--now' : spoken ? 'word word--said' : 'word'}
+                        // Single click seeks; the paragraph keeps double-click
+                        // for editing, so neither gets in the other's way.
+                        onClick={() => onSeek(word.startMs)}
+                        title={formatTimestamp(word.startMs, showHours)}
+                      >
+                        {word.text}{' '}
+                      </span>
+                    )
+                  })}
+                </p>
+              ))
             ) : (
               <p
                 className="utterance__text"
@@ -203,39 +280,8 @@ export default function Transcript({
                 }}
                 title="Double-click to edit"
               >
-                {/*
-                  Word by word when the timings are there, and the whole line
-                  otherwise — an edited line has no usable word timings, and a
-                  search is asking for its matches to be marked rather than the
-                  playhead. Falling back keeps both cases correct instead of
-                  showing one of them wrongly.
-                */}
-                {u.words.length > 0 && !query
-                  ? u.words.map((word, i) => {
-                      const spoken = currentMs >= word.startMs
-                      const now = spoken && currentMs < word.endMs
-                      return (
-                        <span
-                          key={i}
-                          className={
-                            now
-                              ? 'word word--now'
-                              : spoken
-                                ? 'word word--said'
-                                : 'word'
-                          }
-                          // Single click seeks; the paragraph keeps double-click
-                          // for editing, so neither gets in the other's way.
-                          onClick={() => onSeek(word.startMs)}
-                          title={formatTimestamp(word.startMs, showHours)}
-                        >
-                          {word.text}{' '}
-                        </span>
-                      )
-                    })
-                  : highlight(u.text, query)}
+                {highlight(u.text, query)}
               </p>
-
             )}
           </div>
         )

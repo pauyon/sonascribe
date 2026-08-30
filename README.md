@@ -80,13 +80,15 @@ Where the ~325 MB Windows installer goes:
 | ffmpeg | 114 MB |
 | whisper.cpp + BLAS | ~59 MB |
 | sherpa-onnx diarization | ~20 MB |
-| llama-server (semantic search) | ~44 MB |
+| llama-server (offline Q&A) | ~44 MB |
 | Diarization models | 45 MB |
 | Embedding model | 84 MB |
 | App code (asar) | 4.7 MB |
 
-Whisper models are **not** included; they are downloaded on first use, which is
-what keeps 1.6 GB out of the installer.
+Whisper models and the RAG answering model (Qwen2.5 3B Instruct, ~1.9 GB)
+are **not** included; like Whisper, the answering model is downloaded on
+first use from Settings → Models, which is what keeps multiple gigabytes
+out of the installer.
 
 ### macOS — read before releasing
 
@@ -317,24 +319,32 @@ Chromium's CoreAudio Tap API. It does require `NSAudioCaptureUsageDescription`
 in Info.plist (already in `electron-builder.yml`) — there is no fallback if it's
 missing, and the failure is silent.
 
-**Semantic search is offline too, via a second ML sidecar family:
-llama.cpp.** sherpa-onnx (already bundled for diarization) is audio-only and
-never exposes raw embedding vectors even for that; the only architecturally
-consistent option for text embeddings was another spawned-CLI sidecar, this
-time `llama-server` from llama.cpp — same `ggml-org` project as whisper.cpp,
-with a genuine embedding model (nomic-embed-text-v1.5, 768-dim, ~84 MB Q4
-GGUF, bundled like the diarization models) and a real HTTP embedding
-endpoint. Unlike every other sidecar, it's started once and kept running
-rather than spawned per call — embedding many chunks one process-and-model-
-load at a time would be dominated by that overhead, where a persistent
-server answers in milliseconds once warm. No vector database: `node:sqlite`
-has no extension loading enabled, and personal-scale transcript data (even
-thousands of chunks) is trivially searched by brute-force cosine similarity
-in plain JS. After every transcription, the transcript is chunked
-(consecutive utterances merged toward ~800 characters, long ones split at
-sentence boundaries) and embedded; a search re-embeds only the query and
-ranks every stored chunk against it — proven end-to-end with a paraphrased
-query sharing zero words with the source line and still ranking it first.
+**"Ask about this recording" is offline RAG, via a second ML sidecar
+family: llama.cpp.** sherpa-onnx (already bundled for diarization) is
+audio-only and never exposes raw embedding vectors even for that; the only
+architecturally consistent option for text embeddings was another
+spawned-CLI sidecar, this time `llama-server` from llama.cpp — same
+`ggml-org` project as whisper.cpp. After every transcription, the
+transcript is chunked (consecutive utterances merged toward ~800
+characters, long ones split at sentence boundaries) and embedded with a
+bundled model (nomic-embed-text-v1.5, 768-dim, ~84 MB Q4 GGUF). No vector
+database: `node:sqlite` has no extension loading enabled, and personal-scale
+transcript data (even thousands of chunks) is trivially searched by
+brute-force cosine similarity in plain JS — proven end-to-end with a
+paraphrased query sharing zero words with the source line and still ranking
+it first. Asking a question runs that same retrieval, then hands the top
+matches to a runtime-downloaded chat model (Qwen2.5 3B Instruct) running as
+a **second, independent** `llama-server` instance — one model per process,
+so the embedding instance can't also generate text — which writes an
+answer grounded in only what was retrieved, with the retrieved excerpts
+(not the model's own claims) becoming the clickable citations. Both
+instances are started lazily and kept running rather than spawned per call,
+same reasoning either way: a persistent server answers in milliseconds
+once warm, where spawning fresh would be dominated by model-load overhead.
+A raw ranked-results search UI (type a query, browse a result list) shipped
+first and was removed after turning out more confusing than useful — the
+underlying chunk/embed/retrieve pipeline survived that rewrite unchanged
+and is what Ask is built on.
 
 **Logging persists to a file, because a packaged build has no terminal.**
 `src/main/log.ts` calls `electron-log`'s `Object.assign(console, log.functions)`

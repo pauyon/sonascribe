@@ -13,12 +13,12 @@ import {
   getSpeakerCount,
   getSpeakerSplitting
 } from '../db/settings'
-import { findModel } from '@shared/models'
+import { findAsrModel } from '@shared/models'
 import { emit } from '../ipc/events'
 import { resolveModelPath } from './models'
 import { TranscriptionError, engineSidecar } from './transcription'
 import { DiarizationError, SPLITTING_PRESETS } from './diarize'
-import { absorbTinySpeakers, minSpeakerSpeechFor } from './merge'
+import { absorbTinySpeakers, dropCrossTrackDuplicates, minSpeakerSpeechFor } from './merge'
 import { hasBundledModel, hasSidecar } from './sidecars'
 import { runTranscriptionPipeline } from './transcription-pipeline'
 
@@ -189,7 +189,7 @@ async function prepareAndQueue(
   const modelId = getSelectedModelId()
   if (!modelId) throw new JobError('No transcription model selected')
 
-  const spec = findModel(modelId)
+  const spec = findAsrModel(modelId)
   if (!spec) throw new JobError(`Unknown model: ${modelId}`)
 
   const modelPath = await resolveModelPath(modelId)
@@ -291,6 +291,17 @@ async function prepareAndQueue(
         // local and remote halves of the conversation correctly.
         merged.sort((a, b) => a.startMs - b.startMs)
 
+        // The same voice can reach two tracks at once (mic picking up system
+        // audio, or the reverse), which diarization has no way to recognise as
+        // one person — it only ever sees them on separate tracks. Catch it here
+        // by comparing what was actually transcribed before speaker rows exist.
+        const deduped = dropCrossTrackDuplicates(merged)
+        if (deduped.length !== merged.length) {
+          console.log(
+            `[jobs] dropped cross-track duplicate speech: ${merged.length} utterances -> ${deduped.length}`
+          )
+        }
+
         // Fold away clusters too small to be a person. Done before speaker rows
         // exist so a cough never gets as far as being called "Speaker 7".
         //
@@ -299,11 +310,11 @@ async function prepareAndQueue(
         // they told us about, not an artefact to tidy away.
         const cleaned =
           forcedCount == null
-            ? absorbTinySpeakers(merged, minSpeakerSpeechFor(longestTrackMs))
-            : merged
-        if (cleaned.length !== merged.length) {
+            ? absorbTinySpeakers(deduped, minSpeakerSpeechFor(longestTrackMs))
+            : deduped
+        if (cleaned.length !== deduped.length) {
           console.log(
-            `[jobs] absorbed negligible speakers: ${merged.length} utterances -> ${cleaned.length}`
+            `[jobs] absorbed negligible speakers: ${deduped.length} utterances -> ${cleaned.length}`
           )
         }
 

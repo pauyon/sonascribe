@@ -890,12 +890,6 @@ body {
   flex-wrap: wrap;
 }
 
-.toolbar__search {
-  flex: 1;
-  min-width: 200px;
-  max-width: 340px;
-}
-
 .toolbar__toggle {
   display: flex;
   align-items: center;
@@ -1016,6 +1010,17 @@ body {
 
 .utterance__text {
   cursor: text;
+}
+
+/* A long monologue splits into several of these (see Transcript.tsx's
+   paragraphize) — space them like paragraphs, not one run-on block. */
+.utterance__text + .utterance__text {
+  margin-top: 10px;
+}
+
+.utterance__time--inline {
+  margin-right: 8px;
+  vertical-align: baseline;
 }
 
 .utterance__input {
@@ -3090,64 +3095,87 @@ label.toolbar__toggle {
   justify-content: flex-end;
 }
 
-/* ---------- semantic search ---------- */
+/* ---------- transcript keyword filter ---------- */
 
 .search {
   margin-bottom: 20px;
 }
 
-.search__input {
+.search-input {
+  display: block;
   width: 100%;
   max-width: 480px;
 }
 
-.search__status {
+/* ---------- ask panel (offline RAG) ---------- */
+
+/* A distinct card, not another plain input — this triggers a real (if
+   local) generation call, a different kind of action than the instant
+   keyword filter above it, and should not look like a second copy of it. */
+.ask-panel {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.ask-panel__label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ask-panel__form {
+  display: flex;
+  gap: 8px;
+}
+
+.ask-panel__input {
+  flex: 1;
+  max-width: none;
+}
+
+.ask-panel__status {
   margin: 10px 0 0;
   font-size: var(--fs-small);
   color: var(--text-muted);
 }
 
-.search__status--error {
+.ask-panel__status--error {
   color: var(--danger-text);
 }
 
-.search__results {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-  max-width: 720px;
-}
-
-.search__result {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
-  padding: 10px 14px;
+.ask-panel__answer {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--surface);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
+  line-height: 1.6;
 }
 
-.search__result:hover {
-  background: var(--bg-hover);
-}
-
-.search__result-meta {
+.ask-panel__citations {
   display: flex;
-  gap: 10px;
-  font-size: var(--fs-caption);
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ask-panel__citation {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
   color: var(--text-muted);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: var(--fs-caption);
+  cursor: pointer;
 }
 
-.search__result-title {
-  font-weight: 600;
-}
-
-.search__result-text {
-  color: var(--text);
+.ask-panel__citation:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }

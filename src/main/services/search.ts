@@ -20,8 +20,21 @@ export interface SearchResult {
   score: number
 }
 
-/** How many results a search returns, ranked best first. */
-const TOP_K = 10
+/** How many results a search returns at most, ranked best first. */
+const TOP_K = 5
+
+/**
+ * How far below the top score a result can fall before it's dropped.
+ *
+ * Cosine similarity from this model doesn't separate "genuinely relevant"
+ * from "vaguely on-topic" as cleanly as a fixed floor would assume —
+ * measured directly against real transcripts, a query with nothing to do
+ * with the recording still scored in the same 0.5-ish band as a real match.
+ * A margin below whatever the best result actually scored at least trims
+ * the long flat tail of "technically ranked, not actually close" results
+ * without pretending the raw number means "confident" on its own.
+ */
+const SCORE_MARGIN = 0.08
 
 /**
  * Rebuilds a recording's search index from its current transcript.
@@ -85,7 +98,7 @@ export async function searchChunks(query: string, recordingId?: string): Promise
 
   const queryVector = await embedQuery(trimmed)
 
-  return chunks
+  const ranked = chunks
     .map((chunk) => ({
       recordingId: chunk.recordingId,
       recordingTitle: chunk.recordingTitle,
@@ -95,5 +108,7 @@ export async function searchChunks(query: string, recordingId?: string): Promise
       score: cosineSimilarity(queryVector, bytesToFloat32(chunk.embedding))
     }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, TOP_K)
+
+  const topScore = ranked[0]?.score ?? 0
+  return ranked.filter((r) => r.score >= topScore - SCORE_MARGIN).slice(0, TOP_K)
 }

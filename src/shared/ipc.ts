@@ -83,6 +83,8 @@ export interface ApiSchema {
       parakeetAvailable: boolean
       /** False when the diarization helper or its models are missing. */
       diarizationAvailable: boolean
+      /** False when llama-server is missing — needed for both indexing a transcript for Ask and answering questions about it. */
+      answeringAvailable: boolean
     }
   }
 
@@ -352,19 +354,18 @@ export interface ApiSchema {
   }
 
   /**
-   * Offline semantic search over transcripts. Omitting `recordingId`
-   * searches every recording; results are ranked best-match first.
+   * Offline RAG: answers a question about one recording, grounded in its
+   * transcript. Retrieval happens internally (the same chunk/embedding
+   * index built after every transcription); the response's `citations` are
+   * the excerpts the answer was actually generated from, for jumping
+   * playback to them.
    */
-  'search:query': {
-    request: { query: string; recordingId?: string }
-    response: Array<{
-      recordingId: string
-      recordingTitle: string
-      text: string
-      startMs: number
-      endMs: number
-      score: number
-    }>
+  'ask:query': {
+    request: { question: string; recordingId: string }
+    response: {
+      answer: string
+      citations: Array<{ text: string; startMs: number; endMs: number }>
+    }
   }
 }
 
@@ -532,7 +533,7 @@ export const CHANNELS = [
   'screenshots:listDisplays',
   'shell:showItemInFolder',
   'logs:read',
-  'search:query'
+  'ask:query'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [

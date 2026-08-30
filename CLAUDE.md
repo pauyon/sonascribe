@@ -29,11 +29,18 @@ exact module boundaries, an AI-testing recipe, and a maintenance instruction.
   `console.*` call writes to `<userData>/logs/main.log` for free; nothing
   should ever call `log.*` directly instead of `console.*`.
 - **`llama.cpp`** (`llama-server`, same `ggml-org` family as whisper.cpp) —
-  the sidecar behind offline semantic search. Unlike every other sidecar it's
-  a long-lived local HTTP server, not a run-to-completion CLI — see
-  `services/embeddings.ts`. Real releases are the `b<number>` prerelease
-  tags, not the semver-looking "latest" GitHub release (which ships no
-  binaries at all) — `LLAMA_TAG` in `fetch-sidecars.mjs` must point at one.
+  the sidecar behind offline RAG: transcript retrieval and the "Ask about
+  this recording" answers both run through it. Unlike every other sidecar
+  it's a long-lived local HTTP server, not a run-to-completion CLI — and
+  unlike every other sidecar, it runs as **two independent instances**, one
+  model each (a `llama-server` process is one model for its life): an
+  embedding instance (`services/embeddings.ts`, bundled `nomic-embed-text`)
+  that indexes and retrieves transcript chunks, and a chat instance
+  (`services/answering.ts`, runtime-downloaded Qwen2.5 3B Instruct) that
+  writes the answer from whatever the embedding instance retrieved. Real
+  releases are the `b<number>` prerelease tags, not the semver-looking
+  "latest" GitHub release (which ships no binaries at all) — `LLAMA_TAG` in
+  `fetch-sidecars.mjs` must point at one.
 
 ## Directory map
 
@@ -53,8 +60,9 @@ src/
       diarize.ts, merge.ts        sherpa-onnx wrapper; word-level speaker alignment + absorption
       profiles.ts             voice-profile enrollment/refresh/matching (auto, no user action)
       chunking.ts             groups utterances into embedding-sized chunks
-      embeddings.ts           llama-server lifecycle (start/health-check/stop) + embed calls
-      search.ts               reindexRecording (post-transcription) + searchChunks (cosine similarity, no vector DB)
+      embeddings.ts           embedding llama-server lifecycle (start/health-check/stop) + embed calls
+      search.ts               reindexRecording (post-transcription) + searchChunks (cosine similarity, no vector DB) — retrieval, called internally by answering.ts
+      answering.ts            chat llama-server lifecycle + answerQuestion (RAG: searchChunks then a grounded /v1/chat/completions call)
       whisper.ts, parakeet.ts, parakeet-parse.ts, transcription.ts   ASR engine runners (engine-neutral output)
       ffmpeg.ts, wav.ts, wav-writer.ts, peaks.ts    audio normalize/concat/extract/waveform
       recorder.ts, live-transcribe.ts, audio-chunks.ts   live capture + streamed transcription
@@ -69,7 +77,7 @@ src/
     models.ts, export.ts
   renderer/src/
     routes/       Library, Editor, Record, Models (settings), MiniRecorder
-    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, LogViewer, SearchBox, ...
+    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, LogViewer, AskPanel, ...
     lib/api.ts     useQuery/useEvent/api.invoke — the only way renderer talks to main
 resources/bin/<platform>/    sidecar binaries, git-ignored, fetched by scripts/fetch-sidecars.mjs
 scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
@@ -104,13 +112,19 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
 6. **Editor** (`Editor.tsx`, `Transcript.tsx`, `SpeakerBar.tsx`) — playback,
    inline edit, speaker rename/merge/delete/color, exact-text search
    (client-side filter), export (`services/export.ts`).
-7. **Semantic search** (`services/search.ts`) — after every successful
-   transcription, the transcript is chunked (`services/chunking.ts`),
-   embedded (`services/embeddings.ts`), and stored in `chunk_embeddings`,
-   replacing that recording's old rows wholesale. `SearchBox.tsx` queries it
-   from the Editor (one recording) and Library (every recording) — distinct
-   from the exact-text filter above, this finds a passage by meaning even if
-   it shares no words with the query.
+7. **Offline Q&A / RAG** (`services/search.ts` + `services/answering.ts`) —
+   after every successful transcription, the transcript is chunked
+   (`services/chunking.ts`), embedded (`services/embeddings.ts`), and stored
+   in `chunk_embeddings`, replacing that recording's old rows wholesale.
+   `AskPanel.tsx` (Editor only, one recording at a time) sends a question to
+   `answerQuestion()`, which retrieves the most relevant chunks
+   (`searchChunks`, cosine similarity) and has a small local chat model
+   write an answer grounded in them — retrieval and generation are separate
+   steps, so citations come from what was actually retrieved, not from
+   trusting the model to self-report its sources. An earlier version of this
+   exposed `searchChunks` directly as a ranked-results search UI; that was
+   removed as more confusing than useful, but the chunking/embedding/
+   retrieval pipeline underneath it is what Ask is built on.
 
 ## Patterns to follow
 
@@ -129,10 +143,21 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
 - **`shared/` must stay Electron-free** — it's compiled into the renderer too.
 - **Two sidecar lifecycles exist — pick the right one.** whisper/parakeet/
   sherpa-onnx/ffmpeg are spawned per job and parsed from stdout to
-  completion. `llama-server` is the one exception: started lazily, kept
-  running, talked to over local HTTP, and stopped in `index.ts`'s
-  `before-quit` handler. Don't spawn-per-call a model server — the model
-  load alone is the dominant cost.
+  completion. `llama-server` is the exception, and there are two independent
+  long-lived instances of it (`services/embeddings.ts` on one port,
+  `services/answering.ts` on another — one model per process, so embedding
+  and chat can't share an instance): started lazily, kept running, talked to
+  over local HTTP, and both stopped in `index.ts`'s `before-quit` handler.
+  Don't spawn-per-call a model server — the model load alone is the
+  dominant cost.
+- **The model catalogue (`shared/models.ts`) covers more than transcription.**
+  `MODELS`/`ENGINES` also list the RAG answering model (`engine: 'llama'`),
+  reusing the same download/verify/progress machinery in
+  `services/models.ts` as Whisper and Parakeet — but it verifies GGUF magic
+  instead of ggml's, and it's never a valid `settings:set({ modelId })`
+  value. Use `findAsrModel()`, not `findModel()`, anywhere that result feeds
+  transcription — `findModel()` alone doesn't rule out the answering model
+  and would hand `runAsr()` an engine it doesn't know.
 
 ## Testing (no framework — do this instead)
 

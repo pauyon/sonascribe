@@ -4,7 +4,7 @@ import { cpus, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { TrackKind } from '@shared/types'
-import { findModel } from '@shared/models'
+import { findAsrModel } from '@shared/models'
 import { getLanguage, getSelectedModelId } from '../db/settings'
 import { resolveModelPath } from './models'
 import { transcribeWithParakeet } from './parakeet'
@@ -338,7 +338,7 @@ export async function startLiveTranscription(input: StartLiveInput): Promise<boo
 
 async function openSession(input: StartLiveInput): Promise<boolean> {
   const modelId = getSelectedModelId()
-  const spec = modelId ? findModel(modelId) : null
+  const spec = modelId ? findAsrModel(modelId) : null
   if (!modelId || !spec) return false
   const modelPath = await resolveModelPath(modelId)
   if (!modelPath) return false

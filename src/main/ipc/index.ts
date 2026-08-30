@@ -5,7 +5,7 @@ import type { Channel, Request, Response, TranscriptionSettings } from '@shared/
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { mediaPath, modelsPath, userDataPath } from '../paths'
 import { logFilePath } from '../log'
-import { searchChunks } from '../services/search'
+import { answerQuestion } from '../services/answering'
 import {
   getAutoPopOutOnMinimize,
   getCaptureSystemAudio,
@@ -171,7 +171,8 @@ const handlers: Handlers = {
     diarizationAvailable:
       hasSidecar('sherpa-onnx-offline-speaker-diarization') &&
       hasBundledModel('segmentation.onnx') &&
-      hasBundledModel('speaker-embedding.onnx')
+      hasBundledModel('speaker-embedding.onnx'),
+    answeringAvailable: hasSidecar('llama-server')
   }),
 
   'models:list': () => listModelStatuses(),
@@ -359,7 +360,7 @@ const handlers: Handlers = {
 
   'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => ''),
 
-  'search:query': ({ query, recordingId }) => searchChunks(query, recordingId)
+  'ask:query': ({ question, recordingId }) => answerQuestion(question, recordingId)
 }
 
 function currentSettings(): TranscriptionSettings {

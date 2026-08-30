@@ -113,7 +113,7 @@ interface EmbeddingResponseItem {
   embedding: number[][]
 }
 
-async function embed(texts: string[]): Promise<Float32Array[]> {
+async function embed(texts: string[], prefix: string): Promise<Float32Array[]> {
   if (texts.length === 0) return []
 
   await ensureEmbeddingServer()
@@ -121,7 +121,7 @@ async function embed(texts: string[]): Promise<Float32Array[]> {
   const res = await fetch(`http://${HOST}:${PORT}/embedding`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: texts })
+    body: JSON.stringify({ content: texts.map((text) => prefix + text) })
   })
   if (!res.ok) {
     throw new Error(`Embedding request failed: ${res.status} ${res.statusText}`)
@@ -137,12 +137,20 @@ async function embed(texts: string[]): Promise<Float32Array[]> {
   })
 }
 
+/**
+ * nomic-embed-text-v1.5 is trained with task prefixes and expects one on
+ * every input — "search_document: " for what gets indexed, "search_query: "
+ * for what searches it — for the asymmetric case this app always uses
+ * (a short query finding a longer passage). Omitting them still produces
+ * valid vectors, but ones that don't reflect the model's actual training
+ * setup for retrieval.
+ */
 /** Embeds a batch of chunk texts in one request — the whole point of a persistent server over a per-call CLI. */
 export function embedChunks(texts: string[]): Promise<Float32Array[]> {
-  return embed(texts)
+  return embed(texts, 'search_document: ')
 }
 
 export async function embedQuery(text: string): Promise<Float32Array> {
-  const [vector] = await embed([text])
+  const [vector] = await embed([text], 'search_query: ')
   return vector
 }

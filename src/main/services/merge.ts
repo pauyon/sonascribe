@@ -408,6 +408,83 @@ export function absorbTinySpeakers(
   return coalesceAdjacent(result)
 }
 
+/** Fraction of the shorter utterance's duration the two must overlap before they're even compared as possible duplicates. */
+const DUP_TIME_OVERLAP_FRACTION = 0.6
+/** Fraction of the shorter text's words that must also appear in the other, once the time overlap test passes. */
+const DUP_TEXT_SIMILARITY_FRACTION = 0.6
+
+/** Lowercased, punctuation-stripped words — comparable across two ASR passes that spelled things differently. */
+function wordsOf(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+/** Fraction of words the two texts share, as a multiset, relative to the shorter one. */
+function textSimilarity(a: string, b: string): number {
+  const wordsA = wordsOf(a)
+  const wordsB = wordsOf(b)
+  if (wordsA.length === 0 || wordsB.length === 0) return 0
+
+  const remaining = new Map<string, number>()
+  for (const word of wordsA) remaining.set(word, (remaining.get(word) ?? 0) + 1)
+
+  let shared = 0
+  for (const word of wordsB) {
+    const count = remaining.get(word) ?? 0
+    if (count > 0) {
+      shared++
+      remaining.set(word, count - 1)
+    }
+  }
+  return shared / Math.min(wordsA.length, wordsB.length)
+}
+
+/**
+ * Drops an utterance that is really the same speech as another track's,
+ * caught twice because the same voice reached two different tracks — a mic
+ * picking up the room's own system audio, or the reverse. Diarization has no
+ * way to know two clusters *are* the same person when the only evidence is
+ * that they never show up on the same track, so this catches it afterwards
+ * by comparing what was actually said.
+ *
+ * Restricted to utterances from different tracks that overlap heavily in
+ * time *and* say almost the same thing — genuine cross-talk between two
+ * different people never satisfies both at once, so this can't mistake a
+ * real conversation for a duplicate.
+ */
+export function dropCrossTrackDuplicates(utterances: MergedUtterance[]): MergedUtterance[] {
+  const dropped = new Set<MergedUtterance>()
+
+  for (let i = 0; i < utterances.length; i++) {
+    const a = utterances[i]
+    if (dropped.has(a) || a.trackId == null) continue
+
+    for (let j = i + 1; j < utterances.length; j++) {
+      const b = utterances[j]
+      // Time-ordered, so nothing later can still overlap once b starts past a's end.
+      if (b.startMs > a.endMs) break
+      if (dropped.has(b) || b.trackId == null || b.trackId === a.trackId) continue
+
+      const overlapMs = overlap(a.startMs, a.endMs, b.startMs, b.endMs)
+      const shorterMs = Math.min(a.endMs - a.startMs, b.endMs - b.startMs)
+      if (shorterMs <= 0 || overlapMs / shorterMs < DUP_TIME_OVERLAP_FRACTION) continue
+      if (textSimilarity(a.text, b.text) < DUP_TEXT_SIMILARITY_FRACTION) continue
+
+      // Keep whichever the engine was more confident in — the track carrying
+      // someone else's audio bleeding through is generally the noisier one.
+      const loser = (a.confidence ?? 0) >= (b.confidence ?? 0) ? b : a
+      dropped.add(loser)
+      // a itself lost — nothing left to compare it against.
+      if (loser === a) break
+    }
+  }
+
+  return dropped.size === 0 ? utterances : utterances.filter((u) => !dropped.has(u))
+}
+
 /**
  * Joins neighbouring utterances that now share a speaker.
  *
