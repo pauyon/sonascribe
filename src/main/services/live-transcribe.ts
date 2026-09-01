@@ -11,7 +11,7 @@ import { transcribeWithParakeet } from './parakeet'
 import { transcribeWithWhisper } from './whisper'
 import type { TranscriptionResult, TranscriptWord } from './transcription'
 import { runFfmpegCapture, baseArgs, normalizeToWav } from './ffmpeg'
-import { measurePeak, SILENCE_PEAK_THRESHOLD } from './peaks'
+import { measureLevels, SILENCE_PEAK_THRESHOLD } from './peaks'
 
 /**
  * Transcribes a recording while it is still being recorded.
@@ -61,6 +61,21 @@ const TICK_MS = 3_000
 /** A window shorter than this is mostly engine startup, so it waits. */
 const MIN_WINDOW_MS = 6_000
 
+/**
+ * RMS above this reads as speech-level sound, not room tone.
+ *
+ * Deliberately far above SILENCE_PEAK_THRESHOLD: that one only rules out
+ * digital silence, and a real microphone's own noise floor sits well past it —
+ * reusing it here would flag almost every ordinary pause between sentences as
+ * a suspected engine failure, since nearly any live window has *some* signal
+ * above that bar. This is the line for "loud enough that getting zero words
+ * back is suspicious," which needs to sit clearly below normal speech and
+ * clearly above a quiet room. A false positive here only costs one redundant
+ * full pass at the end of the recording, never a lost word, so it's set to
+ * favour catching a real failure over avoiding an occasional false one.
+ */
+const LIKELY_SPEECH_RMS = 0.01
+
 /** Bytes per millisecond of 16-bit mono PCM. */
 const bytesPerMs = (sampleRate: number): number => (sampleRate * 2) / 1000
 
@@ -74,6 +89,15 @@ interface LiveTrack {
   /** Milliseconds already transcribed, and so where the next window starts. */
   consumedMs: number
   words: TranscriptWord[]
+  /**
+   * Windows that carried real signal (past the silence check) but came back
+   * from the engine with no words at all — Parakeet's decoder is known to give
+   * up early on short clips, and a live window is exactly that size. `consumedMs`
+   * still advances past one of these so the session doesn't stall, which means
+   * duration-based coverage alone cannot tell a clean track from one with a
+   * silent gap in the middle. Counted so `takeLiveWords` can refuse to trust it.
+   */
+  emptyWindows: number
 }
 
 interface LiveSession {
@@ -115,6 +139,8 @@ interface LiveResult {
    * exactly what happened to a 13-second take whose speech ended at 6.6 s.
    */
   processedMs: number
+  /** See `LiveTrack.emptyWindows`. */
+  emptyWindows: number
 }
 
 /** Completed results, waiting for the job that runs after the recording stops. */
@@ -264,7 +290,7 @@ async function advance(current: LiveSession, track: LiveTrack, final: boolean): 
   // Nothing to transcribe in silence, and the engine charges the same 2.3 s to
   // discover that. System audio is silent for most of a recording that is not a
   // call, so skipping those windows roughly halves the cost of a two-track take.
-  const peak = await measurePeak(readyPath).catch(() => 1)
+  const { peak, rms } = await measureLevels(readyPath).catch(() => ({ peak: 1, rms: 1 }))
   if (peak < SILENCE_PEAK_THRESHOLD) {
     track.consumedMs = endMs
     await rm(slicePath, { force: true }).catch(() => undefined)
@@ -297,11 +323,18 @@ async function advance(current: LiveSession, track: LiveTrack, final: boolean): 
         endMs: fresh[fresh.length - 1].endMs,
         text: fresh.map((word) => word.text).join(' ').replace(/\s+([,.!?])/g, '$1')
       })
+    } else if (rms >= LIKELY_SPEECH_RMS) {
+      // Speech-level sound went in and nothing came back — the engine's
+      // short-clip decoder giving up, not an ordinary quiet pause.
+      // `takeLiveWords` refuses a track that hit this.
+      track.emptyWindows++
     }
   } catch (err) {
     // A failed window is not fatal: the audio is safe on disk, and the job on
-    // stop falls back to a full pass whenever live coverage comes up short.
+    // stop falls back to a full pass whenever live coverage comes up short —
+    // and, via emptyWindows, whenever a window like this one came back empty.
     console.warn(`[live] ${track.kind} window at ${Math.round(startedAt / 1000)}s failed:`, err)
+    track.emptyWindows++
   } finally {
     // Advanced either way, so a window that cannot be transcribed is not retried
     // forever while the recording runs on ahead of it.
@@ -361,7 +394,8 @@ async function openSession(input: StartLiveInput): Promise<boolean> {
       path: track.path,
       sampleRate: input.sampleRate,
       consumedMs: 0,
-      words: []
+      words: [],
+      emptyWindows: 0
     }))
   }
   session = current
@@ -414,7 +448,11 @@ export async function finishLiveTranscription(recordingId: string): Promise<void
   const byKind = new Map<TrackKind, LiveResult>()
   for (const track of current.tracks) {
     if (track.words.length > 0) {
-      byKind.set(track.kind, { words: track.words, processedMs: track.consumedMs })
+      byKind.set(track.kind, {
+        words: track.words,
+        processedMs: track.consumedMs,
+        emptyWindows: track.emptyWindows
+      })
     }
   }
   if (byKind.size > 0) finished.set(recordingId, byKind)
@@ -459,6 +497,16 @@ export function takeLiveWords(
   if (trackDurationMs > 0 && result.processedMs < trackDurationMs * 0.9) {
     console.log(
       `[live] ${kind} processed only ${Math.round((result.processedMs / trackDurationMs) * 100)}% of the track; using a full pass instead`
+    )
+    return null
+  }
+
+  // consumedMs/processedMs advances even through a window the engine gave up
+  // on, so full duration coverage alone can't rule out a silent gap in the
+  // middle — this is what actually catches that case.
+  if (result.emptyWindows > 0) {
+    console.log(
+      `[live] ${kind} had ${result.emptyWindows} window(s) with signal but no words; using a full pass instead`
     )
     return null
   }

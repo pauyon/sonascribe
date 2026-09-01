@@ -137,38 +137,48 @@ export async function runTranscriptionPipeline(
   // turns out to be empty never claims a share of the clustering budget below.
   const transcribed: Array<{ track: (typeof ordered)[number]; segments: TranscriptSegment[] }> = []
 
-  for (const [index, track] of ordered.entries()) {
-    const share = 1 / ordered.length
+  const share = 1 / ordered.length
+  setStage('transcribing')
 
-    setStage('transcribing')
+  // Tracks are independent files, so there's no reason for the system track's
+  // ASR to wait on the mic's (or vice versa) — that used to make a two-track
+  // call take roughly twice as long as the audio needed. `ordered` still puts
+  // the mic first so it keeps the first slice of the progress bar and wins the
+  // language-resolution tie below, but the actual work now runs concurrently.
+  const results = await Promise.all(
+    ordered.map(async (track, index) => {
+      // A recording transcribed as it was captured has nothing left to do here.
+      // The words were produced by this same engine on windows cut at silences,
+      // so they are not a preview to be redone — running the whole file again
+      // would spend twenty minutes reproducing them.
+      const live = takeLiveWords(recordingId, track.kind, track.durationMs ?? 0)
+      const result = live
+        ? { language: null, segments: groupWordsIntoSegments(live) }
+        : await runAsr(engine, {
+            wavPath: track.wavPath,
+            modelPath,
+            language,
+            onProgress: (fraction) =>
+              progress(
+                'transcribing',
+                // Parakeet reports no progress; keep the bar indeterminate rather
+                // than inventing a number.
+                fraction == null ? null : index * share + fraction * share
+              ),
+            signal
+          })
 
-    // A recording transcribed as it was captured has nothing left to do here.
-    // The words were produced by this same engine on windows cut at silences,
-    // so they are not a preview to be redone — running the whole file again
-    // would spend twenty minutes reproducing them.
-    const live = takeLiveWords(recordingId, track.kind, track.durationMs ?? 0)
-    const result = live
-      ? { language: null, segments: groupWordsIntoSegments(live) }
-      : await runAsr(engine, {
-          wavPath: track.wavPath,
-          modelPath,
-          language,
-          onProgress: (fraction) =>
-            progress(
-              'transcribing',
-              // Parakeet reports no progress; keep the bar indeterminate rather
-              // than inventing a number.
-              fraction == null ? null : index * share + fraction * share
-            ),
-          signal
-        })
-    if (signal.aborted) return emptyResult()
+      if (live) {
+        console.log(`[jobs] using ${live.length} words transcribed live for the ${track.kind} track`)
+        progress('transcribing', (index + 1) / ordered.length)
+      }
 
-    if (live) {
-      console.log(`[jobs] using ${live.length} words transcribed live for the ${track.kind} track`)
-      progress('transcribing', (index + 1) / ordered.length)
-    }
+      return { track, result }
+    })
+  )
+  if (signal.aborted) return emptyResult()
 
+  for (const { track, result } of results) {
     resolvedLanguage ??= result.language ?? (language === 'auto' ? null : language)
 
     // A track with no speech is ordinary, not fatal: system audio with

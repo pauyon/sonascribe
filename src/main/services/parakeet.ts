@@ -121,14 +121,26 @@ export async function transcribeWithParakeet(
         if (index >= chunks.length) return
 
         try {
-          results[index] = await transcribeOneFile({
-            ...options,
-            wavPath: chunks[index].path,
-            threads,
-            // A single run reports nothing usable, so progress is counted in
-            // completed windows instead.
-            onProgress: () => undefined
-          })
+          // A chunk with nothing in it costs the same as one full of speech —
+          // the engine charges for the file handed to it, not for what's
+          // actually said. System audio is silent for most of a call, so this
+          // check (already used on the tail sweep below) applies just as well
+          // to a whole 5-minute window that turned out to hold no signal.
+          const peak = await measurePeak(chunks[index].path)
+          if (peak < SILENCE_PEAK_THRESHOLD) {
+            console.log(`[parakeet] window ${index} silent (peak ${peak.toFixed(5)}); skipping the engine`)
+          }
+          results[index] =
+            peak < SILENCE_PEAK_THRESHOLD
+              ? { language: null, segments: [] }
+              : await transcribeOneFile({
+                  ...options,
+                  wavPath: chunks[index].path,
+                  threads,
+                  // A single run reports nothing usable, so progress is counted in
+                  // completed windows instead.
+                  onProgress: () => undefined
+                })
         } catch (err) {
           // Remember the first failure and stop drawing work; the windows still
           // running will finish on their own and be discarded.
@@ -282,7 +294,7 @@ async function sweepTail(
   let recovered = 0
 
   for (let pass = 0; pass < MAX_TAIL_PASSES; pass++) {
-    const lastEnd = words.length > 0 ? Math.max(...words.map((w) => w.endMs)) : 0
+    const lastEnd = words.length > 0 ? words.reduce((max, w) => Math.max(max, w.endMs), 0) : 0
     if (durationMs - lastEnd < TAIL_GAP_MS) break
 
     const extra = await transcribeTail(options, lastEnd, durationMs)
