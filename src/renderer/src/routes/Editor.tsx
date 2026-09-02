@@ -13,7 +13,6 @@ import Transcript from '../components/Transcript'
 import JobProgress from '../components/JobProgress'
 import SpeakerBar from '../components/SpeakerBar'
 import AskPanel from '../components/AskPanel'
-import ScreenshotGallery from '../components/ScreenshotGallery'
 import Select from '../components/Select'
 
 type PendingAction =
@@ -544,15 +543,6 @@ export default function Editor(): React.JSX.Element {
 
       {busy && <JobProgress job={job} startedAt={jobStartedAt || Date.now()} />}
 
-      <ScreenshotGallery
-        screenshots={screenshots}
-        showHours={showHours}
-        onSeek={audio.seek}
-        onDelete={(id) => {
-          void api.invoke('screenshots:delete', { id }).then(refetch)
-        }}
-      />
-
       {hasTranscript && (
         <SpeakerBar
           speakers={visibleSpeakers}
@@ -618,6 +608,7 @@ export default function Editor(): React.JSX.Element {
         <Transcript
           utterances={visibleUtterances}
           speakers={visibleSpeakers}
+          screenshots={screenshots}
           currentMs={audio.currentMs}
           showHours={showHours}
           query={query}
@@ -633,6 +624,9 @@ export default function Editor(): React.JSX.Element {
             refetch()
           }}
           onDelete={deleteLine}
+          onDeleteScreenshot={(id) => {
+            void api.invoke('screenshots:delete', { id }).then(refetch)
+          }}
         />
       ) : (
         <div className="empty">

@@ -15,7 +15,7 @@ const KEYS = {
   micDeviceId: 'recording.micDeviceId',
   captureSystemAudio: 'recording.captureSystemAudio',
   autoPopOutOnMinimize: 'recording.autoPopOutOnMinimize',
-  screenshotDisplayId: 'recording.screenshotDisplayId',
+  screenshotDisplayIds: 'recording.screenshotDisplayIds',
   localSpeakerColor: 'diarization.localSpeakerColor'
 } as const
 
@@ -121,12 +121,18 @@ export function setNoiseSuppression(enabled: boolean): void {
 }
 
 /**
- * Whether to route the microphone through WebRTC echo cancellation and
- * automatic gain control.
+ * Whether to route the microphone through WebRTC echo cancellation.
  *
- * Off by default. This pair is what gives processed audio its "on a call"
- * character; it earns its keep only when the mic can hear the app's own
- * speaker output.
+ * Off by default. It's the adaptive filtering here that gives processed
+ * audio its "on a call" character; it earns its keep only when the mic can
+ * hear the app's own speaker output.
+ *
+ * Automatic gain control is not a matching setting here — the renderer's
+ * Record screen turns it on unconditionally. Unlike this, plain gain
+ * adjustment carries no "on a call" character, and there's no real case for
+ * wanting it off: going without it just leaves a quiet input device with
+ * nothing compensating, which can lose a recording's audio outright rather
+ * than merely costing a little fidelity.
  */
 export function getEchoCancellation(): boolean {
   return get(KEYS.echoCancellation) === 'true'
@@ -200,20 +206,29 @@ export function setAutoPopOutOnMinimize(enabled: boolean): void {
 }
 
 /**
- * `desktopCapturer` source id of the one display a screenshot snap should
- * capture, or null for every connected display.
+ * `desktopCapturer` source ids of the displays a screenshot snap should
+ * capture, or an empty array for every connected display.
  *
  * Not validated here — an id from a monitor that's since been unplugged
  * simply won't match anything the next time sources are enumerated, and the
- * capture service falls back to every display rather than this needing to
- * know that in advance.
+ * capture service falls back to every remaining display rather than this
+ * needing to know that in advance. A malformed stored value (there is no
+ * schema on this table) is treated the same as "none chosen" rather than
+ * thrown, for the same reason.
  */
-export function getScreenshotDisplayId(): string | null {
-  return get(KEYS.screenshotDisplayId)
+export function getScreenshotDisplayIds(): string[] {
+  const raw = get(KEYS.screenshotDisplayIds)
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === 'string') ? parsed : []
+  } catch {
+    return []
+  }
 }
 
-export function setScreenshotDisplayId(displayId: string | null): void {
-  set(KEYS.screenshotDisplayId, displayId ?? '')
+export function setScreenshotDisplayIds(displayIds: string[]): void {
+  set(KEYS.screenshotDisplayIds, JSON.stringify(displayIds))
 }
 
 /**

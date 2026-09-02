@@ -182,7 +182,17 @@ export async function stopRecording(): Promise<RecordingSummary> {
     // file of zeroes, which is silent but far from empty. Keeping it means a
     // recording with perfectly good microphone audio still has a track that no
     // engine can find speech in.
-    const peak = bytes === 0 ? 0 : await measurePeak(writer.path)
+    //
+    // measurePeak reading the file at all is not guaranteed, rare as that
+    // should be — and letting that exception escape used to fail this whole
+    // function, discarding every other track's already-closed, perfectly
+    // good audio (system, say) along with the one that had the problem.
+    // Treated the same as a silent track instead: annoying to lose one
+    // track's audio, much worse to lose the whole recording over it.
+    const peak = bytes === 0 ? 0 : await measurePeak(writer.path).catch((err: unknown) => {
+      console.warn(`[recorder] could not read back the ${kind} track; treating it as silent:`, err)
+      return 0
+    })
     if (peak < SILENCE_PEAK_THRESHOLD) {
       console.log(`[recorder] discarding silent ${kind} track (peak ${peak.toFixed(5)})`)
       await rm(writer.path, { force: true })

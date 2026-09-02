@@ -30,6 +30,28 @@ let serverProcess: ChildProcess | null = null
 /** Dedupes concurrent start attempts — more than one question could be in flight at once. */
 let startPromise: Promise<void> | null = null
 
+/**
+ * Stopped automatically after this long with no question asked.
+ *
+ * A 3B-parameter model resident with its KV cache is a couple of gigabytes
+ * that would otherwise sit loaded for the rest of the app's life after one
+ * question — Ask is occasional, not continuous, for most sessions.
+ */
+const IDLE_STOP_MS = 15 * 60 * 1000
+
+let idleTimer: NodeJS.Timeout | null = null
+
+/** Re-armed on every real use; fires stopAnswerServer once nothing has touched this server in IDLE_STOP_MS. */
+function armIdleStop(): void {
+  if (idleTimer) clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    idleTimer = null
+    stopAnswerServer()
+  }, IDLE_STOP_MS)
+  // Must not be the reason the app fails to quit promptly.
+  idleTimer.unref()
+}
+
 async function isHealthy(): Promise<boolean> {
   try {
     const res = await fetch(`http://${HOST}:${PORT}/health`)
@@ -96,6 +118,7 @@ async function startServer(): Promise<void> {
 
 /** Starts the server if it isn't already up and healthy. Safe to call from multiple places at once. */
 export async function ensureAnswerServer(): Promise<void> {
+  armIdleStop()
   if (serverProcess && (await isHealthy())) return
   if (startPromise) return startPromise
 
@@ -107,8 +130,12 @@ export async function ensureAnswerServer(): Promise<void> {
   }
 }
 
-/** For index.ts's quit handler. A no-op if the server was never started. */
+/** For index.ts's quit handler (and the idle timeout above). A no-op if the server was never started. */
 export function stopAnswerServer(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
   serverProcess?.kill()
   serverProcess = null
 }

@@ -147,7 +147,7 @@ export const MODELS: ModelSpec[] = [
     speed: 5,
     accuracy: 4,
     languages: 'multilingual',
-    note: 'Very fast and punctuates well for its size. A strong default if you are not sure.'
+    note: 'Very fast and punctuates well for its size. Worth picking over the default if you are tight on disk or want the fastest possible pass.'
   },
   {
     id: 'parakeet-tdt-0.6b-v3-q8_0',
@@ -160,7 +160,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     accuracy: 5,
     languages: 'multilingual',
-    note: 'Less aggressively quantized. Best accuracy-per-second on the list.'
+    note: 'Less aggressively quantized — the default here. Best accuracy-per-second on the list, and the extra decoding headroom is worth it on anything less than a clean, close mic.'
   },
 
   {
@@ -175,7 +175,7 @@ export const MODELS: ModelSpec[] = [
   }
 ]
 
-export const DEFAULT_MODEL_ID = 'parakeet-tdt-0.6b-v3-q4_0'
+export const DEFAULT_MODEL_ID = 'parakeet-tdt-0.6b-v3-q8_0'
 
 /** The one model `services/answering.ts` loads — there is no picker for it, unlike transcription. */
 export const DEFAULT_CHAT_MODEL_ID = 'qwen2.5-3b-instruct-q4_k_m'

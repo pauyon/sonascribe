@@ -5,7 +5,7 @@ import { desktopCapturer } from 'electron'
 import type { Screenshot } from '@shared/types'
 import { recordingMediaPath } from '../paths'
 import { insertScreenshot } from '../db/screenshots'
-import { getScreenshotDisplayId } from '../db/settings'
+import { getScreenshotDisplayIds } from '../db/settings'
 import { screenshotFileName } from './screenshot-naming'
 
 /**
@@ -44,12 +44,12 @@ export async function captureScreenshots(
     throw new Error('No display could be captured.')
   }
 
-  // A chosen display that's since been unplugged (or a docking station that
-  // reshuffled ids) just won't match anything here — falling back to every
-  // display is a saved preference degrading to the safe default, not a
-  // silent no-op.
-  const wantedId = getScreenshotDisplayId()
-  const chosen = wantedId ? sources.filter((s) => s.id === wantedId) : []
+  // Chosen displays that have since been unplugged (or a docking station
+  // that reshuffled ids) just won't match anything here — falling back to
+  // every display is a saved preference degrading to the safe default, not
+  // a silent no-op. Same fallback when nothing was ever chosen at all.
+  const wantedIds = new Set(getScreenshotDisplayIds())
+  const chosen = wantedIds.size > 0 ? sources.filter((s) => wantedIds.has(s.id)) : []
   const targets = chosen.length > 0 ? chosen : sources
 
   const dir = recordingMediaPath(recordingId)

@@ -312,8 +312,9 @@ export interface ApiSchema {
     response: void
   }
   /** Resizes the mini window between its collapsed and expanded presets. */
+  /** The transcript panel and the display picker are mutually exclusive — each is its own fixed window height, so opening one collapses the other rather than the two heights needing to add up. */
   'recording:resizeMiniControls': {
-    request: { expanded: boolean }
+    request: { mode: 'collapsed' | 'transcript' | 'displays' }
     response: void
   }
 
@@ -393,11 +394,15 @@ export interface TranscriptionSettings {
    */
   noiseSuppression: boolean
   /**
-   * Route the microphone through WebRTC echo cancellation and automatic gain.
+   * Route the microphone through WebRTC echo cancellation.
    *
-   * This is the pair that makes a recording sound like a phone call. Worth
-   * enabling only when recording a laptop mic with sound playing from its own
+   * This is what makes a recording sound like a phone call. Worth enabling
+   * only when recording a laptop mic with sound playing from its own
    * speakers, where echo cancellation stops the far end being captured twice.
+   *
+   * Automatic gain control has no matching setting: the Record screen turns
+   * it on unconditionally, since — unlike this — it carries no "on a call"
+   * character and there's no real case for wanting it off.
    */
   echoCancellation: boolean
   /**
@@ -419,12 +424,12 @@ export interface TranscriptionSettings {
    */
   autoPopOutOnMinimize: boolean
   /**
-   * Which display a screenshot snap captures, by `desktopCapturer` source id.
-   * Null (the default) means every connected display. A stale id — a
-   * monitor that's since been unplugged — falls back to every display
-   * rather than capturing nothing.
+   * Which displays a screenshot snap captures, by `desktopCapturer` source
+   * id. An empty array (the default) means every connected display. A stale
+   * id — a monitor that's since been unplugged — is simply not among the
+   * live sources next time, rather than capturing nothing.
    */
-  screenshotDisplayId: string | null
+  screenshotDisplayIds: string[]
 }
 
 /** Payloads pushed from main to renderer. */

@@ -16,7 +16,7 @@ import {
   getMicDeviceId,
   getMicSoloSpeaker,
   getNoiseSuppression,
-  getScreenshotDisplayId,
+  getScreenshotDisplayIds,
   getSpeakerCount,
   getSpeakerSplitting,
   setAutoPopOutOnMinimize,
@@ -27,20 +27,19 @@ import {
   setMicDeviceId,
   setMicSoloSpeaker,
   setNoiseSuppression,
-  setScreenshotDisplayId,
+  setScreenshotDisplayIds,
   setSelectedModelId,
   setSpeakerCount,
   setSpeakerSplitting
 } from '../db/settings'
 import {
   deleteSpeaker,
-  mergeSpeakers,
   reassignUtterance,
   renameSpeaker,
   setSpeakerColor
 } from '../db/speakers'
 import { listProfiles } from '../db/profiles'
-import { clearAllProfiles } from '../services/profiles'
+import { clearAllProfiles, mergeSpeakers } from '../services/profiles'
 import { deleteScreenshot, getScreenshotPath } from '../db/screenshots'
 import { captureScreenshots, listDisplaySources } from '../services/screenshots'
 import { screenshotFileName } from '../services/screenshot-naming'
@@ -207,9 +206,7 @@ const handlers: Handlers = {
     if (patch.micDeviceId !== undefined) setMicDeviceId(patch.micDeviceId)
     if (patch.captureSystemAudio != null) setCaptureSystemAudio(patch.captureSystemAudio)
     if (patch.autoPopOutOnMinimize != null) setAutoPopOutOnMinimize(patch.autoPopOutOnMinimize)
-    // Same null-is-meaningful reasoning as micDeviceId above: null means
-    // "every display," not "not supplied."
-    if (patch.screenshotDisplayId !== undefined) setScreenshotDisplayId(patch.screenshotDisplayId)
+    if (patch.screenshotDisplayIds != null) setScreenshotDisplayIds(patch.screenshotDisplayIds)
     return currentSettings()
   },
 
@@ -335,8 +332,8 @@ const handlers: Handlers = {
     emit('recording:elapsedTick', { elapsedMs })
   },
 
-  'recording:resizeMiniControls': ({ expanded }) => {
-    resizeMiniRecorderWindow(expanded)
+  'recording:resizeMiniControls': ({ mode }) => {
+    resizeMiniRecorderWindow(mode)
   },
 
   'screenshots:capture': ({ recordingId, elapsedMs }) => {
@@ -376,7 +373,7 @@ function currentSettings(): TranscriptionSettings {
     micDeviceId: getMicDeviceId(),
     captureSystemAudio: getCaptureSystemAudio(),
     autoPopOutOnMinimize: getAutoPopOutOnMinimize(),
-    screenshotDisplayId: getScreenshotDisplayId()
+    screenshotDisplayIds: getScreenshotDisplayIds()
   }
 }
 

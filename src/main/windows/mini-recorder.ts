@@ -18,11 +18,20 @@ import { focusMainWindow } from './main-window'
 let miniWindow: BrowserWindow | null = null
 
 const WIDTH = 300
-// Three rows of controls now (pause/stop, discard/transcript, screenshot)
-// plus room for the screenshot confirmation text. EXPANDED keeps the same
-// +290px transcript budget above whatever COLLAPSED is.
-const COLLAPSED_HEIGHT = 250
-const EXPANDED_HEIGHT = 540
+// One icon-button toolbar row now instead of three text-button rows, plus
+// room for the screenshot confirmation text.
+const COLLAPSED_HEIGHT = 180
+// Same +290px transcript budget above COLLAPSED as before the toolbar shrank.
+const TRANSCRIPT_HEIGHT = COLLAPSED_HEIGHT + 290
+// Generous for a handful of monitors; the picker itself scrolls past that
+// rather than this needing to grow with however many are connected.
+const DISPLAYS_HEIGHT = COLLAPSED_HEIGHT + 140
+
+const HEIGHTS = {
+  collapsed: COLLAPSED_HEIGHT,
+  transcript: TRANSCRIPT_HEIGHT,
+  displays: DISPLAYS_HEIGHT
+} as const
 
 /** Opens the window, or focuses it if one is already open. */
 export function openMiniRecorderWindow(): void {
@@ -82,17 +91,21 @@ export function openMiniRecorderWindow(): void {
   }
 }
 
-/** Resizes the window between its collapsed and transcript-expanded presets. */
-export function resizeMiniRecorderWindow(expanded: boolean): void {
+/**
+ * Resizes the window to fit whichever panel is open — 'collapsed' for
+ * neither. The transcript and the display picker are mutually exclusive (see
+ * the IPC doc comment), so this is a single preset pick, not two independent
+ * heights to add together.
+ */
+export function resizeMiniRecorderWindow(mode: 'collapsed' | 'transcript' | 'displays'): void {
   if (!miniWindow) return
-  const height = expanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT
   // A non-resizable window can silently ignore a programmatic resize that
   // shrinks it back down on Windows — growing worked, but the collapse back
   // to the original size did not. Lifting the resizable constraint just for
   // the call, then reinstating it, is the standard workaround; the user
   // still can't drag-resize it in between since both calls are synchronous.
   miniWindow.setResizable(true)
-  miniWindow.setContentSize(WIDTH, height)
+  miniWindow.setContentSize(WIDTH, HEIGHTS[mode])
   miniWindow.setResizable(false)
 }
 

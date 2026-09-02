@@ -14,7 +14,9 @@ import { resolveBundledModel, resolveSidecar } from './sidecars'
  * Started lazily on first search or first post-transcription indexing pass,
  * not at app launch — a user who never searches pays no memory/CPU cost for
  * it. Stopped in index.ts's existing before-quit cleanup, alongside
- * `cancelAllJobs()`.
+ * `cancelAllJobs()` — and, since every transcription reindexes itself, also
+ * stopped after a period of no use (see IDLE_STOP_MS below) so it doesn't sit
+ * loaded for the rest of the session after the one recording that started it.
  */
 
 const HOST = '127.0.0.1'
@@ -26,6 +28,30 @@ export const EMBEDDING_MODEL_ID = 'nomic-embed-text-v1.5-q4_k_m'
 let serverProcess: ChildProcess | null = null
 /** Dedupes concurrent start attempts — indexing and a search can both trigger one at once. */
 let startPromise: Promise<void> | null = null
+
+/**
+ * Stopped automatically after this long with no request through it.
+ *
+ * Every transcription reindexes itself (see search.ts), so this server starts
+ * the moment a session's first recording finishes — whether or not anyone
+ * ever searches or asks a question. Without an idle stop it then sits loaded
+ * for the rest of the app's life, next to the Q&A model doing the same, for
+ * a user who spends the following three hours just browsing the Library.
+ */
+const IDLE_STOP_MS = 15 * 60 * 1000
+
+let idleTimer: NodeJS.Timeout | null = null
+
+/** Re-armed on every real use; fires stopEmbeddingServer once nothing has touched this server in IDLE_STOP_MS. */
+function armIdleStop(): void {
+  if (idleTimer) clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    idleTimer = null
+    stopEmbeddingServer()
+  }, IDLE_STOP_MS)
+  // Must not be the reason the app fails to quit promptly.
+  idleTimer.unref()
+}
 
 async function isHealthy(): Promise<boolean> {
   try {
@@ -89,6 +115,7 @@ async function startServer(): Promise<void> {
 
 /** Starts the server if it isn't already up and healthy. Safe to call from multiple places at once. */
 export async function ensureEmbeddingServer(): Promise<void> {
+  armIdleStop()
   if (serverProcess && (await isHealthy())) return
   if (startPromise) return startPromise
 
@@ -100,8 +127,12 @@ export async function ensureEmbeddingServer(): Promise<void> {
   }
 }
 
-/** For index.ts's quit handler. A no-op if the server was never started. */
+/** For index.ts's quit handler (and the idle timeout above). A no-op if the server was never started. */
 export function stopEmbeddingServer(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
   serverProcess?.kill()
   serverProcess = null
 }

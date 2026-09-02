@@ -1,6 +1,6 @@
 {
   "name": "sonascribe",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Local-first audio transcription with timestamps and automatic speaker detection",
   "main": "./out/main/index.js",
   "author": "pauyon",

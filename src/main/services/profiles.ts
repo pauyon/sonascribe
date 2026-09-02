@@ -12,7 +12,7 @@ import {
   touchProfileMatched,
   updateProfileSample
 } from '../db/profiles'
-import { linkSpeakerToProfile, listSpeakers } from '../db/speakers'
+import { linkSpeakerToProfile, listSpeakers, mergeSpeakers as mergeSpeakerRows } from '../db/speakers'
 import { listUtteranceRangesForSpeaker } from '../db/transcript'
 import { listTracks } from '../db/tracks'
 import { voiceProfilePath } from '../paths'
@@ -245,6 +245,45 @@ export async function runAutoEnrollment(recordingId: string): Promise<void> {
       console.warn(`[profiles] enrollment skipped for speaker ${speaker.id}:`, err)
     }
   }
+}
+
+/**
+ * Merges one speaker into another, keeping voice profiles in step with it.
+ *
+ * `db/speakers.ts::mergeSpeakers` alone only fixes the one recording in front
+ * of the user: diarization over-splitting a person into two clusters is
+ * exactly the case that merge exists for, but `runAutoEnrollment` already
+ * runs right after transcription, before the user ever gets to the Editor to
+ * notice and merge them — so both clusters can already have been separately
+ * enrolled as two different voice profiles by the time a merge happens. Left
+ * alone, both anchors keep riding every future diarization pass, and which
+ * one that person's next recording happens to match is down to chance —
+ * the fragmentation the merge was supposed to fix quietly comes back.
+ *
+ * Read the losing speaker's profile link before the merge deletes its row,
+ * since there is nothing left to read it from afterward.
+ */
+export async function mergeSpeakers(recordingId: string, fromId: string, intoId: string): Promise<void> {
+  const speakers = listSpeakers(recordingId)
+  const from = speakers.find((s) => s.id === fromId)
+  const into = speakers.find((s) => s.id === intoId)
+
+  mergeSpeakerRows(recordingId, fromId, intoId)
+
+  if (!from?.profileId || from.profileId === into?.profileId) return
+
+  if (!into?.profileId) {
+    // The surviving speaker had no profile yet — the losing one's anchor is
+    // still a perfectly good description of this person, so it simply moves
+    // over rather than being thrown away.
+    linkSpeakerToProfile(intoId, from.profileId)
+    return
+  }
+
+  // Both sides were already separately enrolled: two anchors for one person.
+  // The survivor's profile is the one every future recording will keep
+  // matching against, so it's the one kept; the other is now redundant.
+  await deleteProfile(from.profileId)
 }
 
 async function deleteProfile(id: string): Promise<void> {

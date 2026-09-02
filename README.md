@@ -253,6 +253,14 @@ track that needs diarizing into one file (`services/ffmpeg.ts::concatToWav`,
 stop at) and diarizing that once. `services/transcription-pipeline.ts` owns
 this; `services/jobs.ts` only sequences status/persistence around it.
 
+**Per-track ASR runs concurrently; diarization still can't.** Whisper/Parakeet
+have no cross-track state, so `transcription-pipeline.ts` kicks off every
+track's ASR pass in parallel — measured close to a 2x reduction in wall-clock
+transcription time on a real two-track, 3+ hour recording. Diarization can't
+follow suit: it needs the concatenated single-file pass described above to
+count speakers correctly, so it still waits for every ASR pass to finish
+first.
+
 **Voice profiles recognise a recurring speaker automatically — no save
 button.** After a job finishes, `services/profiles.ts::runAutoEnrollment`
 anchors any speaker with enough clean audio (5–10 s, pulled from their own

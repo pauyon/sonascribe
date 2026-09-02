@@ -20,12 +20,15 @@ function Meter({
   label,
   level,
   color,
-  hint
+  hint,
+  warn
 }: {
   label: string
   level: number
   color: string
   hint?: string
+  /** Escalates the hint's styling — a source that's stayed silent too long, not just untested yet. */
+  warn?: boolean
 }): React.JSX.Element {
   return (
     <div className="meter">
@@ -39,7 +42,9 @@ function Meter({
           style={{ width: `${Math.min(100, Math.sqrt(level) * 100)}%`, background: color }}
         />
       </div>
-      {hint && <span className="meter__hint">{hint}</span>}
+      {hint && (
+        <span className={warn ? 'meter__hint meter__hint--warn' : 'meter__hint'}>{hint}</span>
+      )}
     </div>
   )
 }
@@ -68,6 +73,15 @@ export default function Record(): React.JSX.Element {
   const [levels, setLevels] = useState<Record<string, number>>({ mic: 0, system: 0 })
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
+  /**
+   * True from the moment a stop begins (here or in the mini controls window)
+   * until it actually finishes. Finishing a stop now retries any live window
+   * that never got words for it, which is common on a marginal mic and can
+   * take a while — `session` in main is gone as soon as the stop starts, so
+   * starting a new recording in that window would begin capturing while the
+   * previous one is still being written and transcribed.
+   */
+  const [finishing, setFinishing] = useState(false)
   /** Brief "Screenshot saved" confirmation, not tied to anything cross-window. */
   const [screenshotNotice, setScreenshotNotice] = useState<string | null>(null)
   const [sampleRate, setSampleRate] = useState<number | null>(null)
@@ -78,6 +92,23 @@ export default function Record(): React.JSX.Element {
   const [systemNote, setSystemNote] = useState<string | null>(null)
   /** Highest level seen since monitoring began, to tell silent from untested. */
   const [everHeard, setEverHeard] = useState<Record<string, boolean>>({})
+  /** A source that's stayed silent long enough to be worth flagging — see the effect below. */
+  const [silentTooLong, setSilentTooLong] = useState({ mic: false, system: false })
+  /** When the current capture graph started listening, for the silence timer above. Not reset between monitoring and recording — it's the same graph the whole time (see sessionRef's doc comment). */
+  const captureOpenedAtRef = useRef(0)
+
+  /**
+   * "Test your mic": records a few seconds from the already-open monitoring
+   * stream and plays it straight back, so a quiet or misconfigured input is
+   * heard rather than inferred from a meter. No second permission prompt and
+   * no temp file — it taps the same PCM blocks already feeding the meters.
+   */
+  const [micTest, setMicTest] = useState<'idle' | 'recording' | 'ready' | 'playing'>('idle')
+  const [micTestSecondsLeft, setMicTestSecondsLeft] = useState(0)
+  const micTestChunksRef = useRef<Int16Array[]>([])
+  const micTestActiveRef = useRef(false)
+  const micTestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const micTestSourceRef = useRef<AudioBufferSourceNode | null>(null)
 
   // Blocks arriving before the main process has opened its writers would be
   // dropped by it anyway; this gates them at the source instead of logging an
@@ -131,6 +162,7 @@ export default function Record(): React.JSX.Element {
   // arrives with the final result.
   useEvent('recording:sessionEnded', () => {
     acceptingRef.current = false
+    setFinishing(true)
   })
 
   // The single place that decides what happens once a recording is done —
@@ -141,6 +173,7 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    setFinishing(false)
     if (summary.tracks.length === 0) {
       setError(
         'No audio was captured, so nothing was saved. Check the input device and that its level meter moved.'
@@ -162,17 +195,32 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    setFinishing(false)
     setElapsedMs(0)
     setLive([])
   })
 
+  /** Cancels an in-progress or finished mic test — a device change invalidates whatever it captured. */
+  const resetMicTest = useCallback(() => {
+    if (micTestTimerRef.current) {
+      clearInterval(micTestTimerRef.current)
+      micTestTimerRef.current = null
+    }
+    micTestSourceRef.current?.stop()
+    micTestSourceRef.current = null
+    micTestActiveRef.current = false
+    micTestChunksRef.current = []
+    setMicTest('idle')
+  }, [])
+
   const closeSession = useCallback(async () => {
+    resetMicTest()
     const session = sessionRef.current
     sessionRef.current = null
     acceptingRef.current = false
     setOpenKinds([])
     if (session) await session.stop()
-  }, [])
+  }, [resetMicTest])
 
   /**
    * Opens the microphone (and system audio, if wanted) and starts metering.
@@ -198,7 +246,12 @@ export default function Record(): React.JSX.Element {
         ...CLEAN_MIC,
         noiseSuppression: settings?.noiseSuppression ?? false,
         echoCancellation: settings?.echoCancellation ?? false,
-        autoGainControl: settings?.echoCancellation ?? false
+        // Not user-facing like the two above: plain gain adjustment doesn't
+        // carry their "on a call" character, and there's no real case for
+        // wanting it off — going without it just leaves a quiet input device
+        // with nothing compensating, which can lose a recording's audio
+        // outright rather than merely costing a little fidelity.
+        autoGainControl: true
       }
 
       const streams: Array<{ kind: TrackKind; stream: MediaStream }> = []
@@ -226,6 +279,10 @@ export default function Record(): React.JSX.Element {
       const session = await startCapture(streams, (kind, samples, peak) => {
         setLevels((prev) => ({ ...prev, [kind]: Math.max(prev[kind] ?? 0, peak) }))
         if (peak > SIGNAL_FLOOR) setEverHeard((prev) => (prev[kind] ? prev : { ...prev, [kind]: true }))
+        // Copied rather than kept as a view: the worklet reuses its buffers
+        // block to block, so holding the view itself would see later blocks'
+        // data overwrite what was meant to be a snapshot of this one.
+        if (kind === 'mic' && micTestActiveRef.current) micTestChunksRef.current.push(samples.slice())
         if (!acceptingRef.current) return
         // A Uint8Array view keeps the structured clone to the exact bytes rather
         // than the whole backing buffer.
@@ -239,6 +296,7 @@ export default function Record(): React.JSX.Element {
       setOpenKinds(streams.map((s) => s.kind))
       setSampleRate(Math.round(session.context.sampleRate))
       setEverHeard({})
+      captureOpenedAtRef.current = Date.now()
       void loadDevices()
     } finally {
       openingRef.current = false
@@ -285,6 +343,8 @@ export default function Record(): React.JSX.Element {
       sessionRef.current = null
       acceptingRef.current = false
       if (session) void session.stop()
+      if (micTestTimerRef.current) clearInterval(micTestTimerRef.current)
+      micTestSourceRef.current?.stop()
     }
   }, [])
 
@@ -316,6 +376,41 @@ export default function Record(): React.JSX.Element {
     }, 120)
     return () => clearInterval(timer)
   }, [])
+
+  /**
+   * Flags a source that has never once cleared SIGNAL_FLOOR since the graph
+   * opened, given long enough that it plausibly should have — this is what
+   * caught nothing the first time: a meter alone stayed quiet without ever
+   * saying so out loud, and a 3-hour recording finished before anyone found
+   * out. Runs through both monitoring and an actual recording, since that
+   * incident happened well after Start was pressed, not at setup.
+   *
+   * A plain "quiet for N seconds" test would fire constantly on ordinary
+   * listening pauses, so this checks total silence since the graph opened
+   * instead — one real word is enough to clear it for good. The mic's own
+   * grace period shortens once system audio is clearly carrying the call:
+   * a live conversation with literally nothing from your side in that long
+   * is a much stronger signal than silence with nothing corroborating it.
+   */
+  useEffect(() => {
+    if (openKinds.length === 0) {
+      setSilentTooLong({ mic: false, system: false })
+      return
+    }
+    const monitoringSystem = openKinds.includes('system')
+    const MIC_GRACE_MS = monitoringSystem && everHeard.system ? 12_000 : 30_000
+    const SYSTEM_GRACE_MS = 30_000
+    const check = (): void => {
+      const elapsed = Date.now() - captureOpenedAtRef.current
+      setSilentTooLong({
+        mic: !everHeard.mic && elapsed > MIC_GRACE_MS,
+        system: monitoringSystem && !everHeard.system && elapsed > SYSTEM_GRACE_MS
+      })
+    }
+    check()
+    const timer = setInterval(check, 1000)
+    return () => clearInterval(timer)
+  }, [openKinds, everHeard.mic, everHeard.system])
 
   async function start(): Promise<void> {
     setWarning(null)
@@ -363,6 +458,11 @@ export default function Record(): React.JSX.Element {
     void api.invoke('recording:pause', { paused: next })
   }
 
+  /** True for the one error this window should shrug off — see `finishing`'s doc comment. */
+  function alreadyFinishing(err: unknown): boolean {
+    return err instanceof Error && err.message.includes('No recording in progress')
+  }
+
   async function stop(): Promise<void> {
     // Optimistic, for instant feedback on this window's own click — the
     // recording:sessionEnded/recording:stopped handlers above do the same
@@ -371,11 +471,18 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    setFinishing(true)
 
     try {
       await api.invoke('recording:stop')
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      // Losing the race with a stop already in flight elsewhere is not a
+      // failure to report — recording:sessionEnded already caught it, and
+      // recording:stopped is still coming.
+      if (!alreadyFinishing(err)) {
+        setFinishing(false)
+        setError(err instanceof Error ? err.message : String(err))
+      }
     }
   }
 
@@ -383,13 +490,17 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    setFinishing(true)
     setElapsedMs(0)
     setLive([])
 
     try {
       await api.invoke('recording:cancel')
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      if (!alreadyFinishing(err)) {
+        setFinishing(false)
+        setError(err instanceof Error ? err.message : String(err))
+      }
     }
   }
 
@@ -405,6 +516,61 @@ export default function Record(): React.JSX.Element {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  /** How long a test clip runs before playing itself back automatically. */
+  const MIC_TEST_MS = 4000
+
+  function startMicTest(): void {
+    if (!sessionRef.current || micTest === 'recording' || micTest === 'playing') return
+    micTestChunksRef.current = []
+    micTestActiveRef.current = true
+    setMicTest('recording')
+    let remaining = Math.ceil(MIC_TEST_MS / 1000)
+    setMicTestSecondsLeft(remaining)
+    micTestTimerRef.current = setInterval(() => {
+      remaining -= 1
+      if (remaining > 0) {
+        setMicTestSecondsLeft(remaining)
+        return
+      }
+      if (micTestTimerRef.current) {
+        clearInterval(micTestTimerRef.current)
+        micTestTimerRef.current = null
+      }
+      micTestActiveRef.current = false
+      playMicTest()
+    }, 1000)
+  }
+
+  /** Builds an AudioBuffer straight from the captured samples and plays it through the same context capture already uses — no re-encoding, so what plays back is exactly what was heard. */
+  function playMicTest(): void {
+    const context = sessionRef.current?.context
+    const chunks = micTestChunksRef.current
+    if (!context || chunks.length === 0) {
+      setMicTest('idle')
+      return
+    }
+
+    const totalSamples = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+    const buffer = context.createBuffer(1, totalSamples, context.sampleRate)
+    const channel = buffer.getChannelData(0)
+    let offset = 0
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) channel[offset + i] = chunk[i] / 32768
+      offset += chunk.length
+    }
+
+    const source = context.createBufferSource()
+    source.buffer = buffer
+    source.connect(context.destination)
+    source.onended = () => {
+      if (micTestSourceRef.current === source) micTestSourceRef.current = null
+      setMicTest((prev) => (prev === 'playing' ? 'ready' : prev))
+    }
+    micTestSourceRef.current = source
+    source.start()
+    setMicTest('playing')
   }
 
   const monitoringSystem = openKinds.includes('system')
@@ -424,14 +590,19 @@ export default function Record(): React.JSX.Element {
         label="Microphone"
         level={levels.mic ?? 0}
         color="var(--accent-strong)"
+        warn={silentTooLong.mic}
         hint={
-          recording
-            ? undefined
-            : everHeard.mic
-              ? 'Hearing you'
-              : captureOpen
-                ? 'Say something to check the level'
-                : undefined
+          silentTooLong.mic
+            ? monitoringSystem && everHeard.system
+              ? "No sound from your mic, but the call has audio — check your input device"
+              : 'No sound detected from your mic — check your input device'
+            : recording
+              ? undefined
+              : everHeard.mic
+                ? 'Hearing you'
+                : captureOpen
+                  ? 'Say something to check the level'
+                  : undefined
         }
       />
       {monitoringSystem && (
@@ -439,12 +610,15 @@ export default function Record(): React.JSX.Element {
           label="System audio"
           level={levels.system ?? 0}
           color="var(--ok-strong)"
+          warn={silentTooLong.system}
           hint={
-            recording
-              ? undefined
-              : everHeard.system
-                ? 'Hearing playback'
-                : 'Play something to check the level'
+            silentTooLong.system
+              ? 'No sound detected — check that audio is playing'
+              : recording
+                ? undefined
+                : everHeard.system
+                  ? 'Hearing playback'
+                  : 'Play something to check the level'
           }
         />
       )}
@@ -486,13 +660,15 @@ export default function Record(): React.JSX.Element {
               ? paused
                 ? 'Paused — no audio is being written'
                 : 'Recording'
-              : !captureOpen
-                ? 'Opening the microphone…'
-                : micLive
-                  ? `Ready — capturing at ${((sampleRate ?? 48000) / 1000).toFixed(1)} kHz`
-                  : `Listening on ${
-                      devices.find((d) => d.deviceId === deviceId)?.label || 'the default microphone'
-                    }`}
+              : finishing
+                ? 'Finishing the previous recording…'
+                : !captureOpen
+                  ? 'Opening the microphone…'
+                  : micLive
+                    ? `Ready — capturing at ${((sampleRate ?? 48000) / 1000).toFixed(1)} kHz`
+                    : `Listening on ${
+                        devices.find((d) => d.deviceId === deviceId)?.label || 'the default microphone'
+                      }`}
           </p>
         </div>
 
@@ -523,8 +699,13 @@ export default function Record(): React.JSX.Element {
               {screenshotNotice && <span className="recorder__toast">{screenshotNotice}</span>}
             </>
           ) : (
-            <button className="btn btn--record" onClick={start} disabled={!captureOpen}>
-              Start recording
+            <button
+              className="btn btn--record"
+              onClick={start}
+              disabled={!captureOpen || finishing}
+              title={finishing ? 'Finishing the previous recording — starting again in a moment' : undefined}
+            >
+              {finishing ? 'Finishing…' : 'Start recording'}
             </button>
           )}
         </div>
@@ -557,6 +738,36 @@ export default function Record(): React.JSX.Element {
                     void api.invoke('settings:set', { micDeviceId: id || null })
                   }}
                 />
+                <div className="mictest">
+                  {micTest === 'idle' && (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      onClick={startMicTest}
+                      disabled={!captureOpen}
+                    >
+                      🎤 Test your mic
+                    </button>
+                  )}
+                  {micTest === 'recording' && (
+                    <span className="mictest__status">
+                      ● Recording — say something ({micTestSecondsLeft}s)
+                    </span>
+                  )}
+                  {micTest === 'playing' && (
+                    <span className="mictest__status">🔊 Playing back what was captured…</span>
+                  )}
+                  {micTest === 'ready' && (
+                    <span className="mictest__row">
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={playMicTest}>
+                        ▶ Play again
+                      </button>
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={startMicTest}>
+                        🎤 Test again
+                      </button>
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Always present rather than disappearing on a single-display
@@ -565,23 +776,51 @@ export default function Record(): React.JSX.Element {
                   here confirming where a snap will come from. */}
               <div className="recorder__field">
                 <span id="screenshot-display-label">Screenshot capture</span>
-                <Select
-                  value={displays && displays.length > 1 ? (settings?.screenshotDisplayId ?? '') : ''}
-                  disabled={!displays || displays.length <= 1}
-                  ariaLabel="Which display a screenshot snap captures"
-                  options={
-                    displays && displays.length > 1
-                      ? [
-                          { value: '', label: 'All displays' },
-                          ...displays.map((d) => ({ value: d.id, label: d.name }))
-                        ]
-                      : [{ value: '', label: displays?.[0]?.name || 'Main screen' }]
-                  }
-                  onChange={async (id) => {
-                    await api.invoke('settings:set', { screenshotDisplayId: id || null })
-                    refetchSettings()
-                  }}
-                />
+                {displays && displays.length > 1 ? (
+                  <div className="recorder__displays" role="group" aria-labelledby="screenshot-display-label">
+                    {(() => {
+                      const selectedIds = settings?.screenshotDisplayIds ?? []
+                      const allSelected = selectedIds.length === 0
+                      const setDisplayIds = async (ids: string[]): Promise<void> => {
+                        await api.invoke('settings:set', { screenshotDisplayIds: ids })
+                        refetchSettings()
+                      }
+                      return (
+                        <>
+                          <label className="toolbar__toggle">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={() => void setDisplayIds([])}
+                            />
+                            All displays
+                          </label>
+                          {displays.map((d) => (
+                            <label key={d.id} className="toolbar__toggle">
+                              <input
+                                type="checkbox"
+                                checked={!allSelected && selectedIds.includes(d.id)}
+                                onChange={(e) => {
+                                  const next = e.target.checked
+                                    ? [...selectedIds, d.id]
+                                    : selectedIds.filter((id) => id !== d.id)
+                                  void setDisplayIds(next)
+                                }}
+                              />
+                              {d.name}
+                            </label>
+                          ))}
+                        </>
+                      )
+                    })()}
+                  </div>
+                ) : (
+                  // Nothing to choose between — say so rather than show an
+                  // interactive-looking control with only one possible state.
+                  <p className="recorder__fine">
+                    Capturing {displays?.[0]?.name || 'the main screen'} — the only display connected.
+                  </p>
+                )}
               </div>
 
               <label className="toolbar__toggle">
@@ -598,64 +837,76 @@ export default function Record(): React.JSX.Element {
               </label>
               {systemNote && <p className="recorder__fine recorder__fine--warn">{systemNote}</p>}
 
-              <div className="toolbar__toggle-row">
-                <label className="toolbar__toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings?.noiseSuppression ?? false}
-                    onChange={async (e) => {
-                      await api.invoke('settings:set', { noiseSuppression: e.target.checked })
-                      refetchSettings()
-                    }}
-                  />
-                  Reduce background noise
-                </label>
-                <HelpTip text="Gates out steady noise — fans, hum, keyboard clatter — on its own, without the echo cancellation or gain riding along below. The meter above updates as soon as you change it." />
+              {/* Split from "recording behavior" below: these two actually change
+                  what ends up in the captured audio, so they belong next to the
+                  meters that show their effect — not lumped in with settings that
+                  just change how the app behaves around a recording. */}
+              <div className="recorder__group">
+                <span className="recorder__group-label">Audio processing</span>
+
+                <div className="toolbar__toggle-row">
+                  <label className="toolbar__toggle">
+                    <input
+                      type="checkbox"
+                      checked={settings?.noiseSuppression ?? false}
+                      onChange={async (e) => {
+                        await api.invoke('settings:set', { noiseSuppression: e.target.checked })
+                        refetchSettings()
+                      }}
+                    />
+                    Reduce background noise
+                  </label>
+                  <HelpTip text="Gates out steady noise — fans, hum, keyboard clatter — on its own, without the echo cancellation or gain adjustment below. The meter above updates as soon as you change it." />
+                </div>
+
+                <div className="toolbar__toggle-row">
+                  <label className="toolbar__toggle">
+                    <input
+                      type="checkbox"
+                      checked={settings?.echoCancellation ?? false}
+                      onChange={async (e) => {
+                        await api.invoke('settings:set', { echoCancellation: e.target.checked })
+                        refetchSettings()
+                      }}
+                    />
+                    Cancel speaker echo
+                  </label>
+                  <HelpTip text="Leave this off for an external or USB microphone — this is what makes a recording sound like a phone call. Turn it on only for a laptop mic with sound coming from its own speakers, where it stops the far end being recorded twice. Worth trying too if your mic ever reads as silent while another app is using it for a call." />
+                </div>
               </div>
 
-              <div className="toolbar__toggle-row">
-                <label className="toolbar__toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings?.echoCancellation ?? false}
-                    onChange={async (e) => {
-                      await api.invoke('settings:set', { echoCancellation: e.target.checked })
-                      refetchSettings()
-                    }}
-                  />
-                  Cancel speaker echo
-                </label>
-                <HelpTip text="Leave this off for an external or USB microphone — this is what makes a recording sound like a phone call. Turn it on only for a laptop mic with sound coming from its own speakers, where it stops the far end being recorded twice." />
-              </div>
+              <div className="recorder__group">
+                <span className="recorder__group-label">Recording behavior</span>
 
-              <div className="toolbar__toggle-row">
-                <label className="toolbar__toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings?.micSoloSpeaker ?? false}
-                    onChange={async (e) => {
-                      await api.invoke('settings:set', { micSoloSpeaker: e.target.checked })
-                      refetchSettings()
-                    }}
-                  />
-                  Only my voice is on this microphone
-                </label>
-                <HelpTip text="Tick this for a call, where you are on the mic and everyone else comes through system audio — your side gets labelled “You” without guessing. Leave it unticked when several people share one microphone, or everyone in the room is merged into a single speaker." />
-              </div>
+                <div className="toolbar__toggle-row">
+                  <label className="toolbar__toggle">
+                    <input
+                      type="checkbox"
+                      checked={settings?.micSoloSpeaker ?? false}
+                      onChange={async (e) => {
+                        await api.invoke('settings:set', { micSoloSpeaker: e.target.checked })
+                        refetchSettings()
+                      }}
+                    />
+                    Only my voice is on this microphone
+                  </label>
+                  <HelpTip text="Tick this for a call, where you are on the mic and everyone else comes through system audio — your side gets labelled “You” without guessing. Leave it unticked when several people share one microphone, or everyone in the room is merged into a single speaker." />
+                </div>
 
-              <div className="toolbar__toggle-row">
-                <label className="toolbar__toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings?.autoPopOutOnMinimize ?? false}
-                    onChange={async (e) => {
-                      await api.invoke('settings:set', { autoPopOutOnMinimize: e.target.checked })
-                      refetchSettings()
-                    }}
-                  />
-                  Pop out controls automatically when minimized
-                </label>
-                <HelpTip text="While recording, minimizing this window opens a small always-on-top controls window — pause/resume, stop & save, discard, and a collapsible live transcript. This is the only way to reach it; leave it unticked and minimizing behaves normally. Closing that window brings this one back." />
+                <div className="toolbar__toggle-row">
+                  <label className="toolbar__toggle">
+                    <input
+                      type="checkbox"
+                      checked={settings?.autoPopOutOnMinimize ?? false}
+                      onChange={async (e) => {
+                        await api.invoke('settings:set', { autoPopOutOnMinimize: e.target.checked })
+                        refetchSettings()
+                      }}
+                    />
+                    Pop out controls automatically when minimized
+                  </label>
+                  <HelpTip text="While recording, minimizing this window opens a small always-on-top controls window — pause/resume, stop & save, discard, and a collapsible live transcript. This is the only way to reach it; leave it unticked and minimizing behaves normally. Closing that window brings this one back." />
+                </div>
               </div>
             </div>
           )}
