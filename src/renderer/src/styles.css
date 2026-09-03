@@ -1357,7 +1357,21 @@ body {
 .recorder__displays {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+
+/* Live preview of what's actually on that screen — the OS-reported name
+   alone ("Screen 1", "Screen 2") doesn't say which physical monitor that
+   is. object-fit crops it to a consistent shape regardless of the source
+   display's own aspect ratio. */
+.recorder__display-thumb {
+  width: 56px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  flex-shrink: 0;
 }
 
 /* "Test your mic": sits right under the device picker it tests. */

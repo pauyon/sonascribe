@@ -796,7 +796,7 @@ export default function Record(): React.JSX.Element {
                             All displays
                           </label>
                           {displays.map((d) => (
-                            <label key={d.id} className="toolbar__toggle">
+                            <label key={d.id} className="toolbar__toggle recorder__display-option">
                               <input
                                 type="checkbox"
                                 checked={!allSelected && selectedIds.includes(d.id)}
@@ -806,6 +806,13 @@ export default function Record(): React.JSX.Element {
                                     : selectedIds.filter((id) => id !== d.id)
                                   void setDisplayIds(next)
                                 }}
+                              />
+                              {/* The OS name alone ("Screen 1", "Screen 2") rarely says
+                                  which physical monitor that is — a live thumbnail does. */}
+                              <img
+                                className="recorder__display-thumb"
+                                src={d.thumbnailDataUrl}
+                                alt=""
                               />
                               {d.name}
                             </label>

@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { cpus } from 'node:os'
 import { rm } from 'node:fs/promises'
 import type { Track, TrackKind } from '@shared/types'
 import type { AsrEngine } from '@shared/models'
@@ -137,14 +138,52 @@ export async function runTranscriptionPipeline(
   // turns out to be empty never claims a share of the clustering budget below.
   const transcribed: Array<{ track: (typeof ordered)[number]; segments: TranscriptSegment[] }> = []
 
-  const share = 1 / ordered.length
   setStage('transcribing')
+
+  // Each track's own last-known fraction (null until it reports anything, or
+  // when the engine can't report at all — Parakeet). Tracks transcribe
+  // concurrently (see the comment below), so their onProgress callbacks
+  // interleave in real time rather than one finishing before the next
+  // starts — reporting straight through to a single shared number the old
+  // index*share scheme assumed would climb monotonically instead had it
+  // jump between whichever track's callback fired most recently (mic at
+  // 10%, then system at 90%, then mic at 14%…). Recomputing the combined
+  // figure from every track's own progress on each update is what actually
+  // keeps it climbing.
+  const trackFractions = new Array<number | null>(ordered.length).fill(null)
+  function reportTrackProgress(index: number, fraction: number | null): void {
+    trackFractions[index] = fraction
+    if (trackFractions.every((f) => f == null)) {
+      progress('transcribing', null)
+      return
+    }
+    // A track that hasn't reported yet (or can't at all) counts as 0 rather
+    // than being left out of the average — otherwise a second track's very
+    // first update would flash the combined figure up to that track's own
+    // fraction alone.
+    const combined = trackFractions.reduce((sum: number, f) => sum + (f ?? 0), 0) / ordered.length
+    progress('transcribing', Math.min(1, combined))
+  }
+
+  // Each engine's own thread default assumes it is the only thing running —
+  // still true for a single-track import, which is left alone (undefined
+  // here means "use the engine's own default", same as before this
+  // existed). A multi-track recording now runs every ASR call at once
+  // (see below) though, and left at their own defaults they would each
+  // independently claim close to every core: an 8-core machine would run
+  // two whisper/parakeet processes each asking for most of the machine,
+  // rather than the two of them actually sharing what's there. Dividing the
+  // real core count across however many tracks are about to run
+  // concurrently keeps the total honest instead of oversubscribing several
+  // times over.
+  const threadsPerTrack =
+    ordered.length > 1 ? Math.max(1, Math.floor(cpus().length / ordered.length)) : undefined
 
   // Tracks are independent files, so there's no reason for the system track's
   // ASR to wait on the mic's (or vice versa) — that used to make a two-track
   // call take roughly twice as long as the audio needed. `ordered` still puts
-  // the mic first so it keeps the first slice of the progress bar and wins the
-  // language-resolution tie below, but the actual work now runs concurrently.
+  // the mic first so it wins the language-resolution tie below, but the
+  // actual work now runs concurrently.
   const results = await Promise.all(
     ordered.map(async (track, index) => {
       // A recording transcribed as it was captured has nothing left to do here.
@@ -158,19 +197,14 @@ export async function runTranscriptionPipeline(
             wavPath: track.wavPath,
             modelPath,
             language,
-            onProgress: (fraction) =>
-              progress(
-                'transcribing',
-                // Parakeet reports no progress; keep the bar indeterminate rather
-                // than inventing a number.
-                fraction == null ? null : index * share + fraction * share
-              ),
+            threads: threadsPerTrack,
+            onProgress: (fraction) => reportTrackProgress(index, fraction),
             signal
           })
 
       if (live) {
         console.log(`[jobs] using ${live.length} words transcribed live for the ${track.kind} track`)
-        progress('transcribing', (index + 1) / ordered.length)
+        reportTrackProgress(index, 1)
       }
 
       return { track, result }

@@ -23,13 +23,27 @@ import { screenshotFileName } from './screenshot-naming'
 // resolution; so this is a ceiling, not a target size.
 const CAPTURE_SIZE = { width: 3840, height: 2160 }
 
-export async function listDisplaySources(): Promise<Array<{ id: string; name: string }>> {
+/**
+ * Small enough to stay cheap over IPC and in the picker UI, big enough that
+ * what's actually on a screen is recognisable at a glance — which is the
+ * whole point: the OS-reported name is rarely more informative than "Screen
+ * 1", "Screen 2", so the thumbnail is what actually lets someone tell two
+ * displays apart when choosing which to capture.
+ */
+const PICKER_THUMBNAIL_SIZE = { width: 240, height: 150 }
+
+export async function listDisplaySources(): Promise<
+  Array<{ id: string; name: string; thumbnailDataUrl: string }>
+> {
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    // No image work needed just to list what's connected.
-    thumbnailSize: { width: 0, height: 0 }
+    thumbnailSize: PICKER_THUMBNAIL_SIZE
   })
-  return sources.map((s) => ({ id: s.id, name: s.name }))
+  return sources.map((s) => ({
+    id: s.id,
+    name: s.name,
+    thumbnailDataUrl: s.thumbnail.toDataURL()
+  }))
 }
 
 export async function captureScreenshots(

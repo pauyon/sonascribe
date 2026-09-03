@@ -61,19 +61,28 @@ function defaultThreads(): number {
  *
  * The count is also capped by free memory, since each worker holds a whole
  * window's activations — roughly 800 MB per minute of audio plus the model.
+ *
+ * `coreBudget` defaults to every core on the machine, which is correct for a
+ * standalone transcription — but the pipeline now runs a second track's ASR
+ * concurrently with this one (see transcription-pipeline.ts), and passes its
+ * own, already-halved share through `options.threads` when it does. Without
+ * that, this would keep dividing the *whole* machine between its own workers
+ * with no idea a sibling process is doing the same thing next to it — an
+ * 8-core machine running two 2-worker-of-4-threads plans at once is 16
+ * threads competing for 8 cores, not the 8 either plan alone assumed.
  */
-function planWorkers(chunkMs: number): { workers: number; threads: number } {
-  const cores = Math.max(1, cpus().length)
+function planWorkers(chunkMs: number, coreBudget: number): { workers: number; threads: number } {
   const perWorkerGb = (chunkMs / 60_000) * 0.8 + 1.5
   // Only part of what is free, so a transcription cannot squeeze everything else
   // on the machine into swap the way the unsplit file did.
   const budgetGb = (freemem() / 2 ** 30) * 0.6
   const byMemory = Math.max(1, Math.floor(budgetGb / perWorkerGb))
-  const workers = Math.max(1, Math.min(2, byMemory, Math.floor(cores / 2)))
-  // Every core divided between the workers, which is the arrangement that was
-  // measured fastest. Holding one back sounds prudent and is not: the app has
-  // nothing to do while this runs but forward progress events.
-  return { workers, threads: Math.max(1, Math.floor(cores / workers)) }
+  const workers = Math.max(1, Math.min(2, byMemory, Math.floor(coreBudget / 2)))
+  // Every core in the budget divided between the workers, which is the
+  // arrangement that was measured fastest for a standalone run. Holding one
+  // back sounds prudent and is not: the app has nothing to do while this
+  // runs but forward progress events.
+  return { workers, threads: Math.max(1, Math.floor(coreBudget / workers)) }
 }
 
 /**
@@ -103,7 +112,8 @@ export async function transcribeWithParakeet(
     `[parakeet] ${Math.round(chunks[chunks.length - 1].endMs / 60000)} minutes of audio split into ${chunks.length} windows`
   )
 
-  const { workers, threads } = planWorkers(chunks[0].endMs - chunks[0].startMs)
+  const coreBudget = options.threads ?? Math.max(1, cpus().length)
+  const { workers, threads } = planWorkers(chunks[0].endMs - chunks[0].startMs, coreBudget)
   console.log(`[parakeet] ${workers} worker(s) at ${threads} thread(s) each`)
 
   try {

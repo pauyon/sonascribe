@@ -335,7 +335,9 @@ export interface ApiSchema {
   /** Currently connected displays, for the "which screen" Settings dropdown. */
   'screenshots:listDisplays': {
     request: void
-    response: Array<{ id: string; name: string }>
+    // OS-reported names are rarely more informative than "Screen 1", "Screen
+    // 2" — the thumbnail is what actually lets someone tell displays apart.
+    response: Array<{ id: string; name: string; thumbnailDataUrl: string }>
   }
 
   /** Reveals a file in the OS file manager, selected — for jumping to an export. */
