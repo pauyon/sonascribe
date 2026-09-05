@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, dialog } from 'electron'
 import log from 'electron-log/main'
 
 /**
@@ -23,14 +23,27 @@ export function initLogging(): void {
   // unhandled error in the main process). Logging first and then exiting
   // preserves that — the goal is a diagnosable crash, not a suppressed one
   // that leaves the app limping in a state nothing has been tested in.
-  process.on('uncaughtException', (err) => {
-    log.error('[main] uncaught exception:', err)
+  const crash = (label: string, err: unknown): void => {
+    log.error(`[main] ${label}:`, err)
+    // Best-effort: a packaged build has no terminal, so without this the
+    // window just vanishes with nothing to tell a real user why. Wrapped
+    // because a dialog can itself fail — e.g. a crash before the app is
+    // ready — and exiting must never depend on it succeeding.
+    try {
+      dialog.showErrorBox(
+        'SonaScribe hit an unexpected error',
+        `The app has to close. Details were written to the log file.\n\n${
+          err instanceof Error ? err.message : String(err)
+        }`
+      )
+    } catch {
+      // The log line above is the fallback record.
+    }
     app.exit(1)
-  })
-  process.on('unhandledRejection', (reason) => {
-    log.error('[main] unhandled rejection:', reason)
-    app.exit(1)
-  })
+  }
+
+  process.on('uncaughtException', (err) => crash('uncaught exception', err))
+  process.on('unhandledRejection', (reason) => crash('unhandled rejection', reason))
 }
 
 /** Path to the current log file, for the "Open logs folder" affordance in Settings. */

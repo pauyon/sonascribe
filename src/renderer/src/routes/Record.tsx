@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { LiveTranscriptChunk, TrackKind } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
@@ -582,7 +582,13 @@ export default function Record(): React.JSX.Element {
   // Ordered by when each window's audio was spoken, not by when the engine
   // finished it: two tracks are transcribed at once and they do not complete in
   // step, so a system-audio window can land after a later microphone one.
-  const orderedLive = [...live].sort((a, b) => a.startMs - b.startMs)
+  //
+  // Memoized on `live` itself: this component re-renders several times a
+  // second while recording (level meters, the elapsed timer), and re-sorting
+  // a transcript that can run to hundreds of entries on every one of those
+  // ticks — most of which added no new text — is wasted work that also hands
+  // LiveTranscriptPanel a fresh array reference to re-diff for nothing.
+  const orderedLive = useMemo(() => [...live].sort((a, b) => a.startMs - b.startMs), [live])
 
   const meters = (
     <div className="recorder__meters">

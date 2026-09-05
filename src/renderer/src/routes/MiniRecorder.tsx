@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LiveTranscriptChunk } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatDuration } from '../lib/format'
@@ -159,8 +159,10 @@ export default function MiniRecorder(): React.JSX.Element {
 
   // Same ordering rule as Record.tsx: two tracks transcribe independently and
   // don't finish in step, so a system-audio window can land after a later
-  // microphone one.
-  const orderedLive = [...live].sort((a, b) => a.startMs - b.startMs)
+  // microphone one. Memoized for the same reason: this window re-renders
+  // several times a second while recording and shouldn't re-sort the whole
+  // transcript on ticks that added nothing new.
+  const orderedLive = useMemo(() => [...live].sort((a, b) => a.startMs - b.startMs), [live])
   // Inferred rather than queried: no system-kind chunk will ever arrive if
   // system audio isn't open, so this is exactly as accurate as a dedicated
   // channel would be, for one less IPC surface.

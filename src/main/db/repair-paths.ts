@@ -81,9 +81,45 @@ export function resetInterruptedJobs(): number {
     )
     .run()
 
-  const count = Number(changes)
+  const count = Number(changes) + resetInterruptedNormalizing()
   if (count > 0) {
     console.log(`[db] reset ${count} recording(s) interrupted mid-transcription`)
   }
   return count
+}
+
+/**
+ * Same recovery as `resetInterruptedJobs`, for recordings interrupted while
+ * `normalizing` — set both while a recording is being captured and again while
+ * `stopRecording` finalizes tracks, so this is the state the app was in for
+ * most of an interrupted take.
+ *
+ * Unlike the transcribing/diarizing/merging stages, tracks may not exist yet:
+ * `stopRecording` creates them one at a time, after normalizing each. A crash
+ * before any of that ran leaves nothing for a retry to work with, so those
+ * rows go to 'failed' rather than a 'queued' that would just fail again the
+ * moment the user pressed Transcribe. A crash that made it partway still has
+ * tracks to retry with, same as the other stages.
+ */
+function resetInterruptedNormalizing(): number {
+  const db = getDb()
+  const stranded = db
+    .prepare(`SELECT id FROM recordings WHERE status = 'normalizing'`)
+    .all() as unknown as Array<{ id: string }>
+  if (stranded.length === 0) return 0
+
+  const hasTracks = db.prepare('SELECT 1 FROM tracks WHERE recording_id = ? LIMIT 1')
+  const toQueued = db.prepare(`UPDATE recordings SET status = 'queued', error = NULL WHERE id = ?`)
+  const toFailed = db.prepare(
+    `UPDATE recordings SET status = 'failed', error = ? WHERE id = ?`
+  )
+
+  for (const { id } of stranded) {
+    if (hasTracks.get(id)) {
+      toQueued.run(id)
+    } else {
+      toFailed.run('Interrupted before any audio was saved', id)
+    }
+  }
+  return stranded.length
 }

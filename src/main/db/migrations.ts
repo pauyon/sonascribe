@@ -186,5 +186,16 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX idx_chunk_embeddings_recording ON chunk_embeddings (recording_id);
     `
+  },
+  {
+    version: 8,
+    name: 'utterances_speaker_index',
+    sql: /* sql */ `
+      -- Speaker deletion/merge and voice-profile enrollment both filter
+      -- utterances by speaker_id; without this they full-scan the table, and
+      -- enrollment runs after every transcription, so the cost grows with the
+      -- whole library rather than just the one recording.
+      CREATE INDEX idx_utterances_speaker ON utterances (speaker_id);
+    `
   }
 ]

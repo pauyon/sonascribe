@@ -288,8 +288,13 @@ async function transcribeTail(
  * short of the audio and what remains is not silence, that remainder is
  * transcribed on its own and appended. It loops because a sweep can stop early
  * for the same reason the first pass did.
+ *
+ * Exported so transcription-pipeline.ts can run the same check over a track
+ * that finished live rather than through `transcribeWithParakeet` above: the
+ * live path hands its own final window to this same decoder, and nothing else
+ * would otherwise re-check whether that last window also stopped early.
  */
-async function sweepTail(
+export async function sweepTail(
   options: TranscribeOptions,
   result: TranscriptionResult
 ): Promise<TranscriptionResult> {

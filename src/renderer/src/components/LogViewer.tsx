@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
 
 /**
@@ -12,6 +12,7 @@ import { api } from '../lib/api'
 export default function LogViewer({ onClose }: { onClose: () => void }): React.JSX.Element {
   const [content, setContent] = useState<string | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -20,6 +21,15 @@ export default function LogViewer({ onClose }: { onClose: () => void }): React.J
     })
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // The copy button's "Copied!"/"failed" label reverts after 2s; without
+  // clearing this on unmount, closing the modal within that window still
+  // fires the timeout and calls setState on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current) clearTimeout(copyResetRef.current)
     }
   }, [])
 
@@ -38,7 +48,8 @@ export default function LogViewer({ onClose }: { onClose: () => void }): React.J
     } catch {
       setCopyState('failed')
     }
-    setTimeout(() => setCopyState('idle'), 2000)
+    if (copyResetRef.current) clearTimeout(copyResetRef.current)
+    copyResetRef.current = setTimeout(() => setCopyState('idle'), 2000)
   }
 
   return (

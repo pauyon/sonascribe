@@ -21,133 +21,159 @@ import { setMainWindow } from './windows/main-window'
 // First, so nothing logged during the setup below is lost.
 initLogging()
 
-// Must run at module load: registerSchemesAsPrivileged is only honoured before
-// the app 'ready' event fires.
-registerMediaProtocolScheme()
+/**
+ * A second launch — a stale shortcut, a double-click while the app is still
+ * starting, a crash-recovery relaunch racing a still-running instance — must
+ * not become a second process. SQLite's WAL mode tolerates concurrent
+ * processes without corrupting the file, but nothing else here does: two
+ * independent `active` download maps in models.ts could both write the same
+ * model's .part file, two job queues could both pick up and re-transcribe the
+ * same recording, and two recorder.ts sessions could both try to claim the
+ * mic.
+ *
+ * Everything below — scheme registration, `app.whenReady`, the window itself
+ * — sits inside this guard rather than after a bare `app.quit()`: quitting is
+ * asynchronous, so a script that kept running past it would still do all of
+ * that setup before the process actually exited, which is exactly the
+ * two-process race this exists to prevent.
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  let mainWindow: BrowserWindow | null = null
 
-let mainWindow: BrowserWindow | null = null
-
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 940,
-    minHeight: 600,
-    show: false,
-    autoHideMenuBar: true,
-    // Matches the light theme the app now opens in; the old dark value flashed
-    // a near-black window for a frame before the first paint.
-    backgroundColor: '#f7f8fa',
-    // Packaged builds take their icon from electron-builder, but a dev run has
-    // none and shows Electron's own — this points both at the same artwork.
-    icon: join(__dirname, '../../build/icon.png'),
-    // Match the dark chrome on macOS so the traffic lights sit on our own header.
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const }
-      : {}),
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
-      // Non-negotiable: the renderer gets no Node access. Everything privileged
-      // goes through the typed IPC bridge in src/preload.
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      // Long transcriptions and recordings continue while the window is not in
-      // front; Chromium's background throttling would otherwise stall timers
-      // and pause media in a minimized window.
-      backgroundThrottling: false
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
     }
   })
 
-  setMainWindow(mainWindow)
+  // Must run at module load: registerSchemesAsPrivileged is only honoured
+  // before the app 'ready' event fires.
+  registerMediaProtocolScheme()
 
-  // Avoid the white flash before React paints.
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  function createWindow(): void {
+    mainWindow = new BrowserWindow({
+      width: 1280,
+      height: 840,
+      minWidth: 940,
+      minHeight: 600,
+      show: false,
+      autoHideMenuBar: true,
+      // Matches the light theme the app now opens in; the old dark value flashed
+      // a near-black window for a frame before the first paint.
+      backgroundColor: '#f7f8fa',
+      // Packaged builds take their icon from electron-builder, but a dev run has
+      // none and shows Electron's own — this points both at the same artwork.
+      icon: join(__dirname, '../../build/icon.png'),
+      // Match the dark chrome on macOS so the traffic lights sit on our own header.
+      ...(process.platform === 'darwin'
+        ? { titleBarStyle: 'hiddenInset' as const }
+        : {}),
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.mjs'),
+        // Non-negotiable: the renderer gets no Node access. Everything privileged
+        // goes through the typed IPC bridge in src/preload.
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        // Long transcriptions and recordings continue while the window is not in
+        // front; Chromium's background throttling would otherwise stall timers
+        // and pause media in a minimized window.
+        backgroundThrottling: false
+      }
+    })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-    setMainWindow(null)
-    // A satellite of the main window — it must not be able to keep the app
-    // alive on its own once that window is gone.
-    closeMiniRecorderWindow()
-  })
+    setMainWindow(mainWindow)
 
-  // Opt-in convenience: only while a recording is actually running, and only
-  // for users who have asked for it — see getAutoPopOutOnMinimize's own doc
-  // for why this defaults off.
-  mainWindow.on('minimize', () => {
-    if (isRecording() && getAutoPopOutOnMinimize()) openMiniRecorderWindow()
-  })
+    // Avoid the white flash before React paints.
+    mainWindow.on('ready-to-show', () => mainWindow?.show())
 
-  // Any target="_blank" or external link opens in the user's browser, never in
-  // an app window with our preload attached.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+    mainWindow.on('closed', () => {
+      mainWindow = null
+      setMainWindow(null)
+      // A satellite of the main window — it must not be able to keep the app
+      // alive on its own once that window is gone.
+      closeMiniRecorderWindow()
+    })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    // Opt-in convenience: only while a recording is actually running, and only
+    // for users who have asked for it — see getAutoPopOutOnMinimize's own doc
+    // for why this defaults off.
+    mainWindow.on('minimize', () => {
+      if (isRecording() && getAutoPopOutOnMinimize()) openMiniRecorderWindow()
+    })
+
+    // Any target="_blank" or external link opens in the user's browser, never in
+    // an app window with our preload attached.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    } else {
+      void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    }
   }
+
+  app.whenReady().then(() => {
+    electronApp.setAppUserModelId('com.sonascribe.app')
+
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
+
+    // Must run before the database is opened: it may be moving that database in
+    // from the directory the previous product name used.
+    migrateLegacyUserData()
+
+    initDb()
+    // Media rows hold absolute paths; a moved user-data directory invalidates
+    // them, so repoint anything that no longer resolves.
+    repairMediaPaths()
+    resetInterruptedJobs()
+    // Reclaim audio stranded by earlier versions, or by a crash between deleting
+    // a row and deleting its files.
+    void sweepOrphanedMedia()
+    void sweepOrphanedChunks()
+    registerMediaProtocolHandler()
+    registerDisplayMediaHandler()
+    registerIpcHandlers()
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+
+  /**
+   * Stop the sidecars before the app goes.
+   *
+   * Closing the window quits the app on Windows and Linux, and a transcription in
+   * flight has no say in it. The child processes doing that work are not the
+   * app's own, so nothing stops them: without this, quitting mid-job leaves
+   * parakeet-cli running with a window of audio in memory and no interface left
+   * to cancel it from.
+   *
+   * before-quit rather than will-quit, so the children are signalled while the
+   * app is still winding down rather than at the very end of it.
+   */
+  app.on('before-quit', () => {
+    cancelAllJobs()
+    // Same reasoning as cancelAllJobs above: this is a process of its own, and
+    // nothing else stops it from outliving the app if it's left running.
+    stopEmbeddingServer()
+    stopAnswerServer()
+  })
+
+  app.on('will-quit', () => {
+    closeDb()
+  })
 }
-
-app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.sonascribe.app')
-
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
-
-  // Must run before the database is opened: it may be moving that database in
-  // from the directory the previous product name used.
-  migrateLegacyUserData()
-
-  initDb()
-  // Media rows hold absolute paths; a moved user-data directory invalidates
-  // them, so repoint anything that no longer resolves.
-  repairMediaPaths()
-  resetInterruptedJobs()
-  // Reclaim audio stranded by earlier versions, or by a crash between deleting
-  // a row and deleting its files.
-  void sweepOrphanedMedia()
-  void sweepOrphanedChunks()
-  registerMediaProtocolHandler()
-  registerDisplayMediaHandler()
-  registerIpcHandlers()
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
-
-/**
- * Stop the sidecars before the app goes.
- *
- * Closing the window quits the app on Windows and Linux, and a transcription in
- * flight has no say in it. The child processes doing that work are not the
- * app's own, so nothing stops them: without this, quitting mid-job leaves
- * parakeet-cli running with a window of audio in memory and no interface left
- * to cancel it from.
- *
- * before-quit rather than will-quit, so the children are signalled while the
- * app is still winding down rather than at the very end of it.
- */
-app.on('before-quit', () => {
-  cancelAllJobs()
-  // Same reasoning as cancelAllJobs above: this is a process of its own, and
-  // nothing else stops it from outliving the app if it's left running.
-  stopEmbeddingServer()
-  stopAnswerServer()
-})
-
-app.on('will-quit', () => {
-  closeDb()
-})
-

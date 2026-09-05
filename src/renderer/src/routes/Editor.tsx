@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { sourceMediaUrl, trackMediaUrl } from '@shared/ipc'
 import { findModel } from '@shared/models'
@@ -387,12 +387,19 @@ export default function Editor(): React.JSX.Element {
   // pending delete — just removed. The chip it came from is gone, so the
   // filter should clear rather than silently hide the whole transcript.
   const activeFilter = visibleSpeakers.some((s) => s.id === speakerFilter) ? speakerFilter : null
-  const visibleUtterances = utterances
-    .filter((u) => !hiddenIds.has(u.id))
-    .map((u) => {
-      const reassignedTo = pendingReassign.get(u.id)
-      return reassignedTo ? { ...u, speakerId: reassignedTo } : u
-    })
+  // Memoized so playback's ~4Hz currentMs updates don't re-filter/re-map the
+  // whole utterance list on every tick — only hiddenIds/pendingReassign
+  // changing (a hide, a delete, a reassign) actually needs to redo this.
+  const visibleUtterances = useMemo(
+    () =>
+      utterances
+        .filter((u) => !hiddenIds.has(u.id))
+        .map((u) => {
+          const reassignedTo = pendingReassign.get(u.id)
+          return reassignedTo ? { ...u, speakerId: reassignedTo } : u
+        }),
+    [utterances, hiddenIds, pendingReassign]
+  )
 
   const showHours = (recording.durationMs ?? 0) >= 3_600_000
   // 'queued' is excluded on purpose — see jobActive above.

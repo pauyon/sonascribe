@@ -64,57 +64,62 @@ export function overlap(aStart: number, aEnd: number, bStart: number, bEnd: numb
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
 }
 
-/**
- * Picks the speaker whose segment overlaps this word the most.
- *
- * Returns null when the word falls in a gap — diarization only labels detected
- * speech, so a word landing in a "silent" stretch is normal and is resolved by
- * the caller from its neighbours rather than guessed at here.
- */
-function speakerForWord(word: TranscriptWord, segments: SpeakerSegment[]): number | null {
-  let best: number | null = null
-  let bestOverlap = 0
-
-  for (const segment of segments) {
-    // Segments are time-ordered, so nothing later can overlap once we are past
-    // the word's end.
-    if (segment.startMs > word.endMs) break
-
-    const amount = overlap(word.startMs, word.endMs, segment.startMs, segment.endMs)
-    if (amount > bestOverlap) {
-      bestOverlap = amount
-      best = segment.speaker
-    }
-  }
-
-  return best
+/** Absolute time distance between a word and a segment; 0 when they overlap. */
+function distanceTo(word: TranscriptWord, segment: SpeakerSegment): number {
+  if (word.startMs > segment.endMs) return word.startMs - segment.endMs
+  if (segment.startMs > word.endMs) return segment.startMs - word.endMs
+  return 0
 }
 
 /**
- * Nearest speaker by absolute time distance.
+ * Assigns each word the speaker whose segment overlaps it the most, falling
+ * back to the nearest segment (by time distance) for a word that overlaps
+ * none at all — diarization only labels detected speech, so a word landing in
+ * a "silent" stretch is normal, and attributing it to whoever was speaking
+ * closest in time is far better than dropping it or inventing a speaker.
  *
- * Used for words that overlap no segment at all — attributing them to whoever
- * was speaking closest in time is far better than dropping them or inventing a
- * speaker.
+ * `words` and `segments` are both already time-ordered (the caller sorts
+ * `words`; diarization emits `segments` in order), so one cursor advanced
+ * across the whole call finds every word's segment: nothing a later word
+ * needs ever sits behind a segment an earlier word already passed. Rescanning
+ * every word from segment 0 — the previous approach — made this an O(words ×
+ * segments) pass, which visibly slowed the merge step on a long recording
+ * with many diarization segments.
  */
-function nearestSpeaker(word: TranscriptWord, segments: SpeakerSegment[]): number | null {
-  let best: number | null = null
-  let bestDistance = Number.POSITIVE_INFINITY
+function assignSpeakers(words: TranscriptWord[], segments: SpeakerSegment[]): Array<number | null> {
+  let start = 0
 
-  for (const segment of segments) {
-    const distance =
-      word.startMs > segment.endMs
-        ? word.startMs - segment.endMs
-        : segment.startMs > word.endMs
-          ? segment.startMs - word.endMs
-          : 0
-    if (distance < bestDistance) {
-      bestDistance = distance
-      best = segment.speaker
+  return words.map((word) => {
+    // Segments fully before this word can't matter to it, or to any later
+    // word — words only move forward from here.
+    while (start < segments.length && segments[start].endMs < word.startMs) start++
+
+    let best: number | null = null
+    let bestOverlap = 0
+    for (let i = start; i < segments.length && segments[i].startMs <= word.endMs; i++) {
+      const amount = overlap(word.startMs, word.endMs, segments[i].startMs, segments[i].endMs)
+      if (amount > bestOverlap) {
+        bestOverlap = amount
+        best = segments[i].speaker
+      }
     }
-  }
+    if (best !== null) return best
 
-  return best
+    // No overlap: the nearest segment is whichever of the one just dropped
+    // (closest ending before) or the one now at the cursor (closest starting
+    // after) is nearer — anything further away in either direction only loses.
+    let nearest: number | null = null
+    let nearestDistance = Number.POSITIVE_INFINITY
+    for (const segment of [segments[start - 1], segments[start]]) {
+      if (!segment) continue
+      const distance = distanceTo(word, segment)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearest = segment.speaker
+      }
+    }
+    return nearest
+  })
 }
 
 /** How far either side of a speaker change to look for a better place to put it. */
@@ -253,13 +258,11 @@ export function mergeTranscriptWithSpeakers(
 
   if (words.length === 0) return []
 
-  const assigned = words.map((word) => ({
-    word,
-    speaker:
-      options.forceSpeaker !== undefined
-        ? options.forceSpeaker
-        : (speakerForWord(word, speakers) ?? nearestSpeaker(word, speakers))
-  }))
+  const speakerOf =
+    options.forceSpeaker !== undefined
+      ? words.map(() => options.forceSpeaker as number)
+      : assignSpeakers(words, speakers)
+  const assigned = words.map((word, i) => ({ word, speaker: speakerOf[i] }))
 
   snapBoundariesToPauses(assigned)
 
@@ -379,28 +382,34 @@ export function absorbTinySpeakers(
     speaker != null && (speaker === LOCAL_SPEAKER || !doomed.has(speaker))
 
   const ordered = [...utterances].sort((a, b) => a.startMs - b.startMs)
+
+  // Nearest surviving neighbour on each side, precomputed in two linear
+  // passes rather than scanned for per doomed utterance: adjacent small
+  // clusters — exactly what this function exists to clean up — used to make
+  // that an O(n^2) scan, each doomed utterance walking past every other
+  // doomed one before finding a survivor.
+  const before: Array<MergedUtterance | null> = new Array(ordered.length)
+  let lastSurvivor: MergedUtterance | null = null
+  for (let i = 0; i < ordered.length; i++) {
+    before[i] = lastSurvivor
+    if (survives(ordered[i].speaker)) lastSurvivor = ordered[i]
+  }
+  const after: Array<MergedUtterance | null> = new Array(ordered.length)
+  let nextSurvivor: MergedUtterance | null = null
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    after[i] = nextSurvivor
+    if (survives(ordered[i].speaker)) nextSurvivor = ordered[i]
+  }
+
   const result = ordered.map((u, at) => {
     if (u.speaker == null || survives(u.speaker)) return u
 
-    let before: MergedUtterance | null = null
-    for (let i = at - 1; i >= 0; i--) {
-      if (survives(ordered[i].speaker)) {
-        before = ordered[i]
-        break
-      }
-    }
-    let after: MergedUtterance | null = null
-    for (let i = at + 1; i < ordered.length; i++) {
-      if (survives(ordered[i].speaker)) {
-        after = ordered[i]
-        break
-      }
-    }
-
-    if (!before && !after) return u
-    const gapBefore = before ? u.startMs - before.endMs : Number.POSITIVE_INFINITY
-    const gapAfter = after ? after.startMs - u.endMs : Number.POSITIVE_INFINITY
-    const winner = gapBefore <= gapAfter ? before : after
+    const nearestBefore = before[at]
+    const nearestAfter = after[at]
+    if (!nearestBefore && !nearestAfter) return u
+    const gapBefore = nearestBefore ? u.startMs - nearestBefore.endMs : Number.POSITIVE_INFINITY
+    const gapAfter = nearestAfter ? nearestAfter.startMs - u.endMs : Number.POSITIVE_INFINITY
+    const winner = gapBefore <= gapAfter ? nearestBefore : nearestAfter
 
     return { ...u, speaker: winner?.speaker ?? u.speaker }
   })

@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
 /**
  * Everything the app writes lives under Electron's per-user data directory, so
@@ -19,6 +19,24 @@ import { join } from 'node:path'
 function ensure(dir: string): string {
   mkdirSync(dir, { recursive: true })
   return dir
+}
+
+/**
+ * Joins `segment` onto `root` and rejects the result if it would land outside
+ * `root` — a `recordingId`/`profileId` that reaches these path helpers is
+ * meant to always be one this process generated with `randomUUID()`, but
+ * nothing between an IPC payload and here re-checks that. Without this, an id
+ * like `"../../../../Users/me/Documents"` resolves through `join` exactly
+ * like any other path segment, and `recordings:delete` hands the result
+ * straight to a recursive `rm` — the most consequential filesystem operation
+ * in the app.
+ */
+function within(root: string, segment: string): string {
+  const candidate = resolve(root, segment)
+  if (candidate !== root && !candidate.startsWith(root + sep)) {
+    throw new Error(`Refusing to use a path outside ${root}: ${segment}`)
+  }
+  return candidate
 }
 
 export function userDataPath(): string {
@@ -43,12 +61,12 @@ function voiceProfilesPath(): string {
 
 /** WAV sample for one saved voice profile, whether or not it exists yet. */
 export function voiceProfilePath(id: string): string {
-  return join(voiceProfilesPath(), `${id}.wav`)
+  return within(voiceProfilesPath(), `${id}.wav`)
 }
 
 /** Per-recording media directory, holding the original plus derived WAV tracks. */
 export function recordingMediaPath(recordingId: string): string {
-  return ensure(join(mediaPath(), recordingId))
+  return ensure(within(mediaPath(), recordingId))
 }
 
 /**
@@ -62,5 +80,5 @@ export function recordingMediaPath(recordingId: string): string {
  * whether a mix was made, and a probe must not have side effects.
  */
 export function recordingMixPath(recordingId: string): string {
-  return join(mediaPath(), recordingId, 'mix.source.wav')
+  return join(within(mediaPath(), recordingId), 'mix.source.wav')
 }

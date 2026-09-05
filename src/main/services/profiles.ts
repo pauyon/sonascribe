@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { rename, rm } from 'node:fs/promises'
+import type { Track } from '@shared/types'
 import {
   allProfileSamplePaths,
   countProfiles,
@@ -71,7 +72,7 @@ interface SampleCandidate {
  * characteristics (gain, room tone) that a real recording of them won't share
  * consistently.
  */
-function buildSampleCandidate(recordingId: string, speakerId: string): SampleCandidate | null {
+function buildSampleCandidate(tracks: Track[], speakerId: string): SampleCandidate | null {
   const ranges = listUtteranceRangesForSpeaker(speakerId)
   if (ranges.length === 0) return null
 
@@ -86,7 +87,7 @@ function buildSampleCandidate(recordingId: string, speakerId: string): SampleCan
     (a, b) => b[1].totalMs - a[1].totalMs
   )[0]
 
-  const track = listTracks(recordingId).find((t) => t.id === trackId)
+  const track = tracks.find((t) => t.id === trackId)
   if (!track) return null
 
   // Longest lines first — a few clean, complete lines make a better anchor
@@ -108,12 +109,12 @@ function buildSampleCandidate(recordingId: string, speakerId: string): SampleCan
 
 /** Creates a new profile from a speaker who isn't linked to one yet, evicting to stay under the cap. */
 async function enrollSpeaker(
-  recordingId: string,
+  tracks: Track[],
   speakerId: string,
   displayName: string,
   color: string
 ): Promise<void> {
-  const candidate = buildSampleCandidate(recordingId, speakerId)
+  const candidate = buildSampleCandidate(tracks, speakerId)
   if (!candidate) return
 
   if (countProfiles() >= MAX_PROFILES) {
@@ -139,14 +140,14 @@ async function enrollSpeaker(
  * instead of being stuck with whatever audio happened to exist the first time.
  */
 async function refreshProfileIfBetter(
-  recordingId: string,
+  tracks: Track[],
   speakerId: string,
   profileId: string
 ): Promise<void> {
   touchProfileMatched(profileId)
 
   const profile = getProfile(profileId)
-  const candidate = buildSampleCandidate(recordingId, speakerId)
+  const candidate = buildSampleCandidate(tracks, speakerId)
   if (!profile || !candidate || candidate.totalMs <= profile.sampleMs * REFRESH_MARGIN) return
 
   // Extracted beside the live sample and swapped in by rename rather than
@@ -230,16 +231,20 @@ export function matchProfilesToClusters(
  * background bookkeeping the user never asked for directly.
  */
 export async function runAutoEnrollment(recordingId: string): Promise<void> {
-  for (const speaker of listSpeakers(recordingId)) {
+  const speakers = listSpeakers(recordingId)
+  if (speakers.every((s) => s.clusterId < 0)) return
+  const tracks = listTracks(recordingId)
+
+  for (const speaker of speakers) {
     // Cluster -1 is the local user, assigned outright rather than diarized —
     // there is nothing here worth anchoring.
     if (speaker.clusterId < 0) continue
 
     try {
       if (speaker.profileId) {
-        await refreshProfileIfBetter(recordingId, speaker.id, speaker.profileId)
+        await refreshProfileIfBetter(tracks, speaker.id, speaker.profileId)
       } else {
-        await enrollSpeaker(recordingId, speaker.id, speaker.displayName, speaker.color)
+        await enrollSpeaker(tracks, speaker.id, speaker.displayName, speaker.color)
       }
     } catch (err) {
       console.warn(`[profiles] enrollment skipped for speaker ${speaker.id}:`, err)

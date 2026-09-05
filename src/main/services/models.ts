@@ -258,9 +258,35 @@ export function cancelModelDownload(id: string): void {
   active.get(id)?.controller.abort()
 }
 
+/**
+ * Removes a file, retrying briefly if it's still open.
+ *
+ * `cancelModelDownload` only requests the abort; it does not wait for
+ * `downloadModel`'s write stream to actually finish closing. Deleting right
+ * behind a cancel can therefore race that close — Windows refuses to remove
+ * an open file rather than deferring it the way Unix does — and would
+ * otherwise surface a spurious error for a cancel-then-delete that only
+ * needed to wait a moment. Same mitigation as media-cleanup.ts uses for the
+ * identical race against a just-cancelled sidecar process, except here the
+ * final failure is rethrown rather than swallowed: this is a user-requested
+ * delete, and silently leaving the model on disk while claiming success would
+ * be worse than a delete the user can just retry.
+ */
+async function rmRetrying(path: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rm(path, { force: true })
+      return
+    } catch (err) {
+      if (attempt >= 3) throw err
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+  }
+}
+
 /** Removes an installed model and any partial download for it. */
 export async function deleteModel(id: string): Promise<void> {
   cancelModelDownload(id)
-  await rm(finalPath(id), { force: true })
-  await rm(partPath(id), { force: true })
+  await rmRetrying(finalPath(id))
+  await rmRetrying(partPath(id))
 }

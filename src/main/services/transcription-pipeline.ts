@@ -6,8 +6,8 @@ import type { AsrEngine } from '@shared/models'
 import { listProfilesForMatching } from '../db/profiles'
 import { recordingMediaPath } from '../paths'
 import { transcribeWithWhisper } from './whisper'
-import { transcribeWithParakeet } from './parakeet'
-import { groupWordsIntoSegments, type TranscriptSegment } from './transcription'
+import { transcribeWithParakeet, sweepTail } from './parakeet'
+import { groupWordsIntoSegments, type TranscriptSegment, type TranscriptionResult } from './transcription'
 import { diarize, minDurationOnFor, type SpeakerSegment } from './diarize'
 import { concatToWav } from './ffmpeg'
 import { LOCAL_SPEAKER, mergeTranscriptWithSpeakers, type MergedUtterance } from './merge'
@@ -191,16 +191,30 @@ export async function runTranscriptionPipeline(
       // so they are not a preview to be redone — running the whole file again
       // would spend twenty minutes reproducing them.
       const live = takeLiveWords(recordingId, track.kind, track.durationMs ?? 0)
-      const result = live
-        ? { language: null, segments: groupWordsIntoSegments(live) }
-        : await runAsr(engine, {
-            wavPath: track.wavPath,
-            modelPath,
-            language,
-            threads: threadsPerTrack,
-            onProgress: (fraction) => reportTrackProgress(index, fraction),
-            signal
-          })
+      let result: TranscriptionResult
+      if (live) {
+        result = { language: null, segments: groupWordsIntoSegments(live) }
+        // The live pass's own last window went through this same Parakeet
+        // decoder in isolation, so it can stop early the same way a batch
+        // pass's last window can — see sweepTail's own doc comment. Nothing
+        // else re-checks a live track's tail, so a genuinely truncated final
+        // utterance would otherwise stay lost every time.
+        if (engine === 'parakeet') {
+          result = await sweepTail(
+            { wavPath: track.wavPath, modelPath, language, threads: threadsPerTrack, signal },
+            result
+          )
+        }
+      } else {
+        result = await runAsr(engine, {
+          wavPath: track.wavPath,
+          modelPath,
+          language,
+          threads: threadsPerTrack,
+          onProgress: (fraction) => reportTrackProgress(index, fraction),
+          signal
+        })
+      }
 
       if (live) {
         console.log(`[jobs] using ${live.length} words transcribed live for the ${track.kind} track`)

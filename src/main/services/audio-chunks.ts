@@ -155,40 +155,40 @@ export async function splitAudio(
   const edges = [0, ...boundaries, info.durationMs]
 
   const dir = join(tmpdir(), `${CHUNK_DIR_PREFIX}${randomUUID()}`)
-  const chunks: AudioChunk[] = []
 
-  for (let i = 0; i < edges.length - 1; i++) {
-    const startMs = edges[i]
-    const endMs = edges[i + 1]
-    const path = join(dir, `chunk-${String(i).padStart(3, '0')}.wav`)
+  // Each cut is an independent seek-and-copy over the same read-only source
+  // file, so there is nothing to serialize here — running them together
+  // rather than one at a time is a straightforward win on a recording split
+  // into many chunks.
+  return Promise.all(
+    edges.slice(0, -1).map((startMs, i) => {
+      const endMs = edges[i + 1]
+      const path = join(dir, `chunk-${String(i).padStart(3, '0')}.wav`)
 
-    await runFfmpegCapture(
-      [
-        ...baseArgs(),
-        // Before -i so ffmpeg seeks rather than decoding and discarding; on PCM
-        // this is exact, so the offsets stay sample-accurate.
-        '-ss',
-        (startMs / 1000).toFixed(3),
-        '-t',
-        ((endMs - startMs) / 1000).toFixed(3),
-        '-i',
-        wavPath,
-        '-ac',
-        String(TARGET_CHANNELS),
-        '-ar',
-        String(TARGET_SAMPLE_RATE),
-        '-c:a',
-        'pcm_s16le',
-        '-y',
-        path
-      ],
-      { signal: options.signal, ensureDir: dir }
-    )
-
-    chunks.push({ startMs, endMs, path })
-  }
-
-  return chunks
+      return runFfmpegCapture(
+        [
+          ...baseArgs(),
+          // Before -i so ffmpeg seeks rather than decoding and discarding; on PCM
+          // this is exact, so the offsets stay sample-accurate.
+          '-ss',
+          (startMs / 1000).toFixed(3),
+          '-t',
+          ((endMs - startMs) / 1000).toFixed(3),
+          '-i',
+          wavPath,
+          '-ac',
+          String(TARGET_CHANNELS),
+          '-ar',
+          String(TARGET_SAMPLE_RATE),
+          '-c:a',
+          'pcm_s16le',
+          '-y',
+          path
+        ],
+        { signal: options.signal, ensureDir: dir }
+      ).then(() => ({ startMs, endMs, path }))
+    })
+  )
 }
 
 /** Removes the scratch directory a split produced. Never throws. */

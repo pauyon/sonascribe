@@ -95,16 +95,13 @@ interface LiveTrack {
    * up early on short, context-free clips. `consumedMs` still advances past
    * one of these so the session doesn't stall.
    *
-   * These are not treated as a track-wide failure. `finishLiveTranscription`
-   * retries each span with much more surrounding context before the recording
-   * is handed off — cheap next to the alternative, which used to be discarding
-   * every already-transcribed word on the track and re-running the whole file.
+   * Not treated as a track-wide failure on its own: `takeLiveWords` only falls
+   * back to a full batch pass once these are most of a track's windows, which
+   * is what actually says the input (not just one clip) was the problem.
    */
-  gaps: Array<{ startMs: number; endMs: number }>
-  /** Windows actually sent to the engine (silence-skipped ones don't count), so gap recovery can tell an occasional miss from a systemically bad track. */
+  gapCount: number
+  /** Windows actually sent to the engine (silence-skipped ones don't count), so a gap can be told from a systemically bad track. */
   windowCount: number
-  /** Gaps that stayed empty even after a wider-context retry. Set by `finishLiveTranscription`. */
-  unresolvedGaps: number
 }
 
 interface LiveSession {
@@ -148,7 +145,7 @@ interface LiveResult {
   processedMs: number
   /** Windows sent to the engine — see `LiveTrack.windowCount`. */
   windowCount: number
-  /** Windows a wider-context retry still couldn't recover — see `LiveTrack.gaps`. */
+  /** Windows the engine came back with nothing for — see `LiveTrack.gapCount`. */
   unresolvedGaps: number
 }
 
@@ -335,15 +332,15 @@ async function advance(current: LiveSession, track: LiveTrack, final: boolean): 
       })
     } else if (rms >= LIKELY_SPEECH_RMS) {
       // Speech-level sound went in and nothing came back — the engine's
-      // short-clip decoder giving up, not an ordinary quiet pause.
-      // finishLiveTranscription retries this span with more context.
-      track.gaps.push({ startMs: startedAt, endMs })
+      // short-clip decoder giving up, not an ordinary quiet pause. Counted so
+      // takeLiveWords can tell an occasional miss from a systemically bad track.
+      track.gapCount++
     }
   } catch (err) {
-    // A failed window is not fatal: the audio is safe on disk, and this span
-    // gets the same wider-context retry as an empty result below.
+    // A failed window is not fatal: the audio is safe on disk, and it counts
+    // the same as an empty result above.
     console.warn(`[live] ${track.kind} window at ${Math.round(startedAt / 1000)}s failed:`, err)
-    track.gaps.push({ startMs: startedAt, endMs })
+    track.gapCount++
   } finally {
     // Advanced either way, so a window that cannot be transcribed is not retried
     // forever while the recording runs on ahead of it.
@@ -352,63 +349,6 @@ async function advance(current: LiveSession, track: LiveTrack, final: boolean): 
     await rm(readyPath, { force: true }).catch(() => undefined)
   }
   return true
-}
-
-/**
- * Widened context tried when recovering a window the engine came back with
- * nothing for, widest first — enough for the decoder to have real surrounding
- * speech to work with, instead of the ~10 s of near-silence-bounded audio a
- * live window hands it in isolation. Still a couple of minutes at most, next
- * to a full multi-hour re-transcription of the whole track.
- */
-const GAP_CONTEXT_MS = [60_000, 180_000]
-
-/**
- * Retries one failed live window with much more surrounding audio.
- *
- * Only words landing inside the original gap are kept — everything on either
- * side of it was already transcribed by the windows that came before and
- * after. Returns no words if every context size still comes back empty,
- * which `finishLiveTranscription` counts rather than treats as fatal: a
- * genuinely unrecoverable ~10 s span costs nothing like the track-wide
- * fallback that used to follow a single bad window.
- */
-async function recoverGap(
-  current: LiveSession,
-  track: LiveTrack,
-  gap: { startMs: number; endMs: number },
-  trackDurationMs: number
-): Promise<TranscriptWord[]> {
-  for (const context of GAP_CONTEXT_MS) {
-    const from = Math.max(0, gap.startMs - context)
-    const to = Math.min(trackDurationMs, gap.endMs + context)
-    const dir = join(tmpdir(), `sonascribe-live-gap-${randomUUID()}`)
-    const slicePath = join(dir, 'gap.wav')
-    const readyPath = join(dir, 'gap.16k.wav')
-    try {
-      await mkdir(dir, { recursive: true })
-      await sliceToWav(track.path, from, to, track.sampleRate, slicePath)
-      await normalizeToWav({ inputPath: slicePath, outputPath: readyPath, normalizeLoudness: true })
-
-      const { peak } = await measureLevels(readyPath).catch(() => ({ peak: 1, rms: 1 }))
-      if (peak >= SILENCE_PEAK_THRESHOLD) {
-        const result = await transcribeSlice(current, readyPath)
-        const words = result.segments
-          .flatMap((segment) => segment.words)
-          .map((word) => ({ ...word, startMs: word.startMs + from, endMs: word.endMs + from }))
-          .filter((word) => word.startMs >= gap.startMs && word.startMs < gap.endMs)
-        if (words.length > 0) return words
-      }
-    } catch (err) {
-      console.warn(
-        `[live] gap recovery for ${track.kind} ${Math.round(gap.startMs / 1000)}-${Math.round(gap.endMs / 1000)}s failed:`,
-        err
-      )
-    } finally {
-      await rm(dir, { recursive: true, force: true }).catch(() => undefined)
-    }
-  }
-  return []
 }
 
 export interface StartLiveInput {
@@ -461,9 +401,8 @@ async function openSession(input: StartLiveInput): Promise<boolean> {
       sampleRate: input.sampleRate,
       consumedMs: 0,
       words: [],
-      gaps: [],
-      windowCount: 0,
-      unresolvedGaps: 0
+      gapCount: 0,
+      windowCount: 0
     }))
   }
   session = current
@@ -513,44 +452,12 @@ export async function finishLiveTranscription(recordingId: string): Promise<void
     }
   }
 
-  // Retry every window the engine came up empty on before handing anything
-  // off — with real context this time, instead of the ~10 s slice the live
-  // pass tried in isolation. Most resolve; whatever is still empty afterwards
-  // is a genuine small gap, not a reason to redo the whole track.
-  //
-  // A track where the mic itself was the problem (too quiet to carry
-  // anything, the whole way through — see MOSTLY_FAILING below) can have
-  // hundreds of these, and no amount of extra context recovers audio that
-  // was never usable. Once enough attempts have failed to make that clear,
-  // the rest are left unresolved without spending more time on them —
-  // takeLiveWords already falls back to a full pass once most of a track's
-  // windows are unresolved, and that fallback shouldn't have to wait for
-  // every last one of them to be individually retried first.
-  const GAP_SAMPLE_SIZE = 10
-  const MOSTLY_FAILING = 0.8
-  for (const track of current.tracks) {
-    let attempted = 0
-    let recoveredCount = 0
-    for (const gap of track.gaps) {
-      if (
-        attempted >= GAP_SAMPLE_SIZE &&
-        (attempted - recoveredCount) / attempted > MOSTLY_FAILING
-      ) {
-        track.unresolvedGaps += track.gaps.length - attempted
-        break
-      }
-      attempted++
-      const recovered = await recoverGap(current, track, gap, track.consumedMs)
-      if (recovered.length > 0) {
-        recoveredCount++
-        track.words.push(...recovered)
-      } else {
-        track.unresolvedGaps++
-      }
-    }
-    if (attempted > 0) track.words.sort((a, b) => a.startMs - b.startMs)
-  }
-
+  // Windows the engine came up empty on are left as-is rather than retried
+  // here: stop must return immediately, not spend minutes re-running the
+  // engine over widened context for every gap before the recording can leave
+  // "normalizing". takeLiveWords already falls back to a full batch pass once
+  // too many of a track's windows are unresolved, which is what actually
+  // recovers this audio.
   const byKind = new Map<TrackKind, LiveResult>()
   for (const track of current.tracks) {
     if (track.words.length > 0) {
@@ -558,7 +465,7 @@ export async function finishLiveTranscription(recordingId: string): Promise<void
         words: track.words,
         processedMs: track.consumedMs,
         windowCount: track.windowCount,
-        unresolvedGaps: track.unresolvedGaps
+        unresolvedGaps: track.gapCount
       })
     }
   }
