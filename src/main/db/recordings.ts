@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { CreateRecordingInput, Recording } from '@shared/types'
+import type { CreateRecordingInput, Cut, Recording } from '@shared/types'
 import { getDb } from './index'
 
 /**
@@ -21,6 +21,17 @@ interface RecordingRow {
   source_path: string | null
   status: string
   error: string | null
+  cuts: string | null
+}
+
+function parseCuts(json: string | null): Cut[] {
+  if (!json) return []
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return Array.isArray(parsed) ? (parsed as Cut[]) : []
+  } catch {
+    return []
+  }
 }
 
 function toRecording(row: RecordingRow): Recording {
@@ -32,7 +43,8 @@ function toRecording(row: RecordingRow): Recording {
     source: row.source as Recording['source'],
     sourcePath: row.source_path,
     status: row.status as Recording['status'],
-    error: row.error
+    error: row.error,
+    cuts: parseCuts(row.cuts)
   }
 }
 
@@ -59,7 +71,8 @@ export function createRecording(input: CreateRecordingInput): Recording {
     source: input.source,
     sourcePath: input.sourcePath ?? null,
     status: 'new',
-    error: null
+    error: null,
+    cuts: []
   }
 
   getDb()
@@ -107,4 +120,43 @@ export function setRecordingStatus(
   error: string | null = null
 ): void {
   getDb().prepare('UPDATE recordings SET status = ?, error = ? WHERE id = ?').run(status, error, id)
+}
+
+/**
+ * Clamps every region to the recording's actual length, drops anything left
+ * with zero or negative length, sorts by start, and merges overlapping or
+ * touching regions into one — so every reader (the renderer's compression
+ * math, a future export) can assume a clean, sorted, non-overlapping list
+ * without re-validating it themselves.
+ */
+function normalizeCuts(cuts: Cut[], durationMs: number): Cut[] {
+  const clamped = cuts
+    .map((cut) => ({
+      startMs: Math.max(0, Math.min(cut.startMs, durationMs)),
+      endMs: Math.max(0, Math.min(cut.endMs, durationMs))
+    }))
+    .filter((cut) => cut.endMs > cut.startMs)
+    .sort((a, b) => a.startMs - b.startMs)
+
+  const merged: Cut[] = []
+  for (const cut of clamped) {
+    const last = merged[merged.length - 1]
+    if (last && cut.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, cut.endMs)
+    } else {
+      merged.push({ ...cut })
+    }
+  }
+  return merged
+}
+
+/** Replaces a recording's whole cut list — see `normalizeCuts` for what it enforces. */
+export function setRecordingCuts(id: string, cuts: Cut[], durationMs: number): Recording {
+  const normalized = normalizeCuts(cuts, durationMs)
+  getDb()
+    .prepare('UPDATE recordings SET cuts = ? WHERE id = ?')
+    .run(normalized.length > 0 ? JSON.stringify(normalized) : null, id)
+  const updated = getRecording(id)
+  if (!updated) throw new Error(`Recording ${id} not found`)
+  return updated
 }

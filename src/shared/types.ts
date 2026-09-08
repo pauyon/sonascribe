@@ -23,6 +23,12 @@ export type RecordingSource = 'recorded' | 'imported'
  */
 export type RecordingStatus = 'new' | 'normalizing' | 'ready' | 'failed'
 
+/** A non-destructive trim region, in the original file's own time. */
+export interface Cut {
+  startMs: number
+  endMs: number
+}
+
 export interface Recording {
   id: string
   title: string
@@ -33,6 +39,12 @@ export interface Recording {
   sourcePath: string | null
   status: RecordingStatus
   error: string | null
+  /**
+   * Trimmed-out regions, original-file time, sorted and non-overlapping.
+   * The file itself is never touched — see `renderer/src/lib/cuts.ts` for how
+   * these become a compressed waveform and playback position.
+   */
+  cuts: Cut[]
 }
 
 /**

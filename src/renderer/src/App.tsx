@@ -5,6 +5,7 @@ import { formatDuration } from './lib/format'
 import Library from './routes/Library'
 import Record from './routes/Record'
 import Editor from './routes/Editor'
+import Trim from './routes/Trim'
 import Settings from './routes/Settings'
 import MiniRecorder from './routes/MiniRecorder'
 
@@ -188,6 +189,7 @@ export default function App(): React.JSX.Element {
           <Route path="/record" element={<Record />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/recordings/:id" element={<Editor />} />
+          <Route path="/recordings/:id/edit" element={<Trim />} />
           <Route path="*" element={<Navigate to="/library" replace />} />
         </Routes>
       </main>

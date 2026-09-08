@@ -8,21 +8,37 @@ import { useEffect, useRef, useState } from 'react'
  * cannot fetch, so a library that loads the media itself has nothing to work
  * with. Given the peaks are already computed, drawing them is a small amount of
  * canvas code and keeps full control of theming and hit-testing.
+ *
+ * Unit-agnostic on purpose: `peaks`/`durationMs`/`positionMs`/`onSeek` are
+ * always in whatever unit the caller passes — usually real (original-file)
+ * milliseconds, but the recording-detail page's trim editor feeds it
+ * *virtual* (cuts-compressed) milliseconds instead and this component has no
+ * idea, and doesn't need to (see `lib/cuts.ts`).
  */
 export default function Waveform({
   peaks,
   durationMs,
   positionMs,
-  onSeek
+  onSeek,
+  seams,
+  editable = false,
+  onSelectRange
 }: {
   peaks: number[]
   durationMs: number
   positionMs: number
   onSeek: (ms: number) => void
+  /** Virtual-ms positions of a seam between two kept regions — a cut happened here. */
+  seams?: number[]
+  /** Enables drag-to-select a range (for cutting) instead of click-only seeking. */
+  editable?: boolean
+  /** Fires on drag-release with the selected range, same units as `durationMs`. */
+  onSelectRange?: (startMs: number, endMs: number) => void
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [hoverMs, setHoverMs] = useState<number | null>(null)
+  const [selection, setSelection] = useState<{ startMs: number; endMs: number } | null>(null)
   // Read once and again only on an actual theme change, not on every draw:
   // during playback this component redraws ~4 times a second (see the
   // positionMs effect below), and getComputedStyle forces a synchronous
@@ -67,11 +83,12 @@ export default function Waveform({
   // So a size/data/theme rebuild can repaint at the position play was already
   // at, without positionMs needing to be a dependency of that effect.
   const positionRef = useRef(positionMs)
+  const seamsRef = useRef<number[]>(seams ?? [])
 
-  // Composites the cached layers plus the playhead onto the visible canvas —
-  // the only work a playback tick (~4/s, via useAudio's timeupdate) actually
-  // needs: two drawImage calls and one hairline fillRect, not a full re-fill
-  // of every bar.
+  // Composites the cached layers plus the playhead and any seam markers onto
+  // the visible canvas — the only work a playback tick (~4/s, via useAudio's
+  // timeupdate) actually needs: two drawImage calls, a hairline fillRect and
+  // a handful of dashed lines, not a full re-fill of every bar.
   function composite(pos: number, duration: number): void {
     const canvas = canvasRef.current
     const layers = layersRef.current
@@ -101,6 +118,23 @@ export default function Waveform({
       )
     }
 
+    // Seam markers: where a cut collapsed the timeline together.
+    if (duration > 0 && seamsRef.current.length > 0) {
+      ctx.save()
+      ctx.strokeStyle = colors.text
+      ctx.globalAlpha = 0.35
+      ctx.setLineDash([3, 3])
+      ctx.lineWidth = 1
+      for (const seamMs of seamsRef.current) {
+        const x = (seamMs / duration) * width
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, height)
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
     // Playhead.
     if (duration > 0) {
       ctx.fillStyle = colors.text
@@ -108,8 +142,9 @@ export default function Waveform({
     }
   }
 
-  // Rebuilds the bar layers on any change to data, size or theme.
+  // Rebuilds the bar layers on any change to data, size, theme or seams.
   useEffect(() => {
+    seamsRef.current = seams ?? []
     const canvas = canvasRef.current
     const wrap = wrapRef.current
     if (!canvas || !wrap) return
@@ -171,7 +206,7 @@ export default function Waveform({
     const observer = new ResizeObserver(rebuild)
     observer.observe(wrap)
     return () => observer.disconnect()
-  }, [peaks, durationMs, colorsVersion])
+  }, [peaks, durationMs, colorsVersion, seams])
 
   // The cheap per-tick path: just recomposite at the new position.
   useEffect(() => {
@@ -179,21 +214,85 @@ export default function Waveform({
     composite(positionMs, durationMs)
   }, [positionMs, durationMs])
 
-  function msFromEvent(e: React.MouseEvent<HTMLDivElement>): number {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  function msFromClientX(clientX: number): number {
+    const wrap = wrapRef.current
+    if (!wrap) return 0
+    const rect = wrap.getBoundingClientRect()
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
     return Math.round(ratio * durationMs)
+  }
+
+  function msFromEvent(e: React.MouseEvent<HTMLDivElement>): number {
+    return msFromClientX(e.clientX)
+  }
+
+  /**
+   * Drag-to-select, active only when `editable`. A plain click (negligible
+   * movement) still seeks, exactly like the read-only case — distinguished
+   * from a real selection by a small ms-distance threshold, not by a
+   * separate gesture, so there's nothing extra for the user to learn.
+   *
+   * Tracked via window-level listeners (not React's onMouseMove/onMouseUp on
+   * the div) so a drag that leaves the strip mid-gesture — normal mouse
+   * behavior — still resolves correctly instead of getting stuck.
+   */
+  const dragStartMsRef = useRef<number | null>(null)
+  const draggedRef = useRef(false)
+  /** Below this, a drag reads as a click instead of a selection. */
+  const DRAG_THRESHOLD_MS = 60
+
+  useEffect(() => {
+    if (!editable) return
+
+    function onMove(e: MouseEvent): void {
+      const startMs = dragStartMsRef.current
+      if (startMs == null) return
+      const currentMs = msFromClientX(e.clientX)
+      if (Math.abs(currentMs - startMs) > DRAG_THRESHOLD_MS) draggedRef.current = true
+      if (draggedRef.current) {
+        setSelection({ startMs: Math.min(startMs, currentMs), endMs: Math.max(startMs, currentMs) })
+      }
+    }
+
+    function onUp(e: MouseEvent): void {
+      const startMs = dragStartMsRef.current
+      dragStartMsRef.current = null
+      if (startMs == null) return
+      if (draggedRef.current) {
+        const currentMs = msFromClientX(e.clientX)
+        setSelection(null)
+        onSelectRange?.(Math.min(startMs, currentMs), Math.max(startMs, currentMs))
+      } else {
+        onSeek(startMs)
+      }
+      draggedRef.current = false
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, onSelectRange, onSeek, durationMs])
+
+  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>): void {
+    if (!editable) return
+    dragStartMsRef.current = msFromEvent(e)
+    draggedRef.current = false
   }
 
   return (
     <div
       ref={wrapRef}
-      className="waveform"
-      onClick={(e) => onSeek(msFromEvent(e))}
+      className={editable ? 'waveform waveform--editable' : 'waveform'}
+      onClick={editable ? undefined : (e) => onSeek(msFromEvent(e))}
+      onMouseDown={editable ? handleMouseDown : undefined}
       onMouseMove={(e) => setHoverMs(msFromEvent(e))}
       onMouseLeave={() => setHoverMs(null)}
       role="slider"
-      aria-label="Seek through recording"
+      aria-label={editable ? 'Select a range to cut, or click to seek' : 'Seek through recording'}
       aria-valuemin={0}
       aria-valuemax={durationMs}
       aria-valuenow={positionMs}
@@ -205,7 +304,16 @@ export default function Waveform({
       }}
     >
       <canvas ref={canvasRef} />
-      {hoverMs != null && durationMs > 0 && (
+      {selection && durationMs > 0 && (
+        <span
+          className="waveform__selection"
+          style={{
+            left: `${(selection.startMs / durationMs) * 100}%`,
+            width: `${((selection.endMs - selection.startMs) / durationMs) * 100}%`
+          }}
+        />
+      )}
+      {!selection && hoverMs != null && durationMs > 0 && (
         <span
           className="waveform__hover"
           style={{ left: `${(hoverMs / durationMs) * 100}%` }}

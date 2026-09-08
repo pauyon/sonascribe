@@ -197,5 +197,18 @@ export const MIGRATIONS: Migration[] = [
       -- whole library rather than just the one recording.
       CREATE INDEX idx_utterances_speaker ON utterances (speaker_id);
     `
+  },
+  {
+    version: 9,
+    name: 'recording_cuts',
+    sql: /* sql */ `
+      -- Non-destructive trim regions, in the original file's own time —
+      -- never touches the audio on disk. JSON rather than a join table:
+      -- always read/written as a whole for one recording, never queried
+      -- across recordings, same reasoning as the settings table above.
+      -- NULL means no cuts; otherwise a JSON array of
+      -- {"startMs": number, "endMs": number}, sorted and non-overlapping.
+      ALTER TABLE recordings ADD COLUMN cuts TEXT;
+    `
   }
 ]

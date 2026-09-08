@@ -699,6 +699,57 @@ body {
   font-size: var(--fs-caption);
 }
 
+/* ---------- dedicated editor page (Trim.tsx) ---------- */
+
+/* Taller than the inline player's 56px — more room to drag precisely once
+   zoomed in. A CSS override on the reused .waveform rather than a prop, so
+   neither Waveform.tsx nor PlayerBar.tsx need to know this page exists. */
+.trim__player .waveform {
+  height: 160px;
+}
+
+.trim__zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.trim__zoom-level {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: center;
+}
+
+.minimap {
+  position: relative;
+  height: 40px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.minimap .waveform {
+  height: 40px;
+  cursor: pointer;
+}
+
+.minimap__viewport {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-inline: 1px solid var(--accent);
+  cursor: grab;
+}
+
+.minimap__viewport:active {
+  cursor: grabbing;
+}
+
 /* ---------- models ---------- */
 
 .models {
@@ -874,6 +925,61 @@ body {
   width: 1px;
   background: var(--text-muted);
   pointer-events: none;
+}
+
+.waveform--editable {
+  cursor: crosshair;
+}
+
+.waveform__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
+  border-inline: 1px solid var(--danger);
+  pointer-events: none;
+}
+
+/* ---------- cut chips (recording-detail trim editor) ---------- */
+
+.cuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.cuts__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 6px 4px 10px;
+}
+
+.cuts__undo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cuts__undo:hover {
+  background: var(--border);
+  color: var(--text);
 }
 
 /* ---------- live waveform (Record screen, while recording) ---------- */

@@ -3,11 +3,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { sourceMediaUrl } from '@shared/ipc'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
+import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
 import { formatDuration } from '../lib/format'
 import StatusPill from '../components/StatusPill'
 import PlayerBar from '../components/PlayerBar'
 
-/** A single recording: playback, rename, delete, reveal-in-folder. */
+/** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
 export default function Editor(): React.JSX.Element {
   const { id = '' } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -15,7 +16,6 @@ export default function Editor(): React.JSX.Element {
 
   const [draftTitle, setDraftTitle] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [peaks, setPeaks] = useState<number[] | null>(null)
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -31,6 +31,7 @@ export default function Editor(): React.JSX.Element {
 
   const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
+  const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
 
   useEffect(() => {
     const sentinel = playerSentinelRef.current
@@ -51,30 +52,6 @@ export default function Editor(): React.JSX.Element {
     if (updated.id !== id) return
     refetch()
   })
-
-  // Peaks come from the main process; the renderer cannot read the audio
-  // itself. Re-fetched once the recording becomes ready, since there is
-  // nothing to compute a waveform from before that.
-  const status = recording?.status
-  useEffect(() => {
-    if (!id || status !== 'ready') {
-      setPeaks(null)
-      return
-    }
-    let cancelled = false
-    api
-      .invoke('peaks:get', { recordingId: id })
-      .then((result) => {
-        if (!cancelled) setPeaks(result.values)
-      })
-      .catch(() => {
-        // A missing waveform is cosmetic — the range-input fallback still seeks.
-        if (!cancelled) setPeaks(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [id, status])
 
   if (loading) return <div className="page">Loading…</div>
   if (error) return <div className="page banner banner--error">{error}</div>
@@ -135,6 +112,9 @@ export default function Editor(): React.JSX.Element {
 
         {recording.sourcePath && (
           <div className="page__actions">
+            <Link className="btn btn--primary" to={`/recordings/${recording.id}/edit`}>
+              Edit
+            </Link>
             <button
               className="btn"
               onClick={() =>
@@ -154,13 +134,25 @@ export default function Editor(): React.JSX.Element {
         <>
           <audio ref={audio.ref} src={playbackSrc} preload="metadata" {...audio.bind} />
           <div ref={playerSentinelRef}>
-            <PlayerBar audio={audio} peaks={peaks} durationMs={recording.durationMs ?? 0} />
+            <PlayerBar
+              audio={audio}
+              peaks={compressed.values}
+              durationMs={recording.durationMs ?? 0}
+              virtualDurationMs={virtualDur}
+              positionMs={virtualPosition}
+              onSeek={seekVirtual}
+              seams={compressed.seams}
+            />
           </div>
           {playerFloating && (
             <PlayerBar
               audio={audio}
-              peaks={peaks}
+              peaks={compressed.values}
               durationMs={recording.durationMs ?? 0}
+              virtualDurationMs={virtualDur}
+              positionMs={virtualPosition}
+              onSeek={seekVirtual}
+              seams={compressed.seams}
               floating
             />
           )}

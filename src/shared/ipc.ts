@@ -11,6 +11,7 @@
 
 import type {
   CreateRecordingInput,
+  Cut,
   ImportProgress,
   Platform,
   Recording
@@ -36,6 +37,17 @@ export interface ApiSchema {
   'recordings:delete': {
     request: { id: string }
     response: void
+  }
+  /**
+   * Replaces a recording's whole cut list — non-destructive trim regions in
+   * the original file's own time. The renderer always sends the full desired
+   * list (add, remove-one, and clear-all are all just "here's the new
+   * list"); the response comes back normalized (clamped, sorted, merged) so
+   * the caller's local state matches exactly what was persisted.
+   */
+  'recordings:setCuts': {
+    request: { id: string; cuts: Cut[] }
+    response: Recording
   }
   /**
    * Opens the native file picker. Returns absolute paths, or an empty array if
@@ -276,6 +288,7 @@ export const CHANNELS = [
   'recordings:create',
   'recordings:rename',
   'recordings:delete',
+  'recordings:setCuts',
   'dialog:pickMediaFiles',
   'recordings:import',
   'app:info',

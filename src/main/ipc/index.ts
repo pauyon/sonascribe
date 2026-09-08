@@ -17,7 +17,14 @@ import {
   setNoiseSuppression
 } from '../db/settings'
 import { DEFAULT_BUCKETS, getPeaks } from '../services/peaks'
-import { createRecording, deleteRecording, getRecording, listRecordings, renameRecording } from '../db/recordings'
+import {
+  createRecording,
+  deleteRecording,
+  getRecording,
+  listRecordings,
+  renameRecording,
+  setRecordingCuts
+} from '../db/recordings'
 import { hasSidecar } from '../services/sidecars'
 import { queueImport } from '../services/importer'
 import { deleteRecordingMedia } from '../services/media-cleanup'
@@ -77,6 +84,13 @@ const handlers: Handlers = {
   'recordings:delete': async ({ id }) => {
     deleteRecording(id)
     await deleteRecordingMedia(id)
+  },
+
+  'recordings:setCuts': ({ id, cuts }) => {
+    const recording = getRecording(id)
+    if (!recording) throw new Error(`Recording ${id} not found`)
+    if (recording.durationMs == null) throw new Error('Recording has no known duration yet')
+    return setRecordingCuts(id, cuts, recording.durationMs)
   },
 
   'dialog:pickMediaFiles': async () => {
