@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { getDb } from '../db'
-import { mediaPath, recordingMediaPath } from '../paths'
+import { getMediaRoot, recordingMediaDir } from './storage'
 
 /**
  * Keeps the media directory in step with the database.
@@ -24,7 +24,7 @@ import { mediaPath, recordingMediaPath } from '../paths'
  * surviving recording at the next start, so the space is reclaimed either way.
  */
 export async function deleteRecordingMedia(recordingId: string): Promise<void> {
-  const dir = recordingMediaPath(recordingId)
+  const dir = recordingMediaDir(recordingId)
 
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
@@ -47,7 +47,7 @@ export async function deleteRecordingMedia(recordingId: string): Promise<void> {
  * delete and the file delete, or a database restored from an older backup.
  */
 export async function sweepOrphanedMedia(): Promise<number> {
-  const root = mediaPath()
+  const root = getMediaRoot()
 
   let entries: string[]
   try {

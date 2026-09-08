@@ -37,13 +37,9 @@ module.exports = {
   // sidecar staging directory are all excluded by omission.
   files: ['out/**', 'package.json'],
 
-  // Sidecars and models live outside the asar so they stay executable on disk
-  // and can be code-signed individually.
-  extraResources: [
-    { from: 'resources/bin/${os}', to: 'bin', filter: ['**/*'] },
-    // Diarization models are platform-independent, so they ship once.
-    { from: 'resources/models', to: 'models', filter: ['**/*'] }
-  ],
+  // ffmpeg lives outside the asar so it stays executable on disk and can be
+  // code-signed individually.
+  extraResources: [{ from: 'resources/bin/${os}', to: 'bin', filter: ['**/*'] }],
 
   /* -------------------------------------------------------------- Windows --- */
 
@@ -60,8 +56,8 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    // Recordings and models live in %APPDATA%. Deleting them on uninstall would
-    // discard gigabytes of the user's own data without asking.
+    // Recordings live in %APPDATA%. Deleting them on uninstall would discard
+    // the user's own data without asking.
     deleteAppDataOnUninstall: false
   },
 
@@ -81,11 +77,11 @@ module.exports = {
     notarize: hasAppleCredentials,
     extendInfo: {
       NSMicrophoneUsageDescription:
-        'SonaScribe records your microphone so it can transcribe what you say. Audio is processed entirely on this device.',
+        'SonaScribe records your microphone. Audio stays on this device.',
       // Required by Chromium's CoreAudio Tap path (Electron 39+). Without this
       // key desktopCapturer audio fails, and there is no fallback.
       NSAudioCaptureUsageDescription:
-        'SonaScribe records system audio so it can transcribe meetings and calls. Audio is processed entirely on this device.',
+        'SonaScribe records system audio for meetings and calls. Audio stays on this device.',
       // Shown when macOS asks for Screen & System Audio Recording permission.
       NSScreenCaptureUsageDescription:
         'SonaScribe needs this permission to capture system audio. No video is recorded or stored.'

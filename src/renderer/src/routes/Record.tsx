@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import type { LiveTranscriptChunk, TrackKind } from '@shared/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, useEvent, useQuery } from '../lib/api'
 import {
   CaptureError,
@@ -8,14 +7,14 @@ import {
   requestMicStream,
   requestSystemStream,
   startCapture,
-  type CaptureSession
+  type CaptureSession,
+  type CaptureSourceKind
 } from '../lib/capture'
 import { formatDuration } from '../lib/format'
 import Select from '../components/Select'
-import LiveTranscriptPanel from '../components/LiveTranscriptPanel'
 import HelpTip from '../components/HelpTip'
 
-/** Peak level meter for one track. */
+/** Peak level meter for one source. */
 function Meter({
   label,
   level,
@@ -54,11 +53,8 @@ const SIGNAL_FLOOR = 0.01
 
 export default function Record(): React.JSX.Element {
   const navigate = useNavigate()
-  // Text transcribed while this recording runs, one entry per finished window.
-  const [live, setLive] = useState<LiveTranscriptChunk[]>([])
   const { data: info } = useQuery('app:info')
   const { data: settings, refetch: refetchSettings } = useQuery('settings:get')
-  const { data: displays } = useQuery('screenshots:listDisplays')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState<string>('')
@@ -75,19 +71,15 @@ export default function Record(): React.JSX.Element {
   const [warning, setWarning] = useState<string | null>(null)
   /**
    * True from the moment a stop begins (here or in the mini controls window)
-   * until it actually finishes. Finishing a stop now retries any live window
-   * that never got words for it, which is common on a marginal mic and can
-   * take a while — `session` in main is gone as soon as the stop starts, so
-   * starting a new recording in that window would begin capturing while the
-   * previous one is still being written and transcribed.
+   * until it actually finishes. `session` in main is gone as soon as the stop
+   * starts, so starting a new recording in that window would begin capturing
+   * while the previous one is still being finalized.
    */
   const [finishing, setFinishing] = useState(false)
-  /** Brief "Screenshot saved" confirmation, not tied to anything cross-window. */
-  const [screenshotNotice, setScreenshotNotice] = useState<string | null>(null)
   const [sampleRate, setSampleRate] = useState<number | null>(null)
 
   /** Which sources the open capture graph actually has, monitoring or recording. */
-  const [openKinds, setOpenKinds] = useState<TrackKind[]>([])
+  const [openKinds, setOpenKinds] = useState<CaptureSourceKind[]>([])
   /** Why system audio is not being monitored, when it was asked for. */
   const [systemNote, setSystemNote] = useState<string | null>(null)
   /** Highest level seen since monitoring began, to tell silent from untested. */
@@ -110,18 +102,18 @@ export default function Record(): React.JSX.Element {
   const micTestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const micTestSourceRef = useRef<AudioBufferSourceNode | null>(null)
 
-  // Blocks arriving before the main process has opened its writers would be
+  // Blocks arriving before the main process has opened its writer would be
   // dropped by it anyway; this gates them at the source instead of logging an
-  // error per block. Both tracks share one clock, so they stay aligned.
+  // error per block.
   const acceptingRef = useRef(false)
 
   /**
    * The capture graph, open from the moment this screen is.
    *
    * One graph serves both jobs. Monitoring and recording differ only in whether
-   * the blocks are forwarded to the main process, so pressing record does not
-   * reopen the microphone: no gap, no second permission prompt, and the level
-   * you were watching is the level being written.
+   * the combined blocks are forwarded to the main process, so pressing record
+   * does not reopen the microphone: no gap, no second permission prompt, and
+   * the level you were watching is the level being written.
    */
   const sessionRef = useRef<CaptureSession | null>(null)
   const startedAtRef = useRef(0)
@@ -129,8 +121,6 @@ export default function Record(): React.JSX.Element {
   const pauseStartRef = useRef(0)
   /** Guards against two monitor starts overlapping when settings change quickly. */
   const openingRef = useRef(false)
-  /** Set once `recording:start` resolves — a screenshot snap needs it, nothing else does. */
-  const recordingIdRef = useRef<string | null>(null)
 
   // Device labels are only populated once microphone permission has been
   // granted, so the list is refreshed after the stream opens too.
@@ -142,12 +132,6 @@ export default function Record(): React.JSX.Element {
       // Enumeration can fail before any permission has been granted.
     }
   }, [])
-
-  // Windows of text arrive while the recording runs. Appended rather than
-  // replaced: each event carries only the window that just finished.
-  useEvent('live:transcript', (chunk) => {
-    setLive((prev) => [...prev, chunk])
-  })
 
   // Pause is decided in main, not set optimistically here, so a toggle from
   // the mini controls window updates this screen too (and vice versa).
@@ -174,17 +158,11 @@ export default function Record(): React.JSX.Element {
     setRecording(false)
     setPaused(false)
     setFinishing(false)
-    if (summary.tracks.length === 0) {
+    if (summary.silent) {
       setError(
         'No audio was captured, so nothing was saved. Check the input device and that its level meter moved.'
       )
       return
-    }
-    if (summary.silentTracks.length > 0) {
-      const names = summary.silentTracks
-        .map((k) => (k === 'system' ? 'System audio' : 'Microphone'))
-        .join(' and ')
-      setWarning(`${names} captured no sound and was not saved.`)
     }
     navigate(`/recordings/${summary.recordingId}`)
   })
@@ -197,7 +175,6 @@ export default function Record(): React.JSX.Element {
     setPaused(false)
     setFinishing(false)
     setElapsedMs(0)
-    setLive([])
   })
 
   /** Cancels an in-progress or finished mic test — a device change invalidates whatever it captured. */
@@ -239,22 +216,15 @@ export default function Record(): React.JSX.Element {
       await closeSession()
 
       // Independent on purpose: noise suppression alone does not carry the
-      // "on a call" character that echo cancellation (paired with the gain
-      // control it needs) does, so a user after less-noisy audio need not
-      // accept the phone-call sound to get it.
+      // "on a call" character that echo cancellation does, so a user after
+      // less-noisy audio need not accept the phone-call sound to get it.
       const processing = {
         ...CLEAN_MIC,
         noiseSuppression: settings?.noiseSuppression ?? false,
-        echoCancellation: settings?.echoCancellation ?? false,
-        // Not user-facing like the two above: plain gain adjustment doesn't
-        // carry their "on a call" character, and there's no real case for
-        // wanting it off — going without it just leaves a quiet input device
-        // with nothing compensating, which can lose a recording's audio
-        // outright rather than merely costing a little fidelity.
-        autoGainControl: true
+        echoCancellation: settings?.echoCancellation ?? false
       }
 
-      const streams: Array<{ kind: TrackKind; stream: MediaStream }> = []
+      const streams: Array<{ kind: CaptureSourceKind; stream: MediaStream }> = []
       try {
         streams.push({
           kind: 'mic',
@@ -276,40 +246,38 @@ export default function Record(): React.JSX.Element {
         }
       }
 
-      const session = await startCapture(streams, (kind, samples, peak) => {
-        setLevels((prev) => ({ ...prev, [kind]: Math.max(prev[kind] ?? 0, peak) }))
-        if (peak > SIGNAL_FLOOR) setEverHeard((prev) => (prev[kind] ? prev : { ...prev, [kind]: true }))
-        // Copied rather than kept as a view: the worklet reuses its buffers
-        // block to block, so holding the view itself would see later blocks'
-        // data overwrite what was meant to be a snapshot of this one.
-        if (kind === 'mic' && micTestActiveRef.current) micTestChunksRef.current.push(samples.slice())
-        if (!acceptingRef.current) return
-        // A Uint8Array view keeps the structured clone to the exact bytes rather
-        // than the whole backing buffer.
-        void api.invoke('recording:chunk', {
-          kind,
-          samples: new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
-        })
-      })
+      const session = await startCapture(
+        streams,
+        (kind, samples, peak) => {
+          setLevels((prev) => ({ ...prev, [kind]: Math.max(prev[kind] ?? 0, peak) }))
+          if (peak > SIGNAL_FLOOR) {
+            setEverHeard((prev) => (prev[kind] ? prev : { ...prev, [kind]: true }))
+          }
+          // Copied rather than kept as a view: the worklet reuses its buffers
+          // block to block, so holding the view itself would see later blocks'
+          // data overwrite what was meant to be a snapshot of this one.
+          if (kind === 'mic' && micTestActiveRef.current) micTestChunksRef.current.push(samples.slice())
+        },
+        (samples) => {
+          if (!acceptingRef.current) return
+          // A Uint8Array view keeps the structured clone to the exact bytes
+          // rather than the whole backing buffer.
+          void api.invoke('recording:chunk', {
+            samples: new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
+          })
+        }
+      )
 
       sessionRef.current = session
       setOpenKinds(streams.map((s) => s.kind))
-      setSampleRate(Math.round(session.context.sampleRate))
+      setSampleRate(Math.round(session.sampleRate))
       setEverHeard({})
       captureOpenedAtRef.current = Date.now()
       void loadDevices()
     } finally {
       openingRef.current = false
     }
-  }, [
-    closeSession,
-    deviceId,
-    loadDevices,
-    recording,
-    settings?.noiseSuppression,
-    settings?.echoCancellation,
-    wantSystem
-  ])
+  }, [closeSession, deviceId, loadDevices, recording, settings?.noiseSuppression, settings?.echoCancellation, wantSystem])
 
   useEffect(() => {
     void loadDevices()
@@ -414,8 +382,6 @@ export default function Record(): React.JSX.Element {
 
   async function start(): Promise<void> {
     setWarning(null)
-    // Last take's text must not linger behind this one's.
-    setLive([])
 
     // The graph is already open and metering; if something closed it, open it
     // again rather than refusing.
@@ -423,15 +389,14 @@ export default function Record(): React.JSX.Element {
     const session = sessionRef.current
     if (!session) return
 
-    const rate = Math.round(session.context.sampleRate)
+    const rate = Math.round(session.sampleRate)
     setSampleRate(rate)
 
     try {
-      const created = await api.invoke('recording:start', {
-        kinds: session.tracks.map((t) => t.kind),
+      await api.invoke('recording:start', {
+        hasSystemAudio: openKinds.includes('system'),
         sampleRate: rate
       })
-      recordingIdRef.current = created.id
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       return
@@ -492,7 +457,6 @@ export default function Record(): React.JSX.Element {
     setPaused(false)
     setFinishing(true)
     setElapsedMs(0)
-    setLive([])
 
     try {
       await api.invoke('recording:cancel')
@@ -501,20 +465,6 @@ export default function Record(): React.JSX.Element {
         setFinishing(false)
         setError(err instanceof Error ? err.message : String(err))
       }
-    }
-  }
-
-  async function snapScreenshot(): Promise<void> {
-    const recordingId = recordingIdRef.current
-    if (!recordingId) return
-    try {
-      const shots = await api.invoke('screenshots:capture', { recordingId, elapsedMs })
-      setScreenshotNotice(
-        shots.length > 1 ? `Screenshot saved (${shots.length} displays)` : 'Screenshot saved'
-      )
-      setTimeout(() => setScreenshotNotice(null), 2500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -579,17 +529,6 @@ export default function Record(): React.JSX.Element {
   const captureOpen = openKinds.length > 0
   const micLive = (levels.mic ?? 0) > SIGNAL_FLOOR
 
-  // Ordered by when each window's audio was spoken, not by when the engine
-  // finished it: two tracks are transcribed at once and they do not complete in
-  // step, so a system-audio window can land after a later microphone one.
-  //
-  // Memoized on `live` itself: this component re-renders several times a
-  // second while recording (level meters, the elapsed timer), and re-sorting
-  // a transcript that can run to hundreds of entries on every one of those
-  // ticks — most of which added no new text — is wasted work that also hands
-  // LiveTranscriptPanel a fresh array reference to re-diff for nothing.
-  const orderedLive = useMemo(() => [...live].sort((a, b) => a.startMs - b.startMs), [live])
-
   const meters = (
     <div className="recorder__meters">
       <Meter
@@ -636,21 +575,12 @@ export default function Record(): React.JSX.Element {
       <header className="page__header">
         <div>
           <h1>Record</h1>
-          <p className="page__subtitle">
-            Microphone and system audio, captured as separate tracks
-          </p>
+          <p className="page__subtitle">Microphone and system audio, mixed into one recording</p>
         </div>
       </header>
 
       {error && <div className="banner banner--error">{error}</div>}
       {warning && <div className="banner banner--warn">{warning}</div>}
-      {settings && !settings.modelId && (
-        <div className="banner banner--warn">
-          No transcription model selected. This recording will still save, but the
-          live transcript and automatic transcription won't run until you pick one
-          on the <Link to="/settings">Settings</Link> page.
-        </div>
-      )}
 
       {/*
         One frame for both states. Setup and recording share the same slots —
@@ -694,15 +624,6 @@ export default function Record(): React.JSX.Element {
               <button className="btn btn--ghost" onClick={discard}>
                 Discard
               </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={() => void snapScreenshot()}
-                title="Snap a screenshot, tagged with the current time in the recording"
-              >
-                📷 Snap screenshot
-              </button>
-              {screenshotNotice && <span className="recorder__toast">{screenshotNotice}</span>}
             </>
           ) : (
             <button
@@ -716,16 +637,8 @@ export default function Record(): React.JSX.Element {
           )}
         </div>
 
-        {/* The only part that swaps. Keyed so React replaces it outright rather
-            than reconciling two unrelated trees, which is what lets it fade. */}
-        <div className="recorder__detail" key={recording ? 'live' : 'setup'}>
-          {recording ? (
-            <LiveTranscriptPanel
-              chunks={orderedLive}
-              monitoringSystem={monitoringSystem}
-              micLabel={settings?.micSoloSpeaker ? 'You' : 'Mic'}
-            />
-          ) : (
+        {!recording && (
+          <div className="recorder__detail">
             <div className="recorder__setup">
               <div className="recorder__field">
                 <span id="mic-label">Microphone</span>
@@ -776,66 +689,6 @@ export default function Record(): React.JSX.Element {
                 </div>
               </div>
 
-              {/* Always present rather than disappearing on a single-display
-                  machine — inert (disabled, labelled with the one real
-                  display) instead of vanishing, so there's still something
-                  here confirming where a snap will come from. */}
-              <div className="recorder__field">
-                <span id="screenshot-display-label">Screenshot capture</span>
-                {displays && displays.length > 1 ? (
-                  <div className="recorder__displays" role="group" aria-labelledby="screenshot-display-label">
-                    {(() => {
-                      const selectedIds = settings?.screenshotDisplayIds ?? []
-                      const allSelected = selectedIds.length === 0
-                      const setDisplayIds = async (ids: string[]): Promise<void> => {
-                        await api.invoke('settings:set', { screenshotDisplayIds: ids })
-                        refetchSettings()
-                      }
-                      return (
-                        <>
-                          <label className="toolbar__toggle">
-                            <input
-                              type="checkbox"
-                              checked={allSelected}
-                              onChange={() => void setDisplayIds([])}
-                            />
-                            All displays
-                          </label>
-                          {displays.map((d) => (
-                            <label key={d.id} className="toolbar__toggle recorder__display-option">
-                              <input
-                                type="checkbox"
-                                checked={!allSelected && selectedIds.includes(d.id)}
-                                onChange={(e) => {
-                                  const next = e.target.checked
-                                    ? [...selectedIds, d.id]
-                                    : selectedIds.filter((id) => id !== d.id)
-                                  void setDisplayIds(next)
-                                }}
-                              />
-                              {/* The OS name alone ("Screen 1", "Screen 2") rarely says
-                                  which physical monitor that is — a live thumbnail does. */}
-                              <img
-                                className="recorder__display-thumb"
-                                src={d.thumbnailDataUrl}
-                                alt=""
-                              />
-                              {d.name}
-                            </label>
-                          ))}
-                        </>
-                      )
-                    })()}
-                  </div>
-                ) : (
-                  // Nothing to choose between — say so rather than show an
-                  // interactive-looking control with only one possible state.
-                  <p className="recorder__fine">
-                    Capturing {displays?.[0]?.name || 'the main screen'} — the only display connected.
-                  </p>
-                )}
-              </div>
-
               <label className="toolbar__toggle">
                 <input
                   type="checkbox"
@@ -850,10 +703,6 @@ export default function Record(): React.JSX.Element {
               </label>
               {systemNote && <p className="recorder__fine recorder__fine--warn">{systemNote}</p>}
 
-              {/* Split from "recording behavior" below: these two actually change
-                  what ends up in the captured audio, so they belong next to the
-                  meters that show their effect — not lumped in with settings that
-                  just change how the app behaves around a recording. */}
               <div className="recorder__group">
                 <span className="recorder__group-label">Audio processing</span>
 
@@ -869,7 +718,7 @@ export default function Record(): React.JSX.Element {
                     />
                     Reduce background noise
                   </label>
-                  <HelpTip text="Gates out steady noise — fans, hum, keyboard clatter — on its own, without the echo cancellation or gain adjustment below. The meter above updates as soon as you change it." />
+                  <HelpTip text="Gates out steady noise — fans, hum, keyboard clatter — on its own, without the echo cancellation below. The meter above updates as soon as you change it." />
                 </div>
 
                 <div className="toolbar__toggle-row">
@@ -895,21 +744,6 @@ export default function Record(): React.JSX.Element {
                   <label className="toolbar__toggle">
                     <input
                       type="checkbox"
-                      checked={settings?.micSoloSpeaker ?? false}
-                      onChange={async (e) => {
-                        await api.invoke('settings:set', { micSoloSpeaker: e.target.checked })
-                        refetchSettings()
-                      }}
-                    />
-                    Only my voice is on this microphone
-                  </label>
-                  <HelpTip text="Tick this for a call, where you are on the mic and everyone else comes through system audio — your side gets labelled “You” without guessing. Leave it unticked when several people share one microphone, or everyone in the room is merged into a single speaker." />
-                </div>
-
-                <div className="toolbar__toggle-row">
-                  <label className="toolbar__toggle">
-                    <input
-                      type="checkbox"
                       checked={settings?.autoPopOutOnMinimize ?? false}
                       onChange={async (e) => {
                         await api.invoke('settings:set', { autoPopOutOnMinimize: e.target.checked })
@@ -918,24 +752,16 @@ export default function Record(): React.JSX.Element {
                     />
                     Pop out controls automatically when minimized
                   </label>
-                  <HelpTip text="While recording, minimizing this window opens a small always-on-top controls window — pause/resume, stop & save, discard, and a collapsible live transcript. This is the only way to reach it; leave it unticked and minimizing behaves normally. Closing that window brings this one back." />
+                  <HelpTip text="While recording, minimizing this window opens a small always-on-top controls window — pause/resume, stop & save, discard. This is the only way to reach it; leave it unticked and minimizing behaves normally. Closing that window brings this one back." />
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="recorder__note">
-        <p>
-          The microphone and system audio are saved as two separate tracks. Your own
-          voice is therefore labelled without any guessing, and speaker detection only
-          has to work out the people on the other end — which is why it is accurate.
-        </p>
-        <p>
-          Transcription runs while you record, so a finished recording is usually ready
-          within seconds of stopping rather than taking as long again to process.
-        </p>
+        <p>Microphone and system audio are mixed together into one recorded file.</p>
         {info?.platform === 'darwin' && (
           <p>
             macOS will ask for Microphone and Screen &amp; System Audio Recording

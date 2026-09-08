@@ -8,12 +8,11 @@ import { join, resolve, sep } from 'node:path'
  * Documents folder.
  *
  * Layout:
- *   <userData>/sonascribe.db  SQLite metadata (recordings, speakers, text)
- *   <userData>/media/         audio: originals and normalized 16k mono WAVs
- *   <userData>/models/        downloaded whisper + diarization models
+ *   <userData>/sonascribe.db  SQLite metadata (recordings)
+ *   <userData>/media/         one WAV per recording
  *
- * Audio and models are files on disk referenced by path, never SQLite BLOBs —
- * a multi-hour recording has no business travelling through the DB layer.
+ * Audio is a file on disk referenced by path, never a SQLite BLOB — a
+ * multi-hour recording has no business travelling through the DB layer.
  */
 
 function ensure(dir: string): string {
@@ -23,15 +22,17 @@ function ensure(dir: string): string {
 
 /**
  * Joins `segment` onto `root` and rejects the result if it would land outside
- * `root` — a `recordingId`/`profileId` that reaches these path helpers is
- * meant to always be one this process generated with `randomUUID()`, but
- * nothing between an IPC payload and here re-checks that. Without this, an id
- * like `"../../../../Users/me/Documents"` resolves through `join` exactly
- * like any other path segment, and `recordings:delete` hands the result
- * straight to a recursive `rm` — the most consequential filesystem operation
- * in the app.
+ * `root` — a `recordingId` that reaches these path helpers is meant to always
+ * be one this process generated with `randomUUID()`, but nothing between an
+ * IPC payload and here re-checks that. Without this, an id like
+ * `"../../../../Users/me/Documents"` resolves through `join` exactly like any
+ * other path segment, and `recordings:delete` hands the result straight to a
+ * recursive `rm` — the most consequential filesystem operation in the app.
+ *
+ * Exported so `services/storage.ts` can apply the same guard to whichever
+ * folder the user has configured as the media root, not just this one.
  */
-function within(root: string, segment: string): string {
+export function within(root: string, segment: string): string {
   const candidate = resolve(root, segment)
   if (candidate !== root && !candidate.startsWith(root + sep)) {
     throw new Error(`Refusing to use a path outside ${root}: ${segment}`)
@@ -47,38 +48,13 @@ export function dbPath(): string {
   return join(userDataPath(), 'sonascribe.db')
 }
 
-export function mediaPath(): string {
-  return ensure(join(userDataPath(), 'media'))
-}
-
-export function modelsPath(): string {
-  return ensure(join(userDataPath(), 'models'))
-}
-
-function voiceProfilesPath(): string {
-  return ensure(join(userDataPath(), 'voice-profiles'))
-}
-
-/** WAV sample for one saved voice profile, whether or not it exists yet. */
-export function voiceProfilePath(id: string): string {
-  return within(voiceProfilesPath(), `${id}.wav`)
-}
-
-/** Per-recording media directory, holding the original plus derived WAV tracks. */
-export function recordingMediaPath(recordingId: string): string {
-  return ensure(within(mediaPath(), recordingId))
-}
-
 /**
- * The playback mixdown a multi-source recording gets, whether or not it exists.
+ * Where recordings' media lives when the user hasn't chosen a custom folder.
  *
- * Named here rather than inside the recorder because the waveform resolver has
- * to test for the same file, and two modules agreeing on a filename by
- * coincidence is how a feature quietly stops working.
- *
- * Deliberately does not create the directory: callers probe this path to decide
- * whether a mix was made, and a probe must not have side effects.
+ * `services/storage.ts` is the module that actually decides where media
+ * lives at any given moment — it falls back to this when no custom root is
+ * configured. Nothing else should assume media lives here.
  */
-export function recordingMixPath(recordingId: string): string {
-  return join(within(mediaPath(), recordingId), 'mix.source.wav')
+export function defaultMediaPath(): string {
+  return ensure(join(userDataPath(), 'media'))
 }

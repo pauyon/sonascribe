@@ -1,83 +1,37 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, join } from 'node:path'
-import type { Channel, Request, Response, TranscriptionSettings } from '@shared/ipc'
+import { readFile } from 'node:fs/promises'
+import type { Channel, Request, Response, RecordingSettings } from '@shared/ipc'
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
-import { mediaPath, modelsPath, userDataPath } from '../paths'
+import { defaultMediaPath, userDataPath } from '../paths'
 import { logFilePath } from '../log'
-import { answerQuestion } from '../services/answering'
 import {
   getAutoPopOutOnMinimize,
   getCaptureSystemAudio,
-  getDiarizationEnabled,
   getEchoCancellation,
-  getLanguage,
-  getSelectedModelId,
   getMicDeviceId,
-  getMicSoloSpeaker,
   getNoiseSuppression,
-  getScreenshotDisplayIds,
-  getSpeakerCount,
-  getSpeakerSplitting,
   setAutoPopOutOnMinimize,
   setCaptureSystemAudio,
-  setDiarizationEnabled,
   setEchoCancellation,
-  setLanguage,
   setMicDeviceId,
-  setMicSoloSpeaker,
-  setNoiseSuppression,
-  setScreenshotDisplayIds,
-  setSelectedModelId,
-  setSpeakerCount,
-  setSpeakerSplitting
+  setNoiseSuppression
 } from '../db/settings'
-import {
-  deleteSpeaker,
-  reassignUtterance,
-  renameSpeaker,
-  setSpeakerColor
-} from '../db/speakers'
-import { listProfiles } from '../db/profiles'
-import { clearAllProfiles, mergeSpeakers } from '../services/profiles'
-import { deleteScreenshot, getScreenshotPath } from '../db/screenshots'
-import { captureScreenshots, listDisplaySources } from '../services/screenshots'
-import { screenshotFileName } from '../services/screenshot-naming'
-import {
-  cancelModelDownload,
-  deleteModel,
-  downloadModel,
-  listModelStatuses
-} from '../services/models'
-import { cancelJob, listActiveJobs, queueTranscription } from '../services/jobs'
-import { forgetLiveWords } from '../services/live-transcribe'
-import { getWaveformPath } from '../db/tracks'
-import { deleteUtterance, updateUtteranceText } from '../db/transcript'
 import { DEFAULT_BUCKETS, getPeaks } from '../services/peaks'
-import { renderTranscript } from '../services/export'
-import { EXPORT_FORMATS } from '@shared/export'
-import {
-  createRecording,
-  deleteRecording,
-  getTranscriptBundle,
-  listRecordings,
-  renameRecording
-} from '../db/recordings'
-import { hasBundledModel, hasSidecar } from '../services/sidecars'
+import { createRecording, deleteRecording, getRecording, listRecordings, renameRecording } from '../db/recordings'
+import { hasSidecar } from '../services/sidecars'
 import { queueImport } from '../services/importer'
 import { deleteRecordingMedia } from '../services/media-cleanup'
+import { getMediaRoot, isDefaultMediaRoot, relocateMediaRoot } from '../services/storage'
 import {
   cancelRecording,
   getRecordingStatus,
+  isRecording,
   setPaused,
   startRecording,
   stopRecording,
   writeChunk
 } from '../services/recorder'
-import {
-  openMiniRecorderWindow,
-  resizeMiniRecorderWindow
-} from '../windows/mini-recorder'
+import { openMiniRecorderWindow } from '../windows/mini-recorder'
 import { emit } from './events'
 
 /**
@@ -110,7 +64,7 @@ function currentPlatform(): Platform {
 const handlers: Handlers = {
   'recordings:list': () => listRecordings(),
 
-  'recordings:get': ({ id }) => getTranscriptBundle(id),
+  'recordings:get': ({ id }) => getRecording(id),
 
   'recordings:create': (input) => createRecording(input),
 
@@ -121,16 +75,7 @@ const handlers: Handlers = {
   },
 
   'recordings:delete': async ({ id }) => {
-    // Stop any job on this recording before its audio disappears underneath it.
-    // Otherwise the pipeline carries on transcribing a recording the user has
-    // deleted, then tries to save a transcript against a row that is gone — and
-    // on Windows the sidecar's open file handles block the media delete outright.
-    cancelJob(id)
-    // Live results are keyed by recording; a deleted one will never claim them.
-    forgetLiveWords(id)
-
     deleteRecording(id)
-    // Child rows cascade, but the audio is on disk and only referenced by row.
     await deleteRecordingMedia(id)
   },
 
@@ -161,159 +106,66 @@ const handlers: Handlers = {
     version: app.getVersion(),
     platform: currentPlatform(),
     userDataPath: userDataPath(),
-    mediaPath: mediaPath(),
-    modelsPath: modelsPath(),
+    mediaPath: getMediaRoot(),
     logPath: logFilePath(),
-    ffmpegAvailable: hasSidecar('ffmpeg'),
-    whisperAvailable: hasSidecar('whisper-cli'),
-    parakeetAvailable: hasSidecar('parakeet-cli'),
-    diarizationAvailable:
-      hasSidecar('sherpa-onnx-offline-speaker-diarization') &&
-      hasBundledModel('segmentation.onnx') &&
-      hasBundledModel('speaker-embedding.onnx'),
-    answeringAvailable: hasSidecar('llama-server')
+    ffmpegAvailable: hasSidecar('ffmpeg')
   }),
 
-  'models:list': () => listModelStatuses(),
+  'storage:get': () => ({
+    mediaRoot: getMediaRoot(),
+    isDefault: isDefaultMediaRoot(),
+    defaultMediaRoot: defaultMediaPath()
+  }),
 
-  'models:download': async ({ id }) => {
-    // Deliberately not awaited: a 1.6 GB transfer must not hold an IPC call
-    // open. The renderer follows it through model:progress events.
-    void downloadModel(id).catch((err: unknown) => {
-      console.error(`[models] download ${id} failed:`, err)
-    })
+  'storage:pickFolder': async () => {
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const options: Electron.OpenDialogOptions = {
+      title: 'Choose a folder for recordings',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
   },
 
-  'models:cancel': ({ id }) => cancelModelDownload(id),
-
-  'models:delete': ({ id }) => deleteModel(id),
+  'storage:relocate': async ({ folder }) => {
+    // The recorder holds an open file handle under the current root; moving
+    // the directory out from under it would corrupt or lose the recording.
+    if (isRecording()) {
+      throw new Error('Stop the current recording before moving where recordings are stored.')
+    }
+    const mediaRoot = await relocateMediaRoot(folder)
+    return { mediaRoot }
+  },
 
   'settings:get': () => currentSettings(),
 
   'settings:set': (patch) => {
-    if (patch.modelId != null) setSelectedModelId(patch.modelId)
-    if (patch.language != null) setLanguage(patch.language)
-    if (patch.diarize != null) setDiarizationEnabled(patch.diarize)
-    // undefined means "not supplied"; null explicitly means "cluster
-    // automatically", so the two cannot be collapsed.
-    if (patch.speakerCount !== undefined) setSpeakerCount(patch.speakerCount)
-    if (patch.speakerSplitting != null) setSpeakerSplitting(patch.speakerSplitting)
     if (patch.noiseSuppression != null) setNoiseSuppression(patch.noiseSuppression)
     if (patch.echoCancellation != null) setEchoCancellation(patch.echoCancellation)
-    if (patch.micSoloSpeaker != null) setMicSoloSpeaker(patch.micSoloSpeaker)
     // undefined means "not supplied"; null explicitly means "system default",
-    // so — as with speakerCount above — the two cannot be collapsed.
+    // so the two cannot be collapsed.
     if (patch.micDeviceId !== undefined) setMicDeviceId(patch.micDeviceId)
     if (patch.captureSystemAudio != null) setCaptureSystemAudio(patch.captureSystemAudio)
     if (patch.autoPopOutOnMinimize != null) setAutoPopOutOnMinimize(patch.autoPopOutOnMinimize)
-    if (patch.screenshotDisplayIds != null) setScreenshotDisplayIds(patch.screenshotDisplayIds)
     return currentSettings()
   },
 
-  'transcribe:start': ({ id }) => queueTranscription(id),
-
-  'transcribe:cancel': ({ id }) => {
-    cancelJob(id)
-  },
-
-  'transcribe:active': () => listActiveJobs(),
-
   'peaks:get': async ({ recordingId, buckets }) => {
-    const wavPath = getWaveformPath(recordingId)
-    if (!wavPath) throw new Error('Recording has no audio yet')
-    return getPeaks(wavPath, buckets ?? DEFAULT_BUCKETS)
+    const recording = getRecording(recordingId)
+    if (!recording?.sourcePath) throw new Error('Recording has no audio yet')
+    return getPeaks(recording.sourcePath, buckets ?? DEFAULT_BUCKETS)
   },
 
-  'utterances:update': ({ id, text }) => {
-    updateUtteranceText(id, text.trim())
-  },
+  'recording:start': ({ title, hasSystemAudio, sampleRate }) =>
+    startRecording({ title, hasSystemAudio, sampleRate }),
 
-  'utterances:delete': ({ id }) => {
-    deleteUtterance(id)
-  },
-
-  'transcript:export': async ({ id, format, includeScreenshots }) => {
-    const bundle = getTranscriptBundle(id)
-    if (!bundle) throw new Error('Recording not found')
-    if (bundle.utterances.length === 0) {
-      throw new Error('There is no transcript to export yet')
-    }
-
-    const spec = EXPORT_FORMATS.find((f) => f.id === format)
-    if (!spec) throw new Error(`Unknown export format: ${format}`)
-
-    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options: Electron.SaveDialogOptions = {
-      title: 'Export transcript',
-      defaultPath: join(
-        app.getPath('documents'),
-        `${safeFileName(bundle.recording.title)}.${spec.extension}`
-      ),
-      filters: [{ name: spec.label, extensions: [spec.extension] }]
-    }
-
-    const result = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return null
-
-    // Neither subtitle format has a sensible way to carry an inline image.
-    const withScreenshots =
-      includeScreenshots && bundle.screenshots.length > 0 && format !== 'srt' && format !== 'vtt'
-
-    let screenshotsRelativeDir: string | undefined
-    if (withScreenshots) {
-      // A sibling folder named after the exported file, not the recording —
-      // if the file gets renamed or moved, the two stay findable together.
-      screenshotsRelativeDir = `${basename(result.filePath, extname(result.filePath))}.screenshots`
-      const shotsDir = join(dirname(result.filePath), screenshotsRelativeDir)
-      await mkdir(shotsDir, { recursive: true })
-      for (const shot of bundle.screenshots) {
-        const src = getScreenshotPath(shot.id)
-        if (src) await copyFile(src, join(shotsDir, screenshotFileName(shot.id)))
-      }
-    }
-
-    await writeFile(
-      result.filePath,
-      renderTranscript(bundle, format, screenshotsRelativeDir),
-      'utf8'
-    )
-    return result.filePath
-  },
-
-  'speakers:rename': ({ id, displayName }) => {
-    const trimmed = displayName.trim()
-    if (!trimmed) throw new Error('Speaker name cannot be empty')
-    renameSpeaker(id, trimmed)
-  },
-
-  'speakers:merge': ({ recordingId, fromId, intoId }) =>
-    mergeSpeakers(recordingId, fromId, intoId),
-
-  'speakers:reassign': ({ utteranceId, speakerId }) =>
-    reassignUtterance(utteranceId, speakerId),
-
-  'speakers:delete': ({ id }) => {
-    deleteSpeaker(id)
-  },
-
-  'speakers:setColor': ({ recordingId, id, color }) => {
-    setSpeakerColor(recordingId, id, color)
-  },
-
-  'profiles:list': () => listProfiles(),
-
-  'profiles:clearAll': () => clearAllProfiles(),
-
-  'recording:start': ({ title, kinds, sampleRate }) =>
-    startRecording({ title, kinds, sampleRate }),
-
-  'recording:chunk': ({ kind, samples }) => {
+  'recording:chunk': ({ samples }) => {
     // Arrives as a Uint8Array view of the renderer's Int16Array. Buffer.from on
     // the view (not the ArrayBuffer) respects byteOffset/byteLength, and copies
     // rather than aliasing memory the structured clone owns.
-    writeChunk(kind, Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength))
+    writeChunk(Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength))
   },
 
   'recording:pause': ({ paused }) => setPaused(paused),
@@ -332,65 +184,21 @@ const handlers: Handlers = {
     emit('recording:elapsedTick', { elapsedMs })
   },
 
-  'recording:resizeMiniControls': ({ mode }) => {
-    resizeMiniRecorderWindow(mode)
-  },
-
-  'screenshots:capture': ({ recordingId, elapsedMs }) => {
-    const status = getRecordingStatus()
-    if (!status || status.recordingId !== recordingId) {
-      throw new Error('No recording in progress')
-    }
-    return captureScreenshots(recordingId, elapsedMs)
-  },
-
-  'screenshots:delete': async ({ id }) => {
-    const path = deleteScreenshot(id)
-    if (path) await rm(path, { force: true })
-  },
-
-  'screenshots:listDisplays': () => listDisplaySources(),
-
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)
   },
 
-  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => ''),
-
-  'ask:query': ({ question, recordingId }) => answerQuestion(question, recordingId)
+  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => '')
 }
 
-function currentSettings(): TranscriptionSettings {
+function currentSettings(): RecordingSettings {
   return {
-    modelId: getSelectedModelId(),
-    language: getLanguage(),
-    diarize: getDiarizationEnabled(),
-    speakerCount: getSpeakerCount(),
-    speakerSplitting: getSpeakerSplitting(),
     noiseSuppression: getNoiseSuppression(),
     echoCancellation: getEchoCancellation(),
-    micSoloSpeaker: getMicSoloSpeaker(),
     micDeviceId: getMicDeviceId(),
     captureSystemAudio: getCaptureSystemAudio(),
-    autoPopOutOnMinimize: getAutoPopOutOnMinimize(),
-    screenshotDisplayIds: getScreenshotDisplayIds()
+    autoPopOutOnMinimize: getAutoPopOutOnMinimize()
   }
-}
-
-/**
- * Strips characters that are illegal in filenames on Windows or macOS.
- *
- * Spaces are kept — they are legal on both and the title reads better with
- * them. A trailing dot is removed because Windows silently drops it.
- */
-function safeFileName(title: string): string {
-  return (
-    title
-      .replace(/[<>:"/\\|?*]/g, '_')
-      .replace(/\.+$/, '')
-      .trim()
-      .slice(0, 120) || 'transcript'
-  )
 }
 
 export function registerIpcHandlers(): void {

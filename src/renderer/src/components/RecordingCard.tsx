@@ -1,24 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { RecordingSummary, Utterance } from '@shared/types'
+import type { Recording } from '@shared/types'
 import { sourceMediaUrl } from '@shared/ipc'
-import { api } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
 import { formatDate, formatDuration } from '../lib/format'
-
-/**
- * One recording, as a card that plays and reads without leaving the library.
- *
- * The list used to be a table, which answered "what do I have" and nothing more:
- * hearing thirty seconds of something meant opening it, waiting for the editor
- * to load a transcript and peaks, then going back. The card carries the opening
- * of the transcript, plays in place, and follows along while it does.
- */
+import StatusPill from './StatusPill'
 
 /** Titles the app generated itself, which only repeat the timestamp below them. */
 const AUTO_TITLE = /^Recording \d{1,2}\/\d{1,2}\/\d{4}/
-
-/** Roughly how much of the transcript a card shows before trailing off. */
-const PREVIEW_CHARS = 340
 
 export default function RecordingCard({
   recording,
@@ -27,54 +15,28 @@ export default function RecordingCard({
   onOpen,
   onRename,
   onDelete,
-  onRetry,
   job
 }: {
-  recording: RecordingSummary
+  recording: Recording
   /** Which card currently holds playback, or null when none does. */
   playingId: string | null
   onPlay: (id: string) => void
   onOpen: (id: string) => void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => void
-  onRetry: (id: string) => void
-  /** In-flight import or transcription progress for this recording, if any. */
-  job?: { label: string; fraction: number | null } | null
+  /** In-flight import progress for this recording, if any. */
+  job?: { fraction: number | null } | null
 }): React.JSX.Element {
   // useAudio owns the state; the element's source is the caller's job.
   const mediaSrc = recording.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(mediaSrc)
-  const [utterances, setUtterances] = useState<Utterance[] | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(recording.title)
   const cardRef = useRef<HTMLDivElement>(null)
 
-  const playable = recording.sourcePath != null && recording.status !== 'normalizing'
+  const playable = recording.sourcePath != null && recording.status === 'ready'
   const named = !AUTO_TITLE.test(recording.title)
-
-  /**
-   * Timed lines are fetched only once playback starts.
-   *
-   * The preview text arrives with the list and is enough to read; the timings
-   * are only needed to follow along, so a library of long recordings does not
-   * load every transcript on the chance that one gets played.
-   */
-  useEffect(() => {
-    if (!audio.playing || utterances) return
-    let cancelled = false
-    api
-      .invoke('recordings:get', { id: recording.id })
-      .then((bundle) => {
-        if (!cancelled && bundle) setUtterances(bundle.utterances)
-      })
-      .catch(() => {
-        // Following along is a nicety; the audio plays regardless.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [audio.playing, utterances, recording.id])
 
   // Only one card plays at a time — but only another card actually claiming
   // playback stops this one. Testing "am I the chosen card" instead treats
@@ -106,30 +68,6 @@ export default function RecordingCard({
     await onRename(recording.id, title)
   }
 
-  /**
-   * The preview, split so the line being spoken can be picked out.
-   *
-   * Before playback there are no timings, so the whole preview is one inert
-   * block. Once the timed lines arrive the same text is rebuilt from them and
-   * the one under the playhead is marked.
-   */
-  const lines = utterances
-    ? (() => {
-        const out: Array<{ text: string; startMs: number; endMs: number }> = []
-        let used = 0
-        for (const u of utterances) {
-          if (used >= PREVIEW_CHARS) break
-          out.push({ text: u.text, startMs: u.startMs, endMs: u.endMs })
-          used += u.text.length
-        }
-        return out
-      })()
-    : null
-
-  const truncated =
-    (recording.preview ?? '').length >= PREVIEW_CHARS ||
-    (utterances != null && lines != null && lines.length < utterances.length)
-
   return (
     <div ref={cardRef} className={audio.playing ? 'rec rec--playing' : 'rec'}>
       <div className="rec__head">
@@ -160,17 +98,7 @@ export default function RecordingCard({
         </div>
 
         <div className="rec__actions">
-          {recording.status === 'failed' && (
-            <button
-              type="button"
-              className="rec__retry"
-              aria-label={`Try transcribing ${recording.title} again`}
-              title="Try again"
-              onClick={() => onRetry(recording.id)}
-            >
-              ↻
-            </button>
-          )}
+          <StatusPill status={recording.status} />
           <div className="rec__menu">
             <button
               type="button"
@@ -198,15 +126,6 @@ export default function RecordingCard({
                 </button>
                 <button
                   role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onRetry(recording.id)
-                  }}
-                >
-                  Transcribe again
-                </button>
-                <button
-                  role="menuitem"
                   className="menu__danger"
                   onClick={() => {
                     setMenuOpen(false)
@@ -221,35 +140,11 @@ export default function RecordingCard({
         </div>
       </div>
 
-      {recording.status === 'failed' ? (
-        <p className="rec__note">
-          {recording.error ?? 'Nothing was transcribed. Try again.'}
-        </p>
-      ) : recording.preview ? (
-        <p className="rec__preview">
-          {lines
-            ? lines.map((line, i) => {
-                const active = audio.currentMs >= line.startMs && audio.currentMs < line.endMs
-                return (
-                  <span key={i} className={active ? 'rec__line rec__line--now' : 'rec__line'}>
-                    {line.text}{' '}
-                  </span>
-                )
-              })
-            : recording.preview.slice(0, PREVIEW_CHARS)}
-          {truncated && <span className="rec__more">…</span>}
-        </p>
-      ) : (
-        recording.status === 'ready' && <p className="rec__note">No speech was found.</p>
+      {recording.status === 'failed' && (
+        <p className="rec__note">{recording.error ?? 'Nothing was saved.'}</p>
       )}
 
       <div className="rec__foot">
-        {recording.preview && (
-          <button className="rec__full" onClick={() => onOpen(recording.id)}>
-            View full transcript
-          </button>
-        )}
-
         {playable && (
           <button
             type="button"
@@ -275,12 +170,9 @@ export default function RecordingCard({
         <audio ref={audio.ref} src={mediaSrc ?? undefined} preload="none" {...audio.bind} />
       </div>
 
-      {/* Inside the card's own box rather than a sibling underneath it — a
-          separate element here used to sit half off the card, straddling its
-          rounded bottom edge instead of reading as part of it. */}
       {job && (
         <div className="rec__job">
-          <div className="progress" title={job.label}>
+          <div className="progress" title="Preparing">
             <div
               className={
                 job.fraction == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
@@ -288,7 +180,7 @@ export default function RecordingCard({
               style={job.fraction == null ? undefined : { width: `${Math.round(job.fraction * 100)}%` }}
             />
             <span className="progress__label">
-              {job.label}
+              Preparing
               {job.fraction != null && ` ${Math.round(job.fraction * 100)}%`}
             </span>
           </div>

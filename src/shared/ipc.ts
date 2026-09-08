@@ -10,31 +10,20 @@
  */
 
 import type {
-  ActiveJob,
   CreateRecordingInput,
-  LiveTranscriptChunk,
   ImportProgress,
-  JobProgress,
   Platform,
-  Recording,
-  RecordingSummary,
-  Screenshot,
-  SpeakerSplitting,
-  TrackKind,
-  TranscriptBundle,
-  VoiceProfile
+  Recording
 } from './types'
-import type { ModelDownloadProgress, ModelStatus } from './models'
-import type { ExportFormat } from './export'
 
 export interface ApiSchema {
   'recordings:list': {
     request: void
-    response: RecordingSummary[]
+    response: Recording[]
   }
   'recordings:get': {
     request: { id: string }
-    response: TranscriptBundle | null
+    response: Recording | null
   }
   'recordings:create': {
     request: CreateRecordingInput
@@ -72,82 +61,45 @@ export interface ApiSchema {
       platform: Platform
       userDataPath: string
       mediaPath: string
-      modelsPath: string
-      /** Current log file, so Settings can offer "Open logs folder". */
+      /** Current log file, so a "reveal logs" affordance can point at it. */
       logPath: string
-      /** False when the ffmpeg sidecar is missing, so the UI can explain why. */
+      /** False when the ffmpeg sidecar is missing, so the UI can explain why importing is disabled. */
       ffmpegAvailable: boolean
-      /** False when whisper-cli is missing — the common case on macOS. */
-      whisperAvailable: boolean
-      /** False when parakeet-cli is missing. Ships in the same archive as whisper-cli. */
-      parakeetAvailable: boolean
-      /** False when the diarization helper or its models are missing. */
-      diarizationAvailable: boolean
-      /** False when llama-server is missing — needed for both indexing a transcript for Ask and answering questions about it. */
-      answeringAvailable: boolean
     }
-  }
-
-  /** Installed/downloading state for every model in the catalogue. */
-  'models:list': {
-    request: void
-    response: ModelStatus[]
-  }
-  /** Starts a resumable download. Progress arrives via `model:progress`. */
-  'models:download': {
-    request: { id: string }
-    response: void
-  }
-  'models:cancel': {
-    request: { id: string }
-    response: void
-  }
-  'models:delete': {
-    request: { id: string }
-    response: void
   }
 
   'settings:get': {
     request: void
-    response: TranscriptionSettings
+    response: RecordingSettings
   }
   'settings:set': {
-    request: Partial<TranscriptionSettings>
-    response: TranscriptionSettings
+    request: Partial<RecordingSettings>
+    response: RecordingSettings
   }
 
-  /**
-   * Queues transcription. Returns once queued, not once finished — progress
-   * arrives via `job:progress` and completion via `recording:updated`.
-   */
-  'transcribe:start': {
-    request: { id: string }
-    response: void
-  }
-  'transcribe:cancel': {
-    request: { id: string }
-    response: void
-  }
-  /** Recording ids with a queued or in-flight job, for restoring UI state. */
-  /**
-   * Jobs currently queued or running, with their latest progress.
-   *
-   * Returned in full rather than as bare ids so a screen opening mid-job can
-   * show the real stage, percentage and elapsed time immediately, instead of an
-   * empty bar until the next progress event happens to arrive.
-   */
-  'transcribe:active': {
+  /** Where recordings' audio files currently live, and what the default would be. */
+  'storage:get': {
     request: void
-    response: ActiveJob[]
+    response: { mediaRoot: string; isDefault: boolean; defaultMediaRoot: string }
+  }
+  /** Opens the native folder picker. Returns the chosen path, or null if cancelled. */
+  'storage:pickFolder': {
+    request: void
+    response: string | null
+  }
+  /**
+   * Moves every recording's audio into `folder` and makes it the new home for
+   * future ones. Rejects while a recording is in progress. Can take a while
+   * for a large library — the call does not resolve until the move (and every
+   * recording's updated path) is complete.
+   */
+  'storage:relocate': {
+    request: { folder: string }
+    response: { mediaRoot: string }
   }
 
   /**
    * Waveform envelope for a recording, computed in the main process.
-   *
-   * Keyed by recording rather than by track: which file the waveform should
-   * describe is the playback mixdown when there is one, and the renderer has no
-   * way to know whether one was written. Main resolves it so the waveform and
-   * the audio can never disagree.
    *
    * The renderer cannot fetch the audio itself (Chromium blocks fetch to custom
    * schemes), and would not want to: this returns ~2 kB instead of hundreds of
@@ -158,91 +110,6 @@ export interface ApiSchema {
     response: { values: number[]; durationMs: number }
   }
 
-  /** Rewrites one utterance's text and flags it as human-edited. */
-  'utterances:update': {
-    request: { id: string; text: string }
-    response: void
-  }
-  /**
-   * Removes one line permanently — for a diarization false-positive (a cough or
-   * background noise mistaken for speech) rather than something worth keeping
-   * and just misattributed. The renderer defers this call behind an undo
-   * window, so by the time it arrives it is final.
-   */
-  'utterances:delete': {
-    request: { id: string }
-    response: void
-  }
-
-  /**
-   * Renders the transcript and asks the user where to save it.
-   * Returns the written path, or null if the save dialog was cancelled.
-   *
-   * `includeScreenshots` copies the recording's screenshots into a folder
-   * alongside the exported file and links them from it — ignored for `srt`
-   * and `vtt`, neither of which has a sensible way to carry an inline image.
-   */
-  'transcript:export': {
-    request: { id: string; format: ExportFormat; includeScreenshots: boolean }
-    response: string | null
-  }
-
-  'speakers:rename': {
-    request: { id: string; displayName: string }
-    response: void
-  }
-  /**
-   * Folds one speaker into another.
-   *
-   * Diarization routinely splits a single person across two clusters when their
-   * voice changes, so merging is the primary correction the editor needs.
-   */
-  'speakers:merge': {
-    request: { recordingId: string; fromId: string; intoId: string }
-    response: void
-  }
-  /** Moves one line to a different speaker. */
-  'speakers:reassign': {
-    request: { utteranceId: string; speakerId: string | null }
-    response: void
-  }
-  /**
-   * Removes a speaker and every line attributed to them.
-   *
-   * For a cluster that turns out to be entirely background noise or a
-   * diarization artifact, rather than a real person worth keeping and just
-   * misattributed — reassigning covers that case instead.
-   */
-  'speakers:delete': {
-    request: { id: string }
-    response: void
-  }
-  /**
-   * Sets a speaker's color, swapping it with whoever currently has it — every
-   * color in a recording stays unique, so there's nothing to disable in the picker.
-   */
-  'speakers:setColor': {
-    request: { recordingId: string; id: string; color: string }
-    response: void
-  }
-
-  /**
-   * Every saved voice profile, for the Settings summary count.
-   *
-   * Enrollment and matching both happen automatically at the end of every
-   * transcription job — there is nothing here to create, rename or toggle by
-   * hand, only `profiles:clearAll` to forget everything.
-   */
-  'profiles:list': {
-    request: void
-    response: VoiceProfile[]
-  }
-  /** Forgets every remembered voice and deletes their saved samples. */
-  'profiles:clearAll': {
-    request: void
-    response: void
-  }
-
   /**
    * Opens WAV writers and returns the new recording row.
    *
@@ -251,12 +118,12 @@ export interface ApiSchema {
    * declined without that failing the whole recording.
    */
   'recording:start': {
-    request: { title?: string; kinds: TrackKind[]; sampleRate: number }
+    request: { title?: string; hasSystemAudio: boolean; sampleRate: number }
     response: Recording
   }
-  /** Appends one block of 16-bit PCM to a track. */
+  /** Appends one block of 16-bit PCM — mic and system audio already mixed together (see lib/capture.ts). */
   'recording:chunk': {
-    request: { kind: TrackKind; samples: Uint8Array }
+    request: { samples: Uint8Array }
     response: void
   }
   'recording:pause': {
@@ -268,13 +135,8 @@ export interface ApiSchema {
     response: {
       recordingId: string
       durationMs: number
-      tracks: Array<{ kind: TrackKind; durationMs: number }>
-      /**
-       * Tracks discarded for carrying no signal — system-audio loopback with
-       * nothing playing, most often. Reported so the UI can say what happened
-       * instead of a source quietly vanishing.
-       */
-      silentTracks: TrackKind[]
+      /** True if nothing was captured — mic and system audio both silent — so the UI can say what happened. */
+      silent: boolean
     }
   }
   /** Discards an in-progress recording and everything captured so far. */
@@ -285,9 +147,8 @@ export interface ApiSchema {
 
   /**
    * Opens the mini controls window for the in-progress recording, or focuses
-   * it if it is already open. A small always-on-top window with pause/resume
-   * and the live transcript, so those stay reachable with the main window
-   * minimized.
+   * it if it is already open. A small always-on-top window with pause/resume,
+   * so those stay reachable with the main window minimized.
    */
   'recording:openMiniControls': {
     request: void
@@ -295,8 +156,7 @@ export interface ApiSchema {
   }
   /**
    * Current recording session, for the mini window to show the right state
-   * the moment it opens rather than waiting for the next broadcast — the
-   * same reason `transcribe:active` exists for Editor.tsx.
+   * the moment it opens rather than waiting for the next broadcast.
    */
   'recording:status': {
     request: void
@@ -311,36 +171,8 @@ export interface ApiSchema {
     request: { elapsedMs: number }
     response: void
   }
-  /** Resizes the mini window between its collapsed and expanded presets. */
-  /** The transcript panel and the display picker are mutually exclusive — each is its own fixed window height, so opening one collapses the other rather than the two heights needing to add up. */
-  'recording:resizeMiniControls': {
-    request: { mode: 'collapsed' | 'transcript' | 'displays' }
-    response: void
-  }
 
-  /**
-   * Snaps a screenshot of every connected display (or just the one chosen in
-   * Settings, if any) and attaches it to the recording at the given elapsed
-   * time. One row per display — a two-monitor snap returns two.
-   */
-  'screenshots:capture': {
-    request: { recordingId: string; elapsedMs: number }
-    response: Screenshot[]
-  }
-  /** Removes one screenshot — the row and its file. */
-  'screenshots:delete': {
-    request: { id: string }
-    response: void
-  }
-  /** Currently connected displays, for the "which screen" Settings dropdown. */
-  'screenshots:listDisplays': {
-    request: void
-    // OS-reported names are rarely more informative than "Screen 1", "Screen
-    // 2" — the thumbnail is what actually lets someone tell displays apart.
-    response: Array<{ id: string; name: string; thumbnailDataUrl: string }>
-  }
-
-  /** Reveals a file in the OS file manager, selected — for jumping to an export. */
+  /** Reveals a file in the OS file manager, selected. */
   'shell:showItemInFolder': {
     request: { path: string }
     response: void
@@ -355,37 +187,9 @@ export interface ApiSchema {
     request: void
     response: string
   }
-
-  /**
-   * Offline RAG: answers a question about one recording, grounded in its
-   * transcript. Retrieval happens internally (the same chunk/embedding
-   * index built after every transcription); the response's `citations` are
-   * the excerpts the answer was actually generated from, for jumping
-   * playback to them.
-   */
-  'ask:query': {
-    request: { question: string; recordingId: string }
-    response: {
-      answer: string
-      citations: Array<{ text: string; startMs: number; endMs: number }>
-    }
-  }
 }
 
-export interface TranscriptionSettings {
-  modelId: string | null
-  language: string
-  /** Run speaker diarization after transcription. */
-  diarize: boolean
-  /** Upper bound on the speaker count, or null to cluster automatically. */
-  speakerCount: number | null
-  /**
-   * How eagerly to split voices apart when the count is unknown.
-   *
-   * Ignored when speakerCount is set: a fixed cluster count makes the distance
-   * threshold irrelevant.
-   */
-  speakerSplitting: SpeakerSplitting
+export interface RecordingSettings {
   /**
    * Apply WebRTC noise suppression to the microphone.
    *
@@ -407,14 +211,6 @@ export interface TranscriptionSettings {
    * character and there's no real case for wanting it off.
    */
   echoCancellation: boolean
-  /**
-   * The microphone carries only the local user's voice.
-   *
-   * True skips diarizing the mic track and labels it "You" — correct for a
-   * call. False (the default) diarizes it like any other source, which is what
-   * several people sharing one microphone requires.
-   */
-  micSoloSpeaker: boolean
   /** Last-used microphone, by device id, or null for the system default. */
   micDeviceId: string | null
   /** Last-used choice for whether to also capture system audio. */
@@ -425,13 +221,6 @@ export interface TranscriptionSettings {
    * to be clicked first.
    */
   autoPopOutOnMinimize: boolean
-  /**
-   * Which displays a screenshot snap captures, by `desktopCapturer` source
-   * id. An empty array (the default) means every connected display. A stale
-   * id — a monitor that's since been unplugged — is simply not among the
-   * live sources next time, rather than capturing nothing.
-   */
-  screenshotDisplayIds: string[]
 }
 
 /** Payloads pushed from main to renderer. */
@@ -440,19 +229,6 @@ export interface EventSchema {
   'recording:updated': Recording
   /** Fine-grained progress for an in-flight ingest job. */
   'import:progress': ImportProgress
-  /** Progress for a transcription/diarization job. */
-  'job:progress': JobProgress
-  /** Progress for a model download. */
-  'model:progress': ModelDownloadProgress
-  /**
-   * A window of text transcribed while the recording is still running.
-   *
-   * One event per completed window, carrying only that window's text rather than
-   * the transcript so far: a two-hour recording accumulates tens of thousands of
-   * words, and resending all of them every forty-five seconds would put the
-   * whole transcript through the bridge over and over. The renderer appends.
-   */
-  'live:transcript': LiveTranscriptChunk
   /**
    * Pause state changed, from whichever window (main or mini controls)
    * toggled it. Both treat `paused` as derived from this rather than
@@ -463,11 +239,10 @@ export interface EventSchema {
   /** Relayed elapsed time, from Record.tsx's `recording:elapsed` calls. */
   'recording:elapsedTick': { elapsedMs: number }
   /**
-   * A stop has begun and the session is gone in main, ahead of the (possibly
-   * several-second) normalize/mixdown work `recording:stopped` waits for.
-   * Every window still forwarding audio blocks needs to stop immediately —
-   * writing to a session that's already gone otherwise fails silently, over
-   * and over, for however long that work takes.
+   * A stop has begun and the session is gone in main, ahead of the (brief)
+   * finalize work `recording:stopped` waits for. Every window still
+   * forwarding audio blocks needs to stop immediately — writing to a session
+   * that's already gone otherwise fails silently, over and over.
    */
   'recording:sessionEnded': { recordingId: string }
   /**
@@ -478,13 +253,11 @@ export interface EventSchema {
   'recording:stopped': {
     recordingId: string
     durationMs: number
-    tracks: Array<{ kind: TrackKind; durationMs: number }>
-    silentTracks: TrackKind[]
+    silent: boolean
   }
   /** A recording was discarded — mirrors `recording:stopped` for the cancel path. */
   'recording:discarded': { recordingId: string }
 }
-
 
 export type Channel = keyof ApiSchema
 export type Request<C extends Channel> = ApiSchema[C]['request']
@@ -506,26 +279,12 @@ export const CHANNELS = [
   'dialog:pickMediaFiles',
   'recordings:import',
   'app:info',
-  'models:list',
-  'models:download',
-  'models:cancel',
-  'models:delete',
   'settings:get',
   'settings:set',
-  'transcribe:start',
-  'transcribe:cancel',
-  'transcribe:active',
+  'storage:get',
+  'storage:pickFolder',
+  'storage:relocate',
   'peaks:get',
-  'utterances:update',
-  'utterances:delete',
-  'transcript:export',
-  'speakers:rename',
-  'speakers:merge',
-  'speakers:reassign',
-  'speakers:delete',
-  'speakers:setColor',
-  'profiles:list',
-  'profiles:clearAll',
   'recording:start',
   'recording:chunk',
   'recording:pause',
@@ -534,21 +293,13 @@ export const CHANNELS = [
   'recording:openMiniControls',
   'recording:status',
   'recording:elapsed',
-  'recording:resizeMiniControls',
-  'screenshots:capture',
-  'screenshots:delete',
-  'screenshots:listDisplays',
   'shell:showItemInFolder',
-  'logs:read',
-  'ask:query'
+  'logs:read'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [
   'recording:updated',
   'import:progress',
-  'job:progress',
-  'model:progress',
-  'live:transcript',
   'recording:pauseChanged',
   'recording:elapsedTick',
   'recording:sessionEnded',
@@ -581,17 +332,7 @@ export type RendererApi = {
 /** Media served to the renderer goes through this scheme, never file://. */
 export const MEDIA_SCHEME = 'sonascribe-media'
 
-/** URL for a normalized track's WAV. */
-export function trackMediaUrl(trackId: string): string {
-  return `${MEDIA_SCHEME}://track/${trackId}`
-}
-
-/** URL for a recording's original, un-normalized file. */
+/** URL for a recording's one audio file. */
 export function sourceMediaUrl(recordingId: string): string {
   return `${MEDIA_SCHEME}://source/${recordingId}`
-}
-
-/** URL for one screenshot's PNG. */
-export function screenshotMediaUrl(screenshotId: string): string {
-  return `${MEDIA_SCHEME}://screenshot/${screenshotId}`
 }

@@ -1,38 +1,28 @@
-import type { TrackKind } from '@shared/types'
-
 /**
  * Microphone and system-audio capture.
  *
  * Only the renderer can reach getUserMedia and getDisplayMedia, so capture lives
- * here; the PCM is streamed to the main process, which owns the files.
+ * here; the PCM is streamed to the main process, which owns the file.
  *
- * Capture runs at the hardware's own sample rate — typically 48 kHz — and the
- * 16 kHz mono copy the ML sidecars need is derived afterwards with ffmpeg, the
- * same way imported files are handled. Recording straight to 16 kHz would cap
- * the archive at 8 kHz of bandwidth, which is telephone quality: a good
- * microphone would be thrown away at the door.
+ * Capture runs at the hardware's own sample rate — typically 48 kHz — straight
+ * to disk. There is no MediaRecorder anywhere in this path — encoding to
+ * WebM/Opus only to decode it again would lose quality for nothing.
  *
- * There is no MediaRecorder anywhere in this path — encoding to WebM/Opus only
- * to decode it again would lose quality for nothing.
+ * Mic and system audio are mixed into the single recorded file by Web Audio
+ * graph fan-in: connecting both `MediaStreamAudioSourceNode`s to the same
+ * `AudioWorkletNode` input sums them, so no separate mixdown step is needed.
+ * Two more monitoring-only nodes — one per source — sit alongside the combined
+ * one purely so the level meters and "test your mic" feature can keep telling
+ * a silent microphone apart from silent system audio even though the file on
+ * disk is already mixed. Only the combined node's output is ever written.
  */
 
-export interface CaptureTrack {
-  kind: TrackKind
-  stream: MediaStream
-  node: AudioWorkletNode
-  source: MediaStreamAudioSourceNode
-}
-
-export interface CaptureSession {
-  context: AudioContext
-  tracks: CaptureTrack[]
-  stop: () => Promise<void>
-}
+export type CaptureSourceKind = 'mic' | 'system'
 
 export class CaptureError extends Error {
   constructor(
     message: string,
-    readonly kind: TrackKind
+    readonly kind: CaptureSourceKind
   ) {
     super(message)
     this.name = 'CaptureError'
@@ -40,7 +30,7 @@ export class CaptureError extends Error {
 }
 
 /** Human-readable reason for a getUserMedia/getDisplayMedia rejection. */
-function describeMediaError(err: unknown, kind: TrackKind): string {
+function describeMediaError(err: unknown, kind: CaptureSourceKind): string {
   const name = err instanceof Error ? err.name : ''
   const what = kind === 'mic' ? 'Microphone' : 'System audio'
 
@@ -60,25 +50,23 @@ function describeMediaError(err: unknown, kind: TrackKind): string {
  * Browser audio-processing constraints.
  *
  * Enabling any of these routes the stream through Chromium's WebRTC audio
- * processing module — the conferencing pipeline. It applies echo cancellation,
- * spectral noise gating and automatic gain, which is why processed audio has
- * that unmistakable "on a call" character. On a decent microphone it only
- * removes quality, so it is off unless the user asks for it.
+ * processing module — the conferencing pipeline. Echo cancellation and
+ * spectral noise gating are why processed audio has that unmistakable "on a
+ * call" character, so both are off unless the user asks for them.
  *
- * It genuinely helps in one case: a laptop's built-in mic with sound coming out
- * of the speakers, where echo cancellation stops the far end being recorded
- * twice.
+ * Automatic gain control is not among these: it's applied unconditionally
+ * (see `requestMicStream`), because unlike the other two, going without it
+ * just leaves a quiet input device with nothing compensating — which can
+ * lose a recording's audio outright rather than merely costing fidelity.
  */
 export interface MicProcessing {
   echoCancellation: boolean
   noiseSuppression: boolean
-  autoGainControl: boolean
 }
 
 export const CLEAN_MIC: MicProcessing = {
   echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false
+  noiseSuppression: false
 }
 
 export async function requestMicStream(
@@ -91,7 +79,7 @@ export async function requestMicStream(
         deviceId: deviceId ? { exact: deviceId } : undefined,
         echoCancellation: processing.echoCancellation,
         noiseSuppression: processing.noiseSuppression,
-        autoGainControl: processing.autoGainControl
+        autoGainControl: true
       },
       video: false
     })
@@ -131,24 +119,33 @@ export async function requestSystemStream(): Promise<MediaStream> {
   return stream
 }
 
+export interface CaptureSession {
+  context: AudioContext
+  /** Hardware sample rate the context (and so the recorded file) runs at. */
+  sampleRate: number
+  stop: () => Promise<void>
+}
+
 /**
- * Wires the given streams into a shared 16 kHz graph and starts delivering PCM.
+ * Wires the given source streams into one combined recording node plus one
+ * monitoring-only node per source, and starts delivering PCM.
  *
- * One AudioContext drives every track so both share a clock — the two tracks
- * must stay on a common timeline for the transcripts to interleave correctly.
+ * `onLevel` fires for every source on every block, with that source's own
+ * (pre-mix) samples — used for the meters, and for tapping the clean mic
+ * signal for "test your mic" playback. `onBlock` fires only for the
+ * combined, mixed signal — the one that gets written to disk.
  */
 export async function startCapture(
-  streams: Array<{ kind: TrackKind; stream: MediaStream }>,
-  onBlock: (kind: TrackKind, samples: Int16Array, peak: number) => void
+  sources: Array<{ kind: CaptureSourceKind; stream: MediaStream }>,
+  onLevel: (kind: CaptureSourceKind, samples: Int16Array, peak: number) => void,
+  onBlock: (samples: Int16Array, peak: number) => void
 ): Promise<CaptureSession> {
-  // No sampleRate override: the context adopts the hardware rate, so the mic
-  // stream reaches the worklet without an extra resample.
+  // No sampleRate override: the context adopts the hardware rate.
   const context = new AudioContext()
   await context.audioWorklet.addModule('recorder-worklet.js')
 
-  const tracks: CaptureTrack[] = streams.map(({ kind, stream }) => {
-    const source = context.createMediaStreamSource(stream)
-    const node = new AudioWorkletNode(context, 'recorder-processor', {
+  function makeNode(): AudioWorkletNode {
+    return new AudioWorkletNode(context, 'recorder-processor', {
       numberOfInputs: 1,
       numberOfOutputs: 0,
       channelCount: 1,
@@ -157,25 +154,40 @@ export async function startCapture(
       channelCountMode: 'explicit',
       channelInterpretation: 'speakers'
     })
+  }
 
-    node.port.onmessage = (event: MessageEvent<{ samples: Int16Array; peak: number }>) => {
-      onBlock(kind, event.data.samples, event.data.peak)
+  const combined = makeNode()
+  combined.port.onmessage = (event: MessageEvent<{ samples: Int16Array; peak: number }>) => {
+    onBlock(event.data.samples, event.data.peak)
+  }
+
+  const cleanups: Array<() => void> = []
+
+  for (const { kind, stream } of sources) {
+    const source = context.createMediaStreamSource(stream)
+    source.connect(combined)
+
+    const monitor = makeNode()
+    monitor.port.onmessage = (event: MessageEvent<{ samples: Int16Array; peak: number }>) => {
+      onLevel(kind, event.data.samples, event.data.peak)
     }
+    source.connect(monitor)
 
-    source.connect(node)
-    return { kind, stream, node, source }
-  })
+    cleanups.push(() => {
+      monitor.port.onmessage = null
+      source.disconnect()
+      monitor.disconnect()
+      for (const track of stream.getTracks()) track.stop()
+    })
+  }
 
   return {
     context,
-    tracks,
+    sampleRate: context.sampleRate,
     stop: async () => {
-      for (const track of tracks) {
-        track.node.port.onmessage = null
-        track.source.disconnect()
-        track.node.disconnect()
-        for (const mediaTrack of track.stream.getTracks()) mediaTrack.stop()
-      }
+      combined.port.onmessage = null
+      combined.disconnect()
+      for (const cleanup of cleanups) cleanup()
       await context.close()
     }
   }

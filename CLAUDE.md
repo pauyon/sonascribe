@@ -1,8 +1,9 @@
 # SonaScribe — map for AI-assisted work
 
-Local-first Electron transcription app (Windows/macOS). Record or import
-audio, get a timestamped transcript with automatic speaker labels — entirely
-on-device. **`README.md` is the primary architecture reference** ("Decisions
+Local-first Electron audio recorder (Windows/macOS). Record microphone and
+system audio — mixed together into one file, in real time — or import an
+existing file, and play it back. Entirely on-device, nothing leaves the
+machine. **`README.md` is the primary architecture reference** ("Decisions
 worth knowing") — read it first. This file adds what a human README wouldn't:
 exact module boundaries, an AI-testing recipe, and a maintenance instruction.
 
@@ -21,26 +22,14 @@ exact module boundaries, an AI-testing recipe, and a maintenance instruction.
 - **No test framework** (no Jest/Vitest/Playwright). Verification is
   `npm run typecheck`, `npm run smoke` (`scripts/smoke.mjs`, a hand-rolled CDP
   driver — see Testing below), and manual runs.
-- ML engines (whisper.cpp, Parakeet, sherpa-onnx) and ffmpeg are **spawned CLI
-  sidecars**, not native addons — see README for why. Fetched by
-  `npm run sidecars` into `resources/bin/<platform>/` (git-ignored).
+- **ffmpeg** is the only spawned CLI sidecar — used solely to normalize an
+  *imported* file to WAV. Fetched by `npm run sidecars` into
+  `resources/bin/<platform>/` (git-ignored). A live recording never touches
+  it; mic and system audio are mixed by the browser's own Web Audio graph.
 - **`electron-log`** — the only logging dependency. `src/main/log.ts` calls
   `Object.assign(console, log.functions)` once at startup, so every existing
   `console.*` call writes to `<userData>/logs/main.log` for free; nothing
   should ever call `log.*` directly instead of `console.*`.
-- **`llama.cpp`** (`llama-server`, same `ggml-org` family as whisper.cpp) —
-  the sidecar behind offline RAG: transcript retrieval and the "Ask about
-  this recording" answers both run through it. Unlike every other sidecar
-  it's a long-lived local HTTP server, not a run-to-completion CLI — and
-  unlike every other sidecar, it runs as **two independent instances**, one
-  model each (a `llama-server` process is one model for its life): an
-  embedding instance (`services/embeddings.ts`, bundled `nomic-embed-text`)
-  that indexes and retrieves transcript chunks, and a chat instance
-  (`services/answering.ts`, runtime-downloaded Qwen2.5 3B Instruct) that
-  writes the answer from whatever the embedding instance retrieved. Real
-  releases are the `b<number>` prerelease tags, not the semver-looking
-  "latest" GitHub release (which ships no binaries at all) — `LLAMA_TAG` in
-  `fetch-sidecars.mjs` must point at one.
 
 ## Directory map
 
@@ -52,79 +41,67 @@ src/
     display-media.ts                        desktopCapturer plumbing for system audio
     db/                                      ALL SQL lives here
       index.ts            getDb()/initDb(), WAL mode, migration runner
-      migrations.ts        forward-only, numbered — NEVER edit a shipped one, append
-      recordings.ts, tracks.ts, transcript.ts, speakers.ts, profiles.ts, chunks.ts, screenshots.ts, settings.ts
+      migrations.ts        forward-only, numbered — NEVER edit a shipped one, append.
+                            Also the historical record of everything this app used to
+                            do (transcription, diarization, RAG, screenshots) before
+                            being stripped to a plain recorder — see below.
+      recordings.ts         CRUD + status/duration/source-path setters
+      repair-paths.ts       startup repair: repoint stale paths, resolve interrupted recordings
+      settings.ts            typed key/value accessors for the recording-relevant settings
     services/                               everything that isn't SQL or IPC wiring
-      jobs.ts                serial job queue: status transitions, persistence, error handling
-      transcription-pipeline.ts   the actual ASR+diarization+anchor-matching pipeline (called by jobs.ts)
-      diarize.ts, merge.ts        sherpa-onnx wrapper; word-level speaker alignment + absorption
-      profiles.ts             voice-profile enrollment/refresh/matching (auto, no user action)
-      chunking.ts             groups utterances into embedding-sized chunks
-      embeddings.ts           embedding llama-server lifecycle (start/health-check/stop) + embed calls
-      search.ts               reindexRecording (post-transcription) + searchChunks (cosine similarity, no vector DB) — retrieval, called internally by answering.ts
-      answering.ts            chat llama-server lifecycle + answerQuestion (RAG: searchChunks then a grounded /v1/chat/completions call)
-      whisper.ts, parakeet.ts, parakeet-parse.ts, transcription.ts   ASR engine runners (engine-neutral output)
-      ffmpeg.ts, wav.ts, wav-writer.ts, peaks.ts    audio normalize/concat/extract/waveform
-      recorder.ts, live-transcribe.ts, audio-chunks.ts   live capture + streamed transcription
-      importer.ts, media-cleanup.ts, export.ts, screenshots.ts, screenshot-naming.ts, models.ts, sidecars.ts
+      recorder.ts             owns the in-progress WavWriter; start/chunk/pause/stop/cancel;
+                               discards a recording whose peak level never cleared silence
+      importer.ts              ffmpeg-normalize an imported file to WAV, serially queued
+      ffmpeg.ts, wav.ts, wav-writer.ts, peaks.ts    audio normalize/extract/waveform
+      media-cleanup.ts        deletes a recording's media dir; sweeps orphaned ones at startup
+      storage.ts               where recordings' media lives (default or user-chosen) and the
+                                only place allowed to move it — see "Decisions worth knowing"
+      sidecars.ts               resolves the ffmpeg binary (packaged / dev / PATH)
     ipc/index.ts, ipc/events.ts             handler registry (must implement every ApiSchema channel) + event emitter
     windows/                                 BrowserWindow setup (main window, mini recorder)
   preload/            the only renderer↔main bridge; allowlists channels from shared/ipc.ts
   shared/                                    compiled into BOTH main and renderer — keep Electron-free
     ipc.ts       ApiSchema (request/response) + EventSchema (push) — the one IPC contract, see below
-    types.ts     domain types mirroring the SQLite schema
-    colors.ts    SPEAKER_COLORS palette + pickSpeakerColor() — used by main (assignment) and renderer (picker UI)
-    models.ts, export.ts
+    types.ts     domain types mirroring the SQLite schema — just `Recording` and friends
   renderer/src/
-    routes/       Library, Editor, Record, Models (settings), MiniRecorder
-    components/    SpeakerBar, Transcript, Waveform, PlayerBar, ScreenshotGallery, JobProgress, LogViewer, AskPanel, ...
-    lib/api.ts     useQuery/useEvent/api.invoke — the only way renderer talks to main
-resources/bin/<platform>/    sidecar binaries, git-ignored, fetched by scripts/fetch-sidecars.mjs
+    routes/       Library, Record, Settings (recordings-folder location, logs), Editor (recording
+                  detail), MiniRecorder
+    components/    RecordingCard, PlayerBar, Waveform, StatusPill, Select, HelpTip, LogViewer
+    lib/           api.ts (useQuery/useEvent/api.invoke), capture.ts (Web Audio capture + mixing),
+                   useAudio.ts, format.ts
+resources/bin/<platform>/    ffmpeg binary, git-ignored, fetched by scripts/fetch-sidecars.mjs
 scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
 ```
 
-## Core pipeline (what a recording goes through)
+## Core flow (what a recording goes through)
 
-1. **Capture** (`recorder.ts` + renderer `lib/capture.ts`) — mic and system
-   audio as **separate tracks** (`mic`/`system`/`mixed` for imports), raw PCM
-   via AudioWorklet, never MediaRecorder. Stored at device rate; a 16 kHz mono
-   copy is derived for the ML sidecars.
-2. **Job queue** (`jobs.ts`) — one job at a time, cancellable, owns
-   `recordings.status` transitions (`transcribing → diarizing → merging →
-   ready`/`failed`) and the `job:progress` / `recording:updated` events.
-3. **Pipeline** (`transcription-pipeline.ts`, called by jobs.ts) — per track:
-   ASR (whisper or Parakeet, whichever's selected) → **one joint diarization
-   pass across every track that needs it** (mic is skipped only when declared
-   solo). Known voices (see below) are prepended as anchors in the same pass.
-   Returns `MergedUtterance[]` + which cluster matched which profile; jobs.ts
-   persists the rest.
-4. **Speaker identity** (`db/speakers.ts`) — one row per cluster per
-   recording, keyed so a re-run reuses it (renames survive). Colors are
-   assigned so no two speakers in a recording share one
-   (`shared/colors.ts::pickSpeakerColor`), and a recognized voice (or "You")
-   keeps its remembered color across recordings.
-5. **Voice profiles** (`db/profiles.ts` + `services/profiles.ts`) — fully
-   automatic, no user action: after a job finishes, any speaker without
-   enough audio history gets anchored; a later recording matching an existing
-   anchor reuses it instead of inventing a new speaker. Capped (10) with
-   least-recently-matched eviction. The only manual control is
-   `profiles:clearAll` (Settings → "Clear remembered voices").
-6. **Editor** (`Editor.tsx`, `Transcript.tsx`, `SpeakerBar.tsx`) — playback,
-   inline edit, speaker rename/merge/delete/color, exact-text search
-   (client-side filter), export (`services/export.ts`).
-7. **Offline Q&A / RAG** (`services/search.ts` + `services/answering.ts`) —
-   after every successful transcription, the transcript is chunked
-   (`services/chunking.ts`), embedded (`services/embeddings.ts`), and stored
-   in `chunk_embeddings`, replacing that recording's old rows wholesale.
-   `AskPanel.tsx` (Editor only, one recording at a time) sends a question to
-   `answerQuestion()`, which retrieves the most relevant chunks
-   (`searchChunks`, cosine similarity) and has a small local chat model
-   write an answer grounded in them — retrieval and generation are separate
-   steps, so citations come from what was actually retrieved, not from
-   trusting the model to self-report its sources. An earlier version of this
-   exposed `searchChunks` directly as a ranked-results search UI; that was
-   removed as more confusing than useful, but the chunking/embedding/
-   retrieval pipeline underneath it is what Ask is built on.
+1. **Capture** (`lib/capture.ts`, driven by `routes/Record.tsx`) — mic and
+   system audio opened as separate `MediaStream`s, then wired into **three**
+   Web Audio nodes on one `AudioContext`: a combined `AudioWorkletNode` that
+   both sources feed (this is what gets written to disk — connecting two
+   sources to the same node input sums them, which is the entire mixing
+   mechanism, no DSP code needed) plus one monitoring-only node per source,
+   used only to drive the level meters and "test your mic" feature so a
+   silent microphone can still be told apart from silent system audio even
+   though the recorded file is already mixed. Runs at the hardware's own
+   sample rate. `public/recorder-worklet.js` is source-count-agnostic — it
+   just sums whatever reaches `inputs[0][0]`.
+2. **Recording** (`services/recorder.ts`) — the renderer streams 16-bit PCM
+   blocks from the combined node over `recording:chunk`; main owns the
+   `WavWriter`. `stopRecording` reads back the file's peak level and discards
+   (deletes the file, marks the row `failed`) anything that never cleared a
+   silence threshold — system-audio loopback with nothing playing produces a
+   full-length file of digital zeroes, which byte count alone wouldn't catch.
+3. **Import** (`services/importer.ts`) — a picked or dropped file is
+   normalized straight to WAV via ffmpeg (mono, 48 kHz, 16-bit PCM); the
+   normalized file *is* `source_path`, there's no separate "original" kept
+   alongside it. Queued serially — ffmpeg already saturates available cores
+   on one transcode.
+4. **Playback** (`routes/Editor.tsx`, `components/PlayerBar.tsx`,
+   `Waveform.tsx`) — streamed over `sonascribe-media://source/<id>`; waveform
+   peaks are computed in the main process (`services/peaks.ts`) and sent over
+   IPC, since the renderer can't `fetch()` a custom scheme and wouldn't want
+   to decode hundreds of megabytes of PCM anyway.
 
 ## Patterns to follow
 
@@ -135,29 +112,24 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
   compiler, don't grep for it.
 - **Migrations are append-only.** Never edit a `MIGRATIONS` entry once it
   might have run anywhere (including your own dev/test databases) — add a new
-  numbered one. Current head: see `src/main/db/migrations.ts`.
+  numbered one. Current head: see `src/main/db/migrations.ts`. That file also
+  still carries every table from before this app was stripped down to a plain
+  recorder (`tracks`, `speakers`, `utterances`, `words`, `voice_profiles`,
+  `chunk_embeddings`, `screenshots`) — deliberately not dropped, just
+  unreferenced by any code in `src/`; an existing recording's `source_path`
+  already pointed at a playable file, so nothing needed migrating.
 - **`db/` does the SQL, `services/` does everything else.** A service that
   needs a row should call into `db/`, not `getDb()` directly.
-- **All audio the ML sidecars touch is 16 kHz mono PCM WAV** — never assume
-  otherwise when adding an ffmpeg step.
+- **All audio the app touches is 16-bit PCM WAV** — never assume otherwise
+  when adding an ffmpeg step. A live recording is written at the hardware's
+  own sample rate; an imported file is normalized to 48 kHz mono.
 - **`shared/` must stay Electron-free** — it's compiled into the renderer too.
-- **Two sidecar lifecycles exist — pick the right one.** whisper/parakeet/
-  sherpa-onnx/ffmpeg are spawned per job and parsed from stdout to
-  completion. `llama-server` is the exception, and there are two independent
-  long-lived instances of it (`services/embeddings.ts` on one port,
-  `services/answering.ts` on another — one model per process, so embedding
-  and chat can't share an instance): started lazily, kept running, talked to
-  over local HTTP, and both stopped in `index.ts`'s `before-quit` handler.
-  Don't spawn-per-call a model server — the model load alone is the
-  dominant cost.
-- **The model catalogue (`shared/models.ts`) covers more than transcription.**
-  `MODELS`/`ENGINES` also list the RAG answering model (`engine: 'llama'`),
-  reusing the same download/verify/progress machinery in
-  `services/models.ts` as Whisper and Parakeet — but it verifies GGUF magic
-  instead of ggml's, and it's never a valid `settings:set({ modelId })`
-  value. Use `findAsrModel()`, not `findModel()`, anywhere that result feeds
-  transcription — `findModel()` alone doesn't rule out the answering model
-  and would hand `runAsr()` an engine it doesn't know.
+- **Don't reintroduce a spawn-per-call sidecar model.** ffmpeg is the only
+  child process left, and it's genuinely run-to-completion per call — that's
+  fine for a normalize step measured in seconds. If a future feature needs a
+  long-lived local server the way the old RAG feature's `llama-server` did,
+  don't spawn it per call — start it lazily and keep it running (see git
+  history / README for how that pattern looked before it was removed).
 
 ## Testing (no framework — do this instead)
 
@@ -166,7 +138,7 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
 2. `npm run build && npm run smoke` — the closest thing to an e2e suite;
    extend `scripts/smoke.mjs` for new IPC-reachable behavior.
 3. **Ad-hoc manual verification via CDP** (what this session used to verify
-   diarization/voice-profile changes without a human at the keyboard):
+   the mixed-recording rewrite without a human at the keyboard):
 
    ```bash
    npm run build
@@ -180,16 +152,17 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
    open it with Node's built-in `WebSocket`, and call
    `Runtime.evaluate({ expression: "window.api.invoke(...)", awaitPromise:
    true, returnByValue: true })` — the full renderer API is reachable this
-   way, including importing a real audio file, starting a transcription, and
-   polling `recordings:get` until `status` settles.
+   way, including importing a real audio file, starting a recording via the
+   real UI (click the same buttons a user would), and polling
+   `recordings:get` until `status` settles.
 
    **Always pass `--user-data-dir` pointed at a scratch directory.** Without
    it the app opens the developer's real `%APPDATA%/sonascribe` — real
-   recordings, real downloaded models, a real database. Fake-media flags give
-   silent/tone audio only, so they prove the pipeline doesn't crash on a
-   live two-track recording but can't validate diarization accuracy; use a
-   real audio fixture (e.g. the two-speaker WAV `smoke.mjs` already downloads)
-   imported via `recordings:import` for anything accuracy-related.
+   recordings, a real database. Fake-media flags give silent/tone audio
+   only, which is enough to prove the capture graph and mixing work (two
+   fake oscillators summed into one node is a good direct test — see the
+   smoke test's "two sources fed into one node" check) but not to judge
+   real-world audio quality.
 
    `window.api.invoke('logs:read')` returns the current log file as a string
    — often faster than re-reading `<userData>/logs/main.log` from disk when

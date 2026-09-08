@@ -1,14 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { ImportProgress, JobProgress, RecordingSummary } from '@shared/types'
+import type { ImportProgress, Recording } from '@shared/types'
 import { SUPPORTED_MEDIA_EXTENSIONS } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import RecordingCard from '../components/RecordingCard'
-
-const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
-  copying: 'Copying',
-  normalizing: 'Converting audio'
-}
 
 export default function Library(): React.JSX.Element {
   const navigate = useNavigate()
@@ -16,7 +11,6 @@ export default function Library(): React.JSX.Element {
   const { data: info } = useQuery('app:info')
 
   const [progress, setProgress] = useState<Record<string, ImportProgress>>({})
-  const [jobs, setJobs] = useState<Record<string, JobProgress>>({})
   const [dragging, setDragging] = useState(false)
   /** Which card holds playback: starting one stops whichever was going. */
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -29,38 +23,8 @@ export default function Library(): React.JSX.Element {
     setProgress((prev) => ({ ...prev, [payload.recordingId]: payload }))
   })
 
-  useEvent('job:progress', (payload) => {
-    setJobs((prev) => ({ ...prev, [payload.recordingId]: payload }))
-  })
-
-  // Jobs already running when the list opens. Without this the rows show no bar
-  // until each job's next progress event lands, which on a slow stage can be a
-  // long time to look like nothing is happening.
-  useEffect(() => {
-    let cancelled = false
-    void api.invoke('transcribe:active').then((active) => {
-      if (cancelled) return
-      setJobs((prev) => {
-        const next = { ...prev }
-        for (const job of active) {
-          // Never overwrite a live event with a snapshot fetched before it.
-          if (job.progress && !next[job.recordingId]) next[job.recordingId] = job.progress
-        }
-        return next
-      })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   useEvent('recording:updated', (updated) => {
     setProgress((prev) => {
-      const next = { ...prev }
-      delete next[updated.id]
-      return next
-    })
-    setJobs((prev) => {
       const next = { ...prev }
       delete next[updated.id]
       return next
@@ -96,7 +60,7 @@ export default function Library(): React.JSX.Element {
     void importPaths(paths.filter(Boolean))
   }
 
-  const recordings: RecordingSummary[] = data ?? []
+  const recordings: Recording[] = data ?? []
   const ffmpegMissing = info != null && !info.ffmpegAvailable
 
   return (
@@ -131,7 +95,6 @@ export default function Library(): React.JSX.Element {
         </div>
       </header>
 
-
       {ffmpegMissing && (
         <div className="banner banner--warn">
           The ffmpeg helper is missing, so importing is disabled. Run{' '}
@@ -150,10 +113,10 @@ export default function Library(): React.JSX.Element {
               <span key={i} style={{ height: `${height}px` }} />
             ))}
           </div>
-          <h2>Turn audio into text</h2>
+          <h2>Record and keep your audio</h2>
           <p>
-            Record straight from your microphone, or bring in a file you already have.
-            Supported: {SUPPORTED_MEDIA_EXTENSIONS.slice(0, 6).join(', ')} and more.
+            Record straight from your microphone and system audio, or bring in a file
+            you already have. Supported: {SUPPORTED_MEDIA_EXTENSIONS.slice(0, 6).join(', ')} and more.
           </p>
           <div className="empty__actions">
             <button className="btn btn--primary" onClick={pickFiles}>
@@ -166,31 +129,23 @@ export default function Library(): React.JSX.Element {
         </div>
       ) : (
         <div className="cards">
-          {recordings.map((r) => {
-            const job = progress[r.id] ?? jobs[r.id]
-            return (
-              <RecordingCard
-                key={r.id}
-                recording={r}
-                playingId={playingId}
-                onPlay={setPlayingId}
-                onOpen={(id) => navigate(`/recordings/${id}`)}
-                onRename={async (id, title) => {
-                  await api.invoke('recordings:rename', { id, title })
-                  refetch()
-                }}
-                onDelete={(id) => {
-                  void api.invoke('recordings:delete', { id }).then(refetch)
-                }}
-                onRetry={(id) => {
-                  void api.invoke('transcribe:start', { id }).catch(() => undefined)
-                }}
-                job={
-                  job ? { label: STAGE_LABEL[job.stage] ?? 'Working', fraction: job.fraction } : null
-                }
-              />
-            )
-          })}
+          {recordings.map((r) => (
+            <RecordingCard
+              key={r.id}
+              recording={r}
+              playingId={playingId}
+              onPlay={setPlayingId}
+              onOpen={(id) => navigate(`/recordings/${id}`)}
+              onRename={async (id, title) => {
+                await api.invoke('recordings:rename', { id, title })
+                refetch()
+              }}
+              onDelete={(id) => {
+                void api.invoke('recordings:delete', { id }).then(refetch)
+              }}
+              job={progress[r.id] ? { fraction: progress[r.id].fraction } : null}
+            />
+          ))}
         </div>
       )}
 
