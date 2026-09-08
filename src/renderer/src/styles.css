@@ -876,6 +876,22 @@ body {
   pointer-events: none;
 }
 
+/* ---------- live waveform (Record screen, while recording) ---------- */
+
+.live-waveform {
+  width: 100%;
+  max-width: 640px;
+  height: 90px;
+  margin-inline: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-hover);
+}
+
+.live-waveform canvas {
+  display: block;
+}
+
 .player {
   align-items: center;
 }
@@ -1430,6 +1446,15 @@ body {
   gap: 10px;
   width: 100%;
   max-width: 420px;
+}
+
+/* Occupies the same slot as .recorder__meters once recording starts —
+   see the comment in Record.tsx where these swap. */
+.recorder__live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
 }
 
 .meter {

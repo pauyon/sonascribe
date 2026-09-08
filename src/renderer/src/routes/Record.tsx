@@ -13,6 +13,7 @@ import {
 import { formatDuration } from '../lib/format'
 import Select from '../components/Select'
 import HelpTip from '../components/HelpTip'
+import LiveWaveform, { type LiveWaveformHandle } from '../components/LiveWaveform'
 
 /** Peak level meter for one source. */
 function Meter({
@@ -121,6 +122,14 @@ export default function Record(): React.JSX.Element {
   const pauseStartRef = useRef(0)
   /** Guards against two monitor starts overlapping when settings change quickly. */
   const openingRef = useRef(false)
+  /**
+   * Mirrors `paused` for the combined-block callback, which is created once
+   * inside `openMonitor`'s useCallback and does not reopen on every pause
+   * toggle — reading the `paused` state value there would see whatever it
+   * was when the graph opened, not the current value.
+   */
+  const pausedRef = useRef(false)
+  const liveWaveformRef = useRef<LiveWaveformHandle>(null)
 
   // Device labels are only populated once microphone permission has been
   // granted, so the list is refreshed after the stream opens too.
@@ -137,6 +146,7 @@ export default function Record(): React.JSX.Element {
   // the mini controls window updates this screen too (and vice versa).
   useEvent('recording:pauseChanged', (payload) => {
     setPaused(payload.paused)
+    pausedRef.current = payload.paused
   })
 
   // Stops sending audio blocks the instant the session is gone in main. This
@@ -157,6 +167,7 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    pausedRef.current = false
     setFinishing(false)
     if (summary.silent) {
       setError(
@@ -173,6 +184,7 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    pausedRef.current = false
     setFinishing(false)
     setElapsedMs(0)
   })
@@ -258,8 +270,12 @@ export default function Record(): React.JSX.Element {
           // data overwrite what was meant to be a snapshot of this one.
           if (kind === 'mic' && micTestActiveRef.current) micTestChunksRef.current.push(samples.slice())
         },
-        (samples) => {
+        (samples, peak) => {
           if (!acceptingRef.current) return
+          // Gated the same way the chunk itself is, plus paused: the strip
+          // should stop advancing exactly when "no audio is being written"
+          // is true, not keep tracing the monitored signal underneath it.
+          if (!pausedRef.current) liveWaveformRef.current?.push(peak)
           // A Uint8Array view keeps the structured clone to the exact bytes
           // rather than the whole backing buffer.
           void api.invoke('recording:chunk', {
@@ -409,6 +425,7 @@ export default function Record(): React.JSX.Element {
     setElapsedMs(0)
     setRecording(true)
     setPaused(false)
+    pausedRef.current = false
   }
 
   function togglePause(): void {
@@ -436,6 +453,7 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    pausedRef.current = false
     setFinishing(true)
 
     try {
@@ -455,6 +473,7 @@ export default function Record(): React.JSX.Element {
     acceptingRef.current = false
     setRecording(false)
     setPaused(false)
+    pausedRef.current = false
     setFinishing(true)
     setElapsedMs(0)
 
@@ -570,6 +589,19 @@ export default function Record(): React.JSX.Element {
     </div>
   )
 
+  // The bar meters swap for the live waveform once actually recording — see
+  // the comment where these are rendered. Their warning text survives the
+  // swap even though the bars themselves don't, so it's split out here
+  // rather than left buried inside the Meter elements above.
+  const micSilentWarning = silentTooLong.mic
+    ? monitoringSystem && everHeard.system
+      ? 'No sound from your mic, but the call has audio — check your input device'
+      : 'No sound detected from your mic — check your input device'
+    : null
+  const systemSilentWarning = silentTooLong.system
+    ? 'No sound detected from system audio — check that audio is playing'
+    : null
+
   return (
     <div className="page">
       <header className="page__header">
@@ -608,9 +640,22 @@ export default function Record(): React.JSX.Element {
           </p>
         </div>
 
-        {/* Never remounted: the levels being watched keep moving straight through
-            the transition, which is most of what makes it read as one screen. */}
-        {meters}
+        {/* The bar meters (useful before pressing record, to check levels) swap
+            for the live waveform of the real captured signal once recording
+            is actually running. The silent-mic warning text survives the
+            swap even though the bars don't: it's what caught a real
+            incident (a mic gone dead mid-call) that the combined waveform
+            alone wouldn't show — system audio can keep the trace looking
+            alive while the mic itself is silent. */}
+        {recording ? (
+          <div className="recorder__live">
+            {micSilentWarning && <div className="banner banner--warn">{micSilentWarning}</div>}
+            {systemSilentWarning && <div className="banner banner--warn">{systemSilentWarning}</div>}
+            <LiveWaveform ref={liveWaveformRef} />
+          </div>
+        ) : (
+          meters
+        )}
 
         <div className="recorder__controls">
           {recording ? (
