@@ -1,5 +1,6 @@
 import { PLAYBACK_RATES, type AudioController } from '../lib/useAudio'
 import { formatDuration } from '../lib/format'
+import type { PeakBuckets } from '../lib/cuts'
 import Waveform from './Waveform'
 
 /** Transport controls plus the waveform, driven by a shared AudioController. */
@@ -7,16 +8,41 @@ export default function PlayerBar({
   audio,
   peaks,
   durationMs,
-  floating = false
+  floating = false,
+  virtualDurationMs,
+  positionMs,
+  onSeek,
+  seams,
+  markers,
+  editable = false,
+  onSelectRange
 }: {
   audio: AudioController
-  peaks: number[] | null
+  peaks: PeakBuckets | null
   /** Duration from the database, used until the media element reports its own. */
   durationMs: number
   /** Pinned to the bottom of the window, in place of the normal in-flow card. */
   floating?: boolean
+  /**
+   * Overrides the displayed/waveform total, ignoring both `audio.durationMs`
+   * and `durationMs` — the recording-detail page passes the cuts-compressed
+   * duration here while trimming is in play. `audio.durationMs` always
+   * reflects the real underlying file (the `<audio>` element never knows
+   * about cuts), so it must not win over this when it's supplied.
+   */
+  virtualDurationMs?: number
+  /** Overrides `audio.currentMs` for display/waveform position — virtual (compressed) time instead of the real underlying playback position. */
+  positionMs?: number
+  /** Overrides `audio.seek` — converts a virtual seek target back to a real one before actually seeking. */
+  onSeek?: (ms: number) => void
+  seams?: number[]
+  markers?: Array<{ positionMs: number; color: string }>
+  editable?: boolean
+  onSelectRange?: (startMs: number, endMs: number) => void
 }): React.JSX.Element {
-  const total = audio.durationMs ?? durationMs
+  const total = virtualDurationMs ?? audio.durationMs ?? durationMs
+  const position = positionMs ?? audio.currentMs
+  const seek = onSeek ?? audio.seek
 
   return (
     <div className={floating ? 'player player--floating' : 'player'}>
@@ -28,14 +54,18 @@ export default function PlayerBar({
         {audio.playing ? '❚❚' : '▶'}
       </button>
 
-      <span className="player__time">{formatDuration(audio.currentMs)}</span>
+      <span className="player__time">{formatDuration(position)}</span>
 
-      {peaks && peaks.length > 0 ? (
+      {peaks && peaks.max.length > 0 ? (
         <Waveform
           peaks={peaks}
           durationMs={total}
-          positionMs={audio.currentMs}
-          onSeek={audio.seek}
+          positionMs={position}
+          onSeek={seek}
+          seams={seams}
+          markers={markers}
+          editable={editable}
+          onSelectRange={onSelectRange}
         />
       ) : (
         // Peaks arrive a moment after the page; a range input keeps the player
@@ -45,8 +75,8 @@ export default function PlayerBar({
           type="range"
           min={0}
           max={total}
-          value={audio.currentMs}
-          onChange={(e) => audio.seek(Number(e.target.value))}
+          value={position}
+          onChange={(e) => seek(Number(e.target.value))}
           disabled={total === 0}
           aria-label="Seek"
         />

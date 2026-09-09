@@ -22,6 +22,8 @@ export interface AudioController {
   error: string | null
   rate: PlaybackRate
   setRate: (rate: PlaybackRate) => void
+  play: () => void
+  pause: () => void
   toggle: () => void
   seek: (ms: number) => void
   /** Bind to the <audio> element to keep this hook's state in sync. */
@@ -65,17 +67,24 @@ export function useAudio(src: string | null): AudioController {
     setRateState(next)
   }, [])
 
+  const play = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    void el.play().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err))
+    })
+  }, [])
+
+  const pause = useCallback(() => {
+    ref.current?.pause()
+  }, [])
+
   const toggle = useCallback(() => {
     const el = ref.current
     if (!el) return
-    if (el.paused) {
-      void el.play().catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : String(err))
-      })
-    } else {
-      el.pause()
-    }
-  }, [])
+    if (el.paused) play()
+    else pause()
+  }, [play, pause])
 
   const seek = useCallback((ms: number) => {
     const el = ref.current
@@ -94,6 +103,8 @@ export function useAudio(src: string | null): AudioController {
     error,
     rate,
     setRate,
+    play,
+    pause,
     toggle,
     seek,
     bind: {

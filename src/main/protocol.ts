@@ -5,11 +5,9 @@ import { extname } from 'node:path'
 import { Readable } from 'node:stream'
 import { MEDIA_SCHEME } from '@shared/ipc'
 import { getRecording } from './db/recordings'
-import { getTrackPath } from './db/tracks'
-import { getScreenshotPath } from './db/screenshots'
 
 /**
- * Serves recording audio (and screenshots) to the renderer over
+ * Serves a recording's one audio file to the renderer over
  * `sonascribe-media://`.
  *
  * The renderer never receives a filesystem path, and this handler never accepts
@@ -17,14 +15,12 @@ import { getScreenshotPath } from './db/screenshots'
  * the real file. That removes path traversal as a category rather than trying to
  * sanitise it, and it means `webSecurity` stays on.
  *
- *   sonascribe-media://track/<trackId>            normalized 16 kHz mono WAV
- *   sonascribe-media://source/<recordingId>       original imported/recorded file
- *   sonascribe-media://screenshot/<screenshotId>  a snapped screenshot PNG
+ *   sonascribe-media://source/<recordingId>   the recording's one WAV
  *
- * Note: this scheme is reachable from <audio src>, <video src> and <img src>,
- * but NOT from fetch()/XHR — Chromium refuses cross-origin fetches to any
- * scheme outside http/https/data/chrome*, and the renderer's origin is file://
- * (or http://localhost in dev). No response header lifts that. Anything needing
+ * Note: this scheme is reachable from <audio src>, but NOT from fetch()/XHR —
+ * Chromium refuses cross-origin fetches to any scheme outside
+ * http/https/data/chrome*, and the renderer's origin is file:// (or
+ * http://localhost in dev). No response header lifts that. Anything needing
  * the actual samples in the renderer, such as waveform peaks, must come over
  * IPC, which is the better design regardless: a two-hour recording is ~230 MB
  * of PCM that has no business being decoded in the UI process.
@@ -50,14 +46,7 @@ const MIME_TYPES: Record<string, string> = {
   '.ogg': 'audio/ogg',
   '.opus': 'audio/ogg',
   '.aiff': 'audio/aiff',
-  '.wma': 'audio/x-ms-wma',
-  '.mp4': 'video/mp4',
-  '.m4v': 'video/mp4',
-  '.mov': 'video/quicktime',
-  '.mkv': 'video/x-matroska',
-  '.webm': 'video/webm',
-  '.avi': 'video/x-msvideo',
-  '.png': 'image/png'
+  '.wma': 'audio/x-ms-wma'
 }
 
 function contentType(filePath: string): string {
@@ -66,20 +55,11 @@ function contentType(filePath: string): string {
 
 /** Maps a sonascribe-media URL to a real file, or null if it names nothing. */
 function resolveMediaPath(url: URL): string | null {
-  // For sonascribe-media://track/<id>: hostname is "track", pathname is "/<id>".
+  // For sonascribe-media://source/<id>: hostname is "source", pathname is "/<id>".
   const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
   if (!id) return null
 
-  switch (url.hostname) {
-    case 'track':
-      return getTrackPath(id)
-    case 'source':
-      return getRecording(id)?.sourcePath ?? null
-    case 'screenshot':
-      return getScreenshotPath(id)
-    default:
-      return null
-  }
+  return url.hostname === 'source' ? (getRecording(id)?.sourcePath ?? null) : null
 }
 
 /**

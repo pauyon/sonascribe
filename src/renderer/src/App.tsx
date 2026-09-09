@@ -5,7 +5,8 @@ import { formatDuration } from './lib/format'
 import Library from './routes/Library'
 import Record from './routes/Record'
 import Editor from './routes/Editor'
-import Models from './routes/Models'
+import Trim from './routes/Trim'
+import Settings from './routes/Settings'
 import MiniRecorder from './routes/MiniRecorder'
 
 /**
@@ -186,11 +187,9 @@ export default function App(): React.JSX.Element {
           <Route path="/" element={<Navigate to="/library" replace />} />
           <Route path="/library" element={<Library />} />
           <Route path="/record" element={<Record />} />
-          <Route path="/settings" element={<Models />} />
-          {/* The page was called Models before it grew transcription and speaker
-              settings; an old hash should still land somewhere sensible. */}
-          <Route path="/models" element={<Navigate to="/settings" replace />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="/recordings/:id" element={<Editor />} />
+          <Route path="/recordings/:id/edit" element={<Trim />} />
           <Route path="*" element={<Navigate to="/library" replace />} />
         </Routes>
       </main>

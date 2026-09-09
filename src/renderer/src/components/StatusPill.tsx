@@ -2,12 +2,8 @@ import type { RecordingStatus } from '@shared/types'
 
 const LABELS: Record<RecordingStatus, string> = {
   new: 'New',
-  normalizing: 'Normalizing',
-  queued: 'Ready to transcribe',
-  transcribing: 'Transcribing',
-  diarizing: 'Identifying speakers',
-  merging: 'Merging',
-  ready: 'Transcribed',
+  normalizing: 'Preparing',
+  ready: 'Ready',
   failed: 'Failed'
 }
 

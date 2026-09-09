@@ -7,11 +7,7 @@ import { registerIpcHandlers } from './ipc'
 import { registerMediaProtocolHandler, registerMediaProtocolScheme } from './protocol'
 import { registerDisplayMediaHandler } from './display-media'
 import { migrateLegacyUserData } from './migrate-legacy-data'
-import { repairMediaPaths, resetInterruptedJobs } from './db/repair-paths'
-import { cancelAllJobs } from './services/jobs'
-import { stopEmbeddingServer } from './services/embeddings'
-import { stopAnswerServer } from './services/answering'
-import { sweepOrphanedChunks } from './services/audio-chunks'
+import { repairMediaPaths, resetInterruptedRecordings } from './db/repair-paths'
 import { sweepOrphanedMedia } from './services/media-cleanup'
 import { isRecording } from './services/recorder'
 import { getAutoPopOutOnMinimize } from './db/settings'
@@ -26,10 +22,8 @@ initLogging()
  * starting, a crash-recovery relaunch racing a still-running instance — must
  * not become a second process. SQLite's WAL mode tolerates concurrent
  * processes without corrupting the file, but nothing else here does: two
- * independent `active` download maps in models.ts could both write the same
- * model's .part file, two job queues could both pick up and re-transcribe the
- * same recording, and two recorder.ts sessions could both try to claim the
- * mic.
+ * recorder.ts sessions could both try to claim the mic, and two importer.ts
+ * queues could both normalize the same file.
  *
  * Everything below — scheme registration, `app.whenReady`, the window itself
  * — sits inside this guard rather than after a bare `app.quit()`: quitting is
@@ -78,9 +72,9 @@ if (!app.requestSingleInstanceLock()) {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
-        // Long transcriptions and recordings continue while the window is not in
-        // front; Chromium's background throttling would otherwise stall timers
-        // and pause media in a minimized window.
+        // A recording continues while the window is not in front; Chromium's
+        // background throttling would otherwise stall timers and pause media
+        // in a minimized window.
         backgroundThrottling: false
       }
     })
@@ -134,11 +128,10 @@ if (!app.requestSingleInstanceLock()) {
     // Media rows hold absolute paths; a moved user-data directory invalidates
     // them, so repoint anything that no longer resolves.
     repairMediaPaths()
-    resetInterruptedJobs()
+    resetInterruptedRecordings()
     // Reclaim audio stranded by earlier versions, or by a crash between deleting
     // a row and deleting its files.
     void sweepOrphanedMedia()
-    void sweepOrphanedChunks()
     registerMediaProtocolHandler()
     registerDisplayMediaHandler()
     registerIpcHandlers()
@@ -151,26 +144,6 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
-  })
-
-  /**
-   * Stop the sidecars before the app goes.
-   *
-   * Closing the window quits the app on Windows and Linux, and a transcription in
-   * flight has no say in it. The child processes doing that work are not the
-   * app's own, so nothing stops them: without this, quitting mid-job leaves
-   * parakeet-cli running with a window of audio in memory and no interface left
-   * to cancel it from.
-   *
-   * before-quit rather than will-quit, so the children are signalled while the
-   * app is still winding down rather than at the very end of it.
-   */
-  app.on('before-quit', () => {
-    cancelAllJobs()
-    // Same reasoning as cancelAllJobs above: this is a process of its own, and
-    // nothing else stops it from outliving the app if it's left running.
-    stopEmbeddingServer()
-    stopAnswerServer()
   })
 
   app.on('will-quit', () => {

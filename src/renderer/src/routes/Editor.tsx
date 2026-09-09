@@ -1,53 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { sourceMediaUrl, trackMediaUrl } from '@shared/ipc'
-import { findModel } from '@shared/models'
-import { EXPORT_FORMATS, type ExportFormat } from '@shared/export'
-import type { JobProgress as JobProgressPayload } from '@shared/types'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { sourceMediaUrl } from '@shared/ipc'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
+import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
+import { useMarkers } from '../lib/useMarkers'
+import { cutAt, realToVirtual } from '../lib/cuts'
 import { formatDuration } from '../lib/format'
 import StatusPill from '../components/StatusPill'
 import PlayerBar from '../components/PlayerBar'
-import Transcript from '../components/Transcript'
-import JobProgress from '../components/JobProgress'
-import SpeakerBar from '../components/SpeakerBar'
-import AskPanel from '../components/AskPanel'
-import Select from '../components/Select'
+import MarkerChips from '../components/MarkerChips'
 
-type PendingAction =
-  | { kind: 'line'; id: string; label: string }
-  | { kind: 'speaker'; id: string; label: string; lineIds: string[] }
-  | { kind: 'merge'; id: string; label: string; lineIds: string[]; intoId: string }
-
+/** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
 export default function Editor(): React.JSX.Element {
   const { id = '' } = useParams<{ id: string }>()
-  const { data, error, loading, refetch } = useQuery('recordings:get', { id })
-  const { data: settings } = useQuery('settings:get')
+  const navigate = useNavigate()
+  const { data: recording, error, loading, refetch } = useQuery('recordings:get', { id })
 
   const [draftTitle, setDraftTitle] = useState<string | null>(null)
-  const [job, setJob] = useState<JobProgressPayload | null>(null)
-  /**
-   * Whether a job is really running for this recording.
-   *
-   * Deliberately not derived from the 'queued' status: that is the resting
-   * state a recording sits in after import, waiting for the user to press
-   * Transcribe. Treating it as "busy" hides the Transcribe button behind a
-   * Cancel button and shows a progress bar for a job that was never started.
-   */
-  const [jobActive, setJobActive] = useState(false)
-  const [jobStartedAt, setJobStartedAt] = useState(0)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [exportedPath, setExportedPath] = useState<string | null>(null)
-  // Defaults on: if a recording has screenshots, the export is more useful
-  // with them than without, and copying a handful of PNGs alongside a text
-  // file is cheap next to that.
-  const [includeScreenshots, setIncludeScreenshots] = useState(true)
-  const [query, setQuery] = useState('')
-  const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
-  const [follow, setFollow] = useState(true)
-  const [peaks, setPeaks] = useState<number[] | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -61,38 +33,34 @@ export default function Editor(): React.JSX.Element {
   const [playerFloating, setPlayerFloating] = useState(false)
   const playerSentinelRef = useRef<HTMLDivElement>(null)
 
-  /**
-   * Lines (and speakers, with their lines) hidden immediately on delete,
-   * before the delete is actually committed. The real IPC call is deferred
-   * behind `deleteTimers` so a misclick — background noise turning out to be
-   * a word after all — has a few seconds to be undone before it is
-   * unrecoverable.
-   */
-  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
-  const [hiddenSpeakerIds, setHiddenSpeakerIds] = useState<Set<string>>(new Set())
-  /** Lines shown under a different speaker while a merge is pending undo. */
-  const [pendingReassign, setPendingReassign] = useState<Map<string, string>>(new Map())
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
-  // Deliberately never cleared on unmount: a delete the user didn't undo
-  // should still land even if they navigate away before the timer fires,
-  // rather than silently reverting.
-  const deleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-
-  const recording = data?.recording ?? null
-  const tracks = data?.tracks ?? []
-
-  // Prefer the original file: it is full quality, where the normalized track is
-  // 16 kHz mono and sounds noticeably worse. Fall back to the track when the
-  // original is gone.
-  const playbackSrc = recording
-    ? recording.sourcePath
-      ? sourceMediaUrl(recording.id)
-      : tracks[0]
-        ? trackMediaUrl(tracks[0].id)
-        : null
-    : null
-
+  const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
+  const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
+  const {
+    markers,
+    addMarkerAt,
+    rename: renameMarker,
+    recolor: recolorMarker,
+    remove: removeMarker,
+    clearAll: clearAllMarkers
+  } = useMarkers(recording, refetch)
+
+  const durationMs = recording?.durationMs ?? 0
+  const cuts = useMemo(() => recording?.cuts ?? [], [recording?.cuts])
+
+  // Pins on the waveform: only the ones a cut hasn't since swallowed, mapped
+  // into the same compressed/virtual space the waveform itself is drawn in.
+  const markerPins = useMemo(
+    () =>
+      markers
+        .filter((m) => !cutAt(m.timeMs, cuts))
+        .map((m) => ({ positionMs: realToVirtual(m.timeMs, durationMs, cuts), color: m.color })),
+    [markers, durationMs, cuts]
+  )
+  const annotatedMarkers = useMemo(
+    () => markers.map((m) => ({ ...m, jumpable: !cutAt(m.timeMs, cuts) })),
+    [markers, cuts]
+  )
 
   useEffect(() => {
     const sentinel = playerSentinelRef.current
@@ -111,75 +79,42 @@ export default function Editor(): React.JSX.Element {
 
   useEvent('recording:updated', (updated) => {
     if (updated.id !== id) return
-    // A terminal state ends the job; intermediate ones (transcribing,
-    // diarizing) are just stage changes and must not clear it.
-    if (updated.status === 'ready' || updated.status === 'failed' || updated.status === 'queued') {
-      setJob(null)
-      setJobActive(false)
-    }
     refetch()
   })
 
-  useEvent('job:progress', (payload) => {
-    if (payload.recordingId !== id) return
-    setJob(payload)
-    setJobActive(true)
-  })
-
-  // A job may already be running when this screen opens — after navigating away
-  // and back, or straight from the recorder.
-  //
-  // Its stage, percentage and start time come from the main process rather than
-  // being rebuilt from whatever event arrives next. Leaving the screen used to
-  // discard all of it, so returning showed an empty bar and an elapsed counter
-  // restarting from zero on a job that was twenty minutes old.
+  // Space to play/pause, matching the dedicated editor page. Ignored while a
+  // text field has focus (renaming the title, editing a marker label) so it
+  // types a literal space instead of hijacking playback.
   useEffect(() => {
-    let cancelled = false
-    api.invoke('transcribe:active').then((active) => {
-      if (cancelled) return
-      const mine = active.find((job) => job.recordingId === id)
-      if (!mine) return
-      setJobActive(true)
-      setJobStartedAt(mine.startedAt)
-      setJob(mine.progress)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [id])
+    if (!playbackSrc) return
 
-  // Peaks come from the main process; the renderer cannot read the audio itself,
-  // and main is also what decides which file the waveform should describe — the
-  // mixdown when a recording has one, so the drawn envelope matches what plays.
-  //
-  // Re-fetched when the track count or the status changes: audio appears partway
-  // through stopping a recording, and the mixdown lands after the tracks do, so
-  // the first answer for a recording still in flight can be the wrong file.
-  const trackCount = tracks.length
-  const status = recording?.status
+    function isTypingTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false
+      return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+    }
+
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key !== ' ' || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return
+      e.preventDefault()
+      audio.toggle()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [playbackSrc, audio])
+
   useEffect(() => {
-    if (!id || trackCount === 0) {
-      setPeaks(null)
-      return
+    if (!confirmingDelete) return
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setConfirmingDelete(false)
     }
-    let cancelled = false
-    api
-      .invoke('peaks:get', { recordingId: id })
-      .then((result) => {
-        if (!cancelled) setPeaks(result.values)
-      })
-      .catch(() => {
-        // A missing waveform is cosmetic — the range-input fallback still seeks.
-        if (!cancelled) setPeaks(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [id, trackCount, status])
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [confirmingDelete])
 
   if (loading) return <div className="page">Loading…</div>
   if (error) return <div className="page banner banner--error">{error}</div>
-  if (!data || !recording) {
+  if (!recording) {
     return (
       <div className="page">
         <div className="empty">
@@ -192,13 +127,6 @@ export default function Editor(): React.JSX.Element {
     )
   }
 
-  const { speakers, utterances, screenshots } = data
-  // A plain string, unlike `recording` itself: TS doesn't carry the `!recording`
-  // early-return's narrowing into the function declarations below (they're
-  // hoisted, so in principle callable before that guard runs), and this
-  // sidesteps needing every one of them to re-check it.
-  const recordingId = recording.id
-
   async function commitTitle(): Promise<void> {
     const next = draftTitle?.trim()
     setDraftTitle(null)
@@ -207,210 +135,17 @@ export default function Editor(): React.JSX.Element {
     refetch()
   }
 
-  async function run(fn: () => Promise<unknown>): Promise<void> {
+  function deleteRecording(): void {
+    if (!recording) return
     setActionError(null)
-    try {
-      await fn()
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    }
-    refetch()
-  }
-
-  const UNDO_WINDOW_MS = 6000
-
-  function deleteLine(utteranceId: string): void {
-    const target = utterances.find((u) => u.id === utteranceId)
-    if (!target) return
-
-    setHiddenIds((prev) => new Set(prev).add(utteranceId))
-    setPendingAction({ kind: 'line', id: utteranceId, label: 'Line deleted.' })
-
-    const timer = setTimeout(() => {
-      deleteTimers.current.delete(utteranceId)
-      setPendingAction((current) => (current?.id === utteranceId ? null : current))
-      api.invoke('utterances:delete', { id: utteranceId }).catch((err: unknown) => {
+    api
+      .invoke('recordings:delete', { id: recording.id })
+      .then(() => navigate('/library'))
+      .catch((err: unknown) => {
         setActionError(err instanceof Error ? err.message : String(err))
-        setHiddenIds((prev) => {
-          const next = new Set(prev)
-          next.delete(utteranceId)
-          return next
-        })
+        setConfirmingDelete(false)
       })
-    }, UNDO_WINDOW_MS)
-    deleteTimers.current.set(utteranceId, timer)
   }
-
-  /** Removes a speaker and every line attributed to them, undo included. */
-  function deleteSpeakerBulk(speakerId: string): void {
-    const target = speakers.find((s) => s.id === speakerId)
-    if (!target) return
-    const lineIds = utterances.filter((u) => u.speakerId === speakerId).map((u) => u.id)
-
-    setHiddenIds((prev) => {
-      const next = new Set(prev)
-      for (const id of lineIds) next.add(id)
-      return next
-    })
-    setHiddenSpeakerIds((prev) => new Set(prev).add(speakerId))
-    setPendingAction({
-      kind: 'speaker',
-      id: speakerId,
-      lineIds,
-      label: `${target.displayName} deleted (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
-    })
-
-    const timer = setTimeout(() => {
-      deleteTimers.current.delete(speakerId)
-      setPendingAction((current) => (current?.id === speakerId ? null : current))
-      api.invoke('speakers:delete', { id: speakerId }).catch((err: unknown) => {
-        setActionError(err instanceof Error ? err.message : String(err))
-        setHiddenSpeakerIds((prev) => {
-          const next = new Set(prev)
-          next.delete(speakerId)
-          return next
-        })
-        setHiddenIds((prev) => {
-          const next = new Set(prev)
-          for (const id of lineIds) next.delete(id)
-          return next
-        })
-      })
-    }, UNDO_WINDOW_MS)
-    deleteTimers.current.set(speakerId, timer)
-  }
-
-  /** Folds one speaker into another, undoable for the same window as a delete. */
-  function mergeSpeakersUndoable(fromId: string, intoId: string): void {
-    const fromSpeaker = speakers.find((s) => s.id === fromId)
-    const intoSpeaker = speakers.find((s) => s.id === intoId)
-    if (!fromSpeaker || !intoSpeaker) return
-    const lineIds = utterances.filter((u) => u.speakerId === fromId).map((u) => u.id)
-
-    // Optimistic: the source chip disappears and its lines show under the
-    // target immediately, the same as the real merge would leave them —
-    // reverting either half on undo is what makes the undo convincing.
-    setHiddenSpeakerIds((prev) => new Set(prev).add(fromId))
-    setPendingReassign((prev) => {
-      const next = new Map(prev)
-      for (const lineId of lineIds) next.set(lineId, intoId)
-      return next
-    })
-    setPendingAction({
-      kind: 'merge',
-      id: fromId,
-      intoId,
-      lineIds,
-      label: `${fromSpeaker.displayName} merged into ${intoSpeaker.displayName} (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
-    })
-
-    const timer = setTimeout(() => {
-      deleteTimers.current.delete(fromId)
-      setPendingAction((current) => (current?.id === fromId ? null : current))
-      api
-        .invoke('speakers:merge', { recordingId, fromId, intoId })
-        .then(() => refetch())
-        .catch((err: unknown) => {
-          setActionError(err instanceof Error ? err.message : String(err))
-          setHiddenSpeakerIds((prev) => {
-            const next = new Set(prev)
-            next.delete(fromId)
-            return next
-          })
-          setPendingReassign((prev) => {
-            const next = new Map(prev)
-            for (const lineId of lineIds) next.delete(lineId)
-            return next
-          })
-        })
-    }, UNDO_WINDOW_MS)
-    deleteTimers.current.set(fromId, timer)
-  }
-
-  function undoPendingAction(): void {
-    const pending = pendingAction
-    if (!pending) return
-    const timer = deleteTimers.current.get(pending.id)
-    if (timer) clearTimeout(timer)
-    deleteTimers.current.delete(pending.id)
-
-    if (pending.kind === 'line') {
-      setHiddenIds((prev) => {
-        const next = new Set(prev)
-        next.delete(pending.id)
-        return next
-      })
-    } else if (pending.kind === 'speaker') {
-      setHiddenSpeakerIds((prev) => {
-        const next = new Set(prev)
-        next.delete(pending.id)
-        return next
-      })
-      setHiddenIds((prev) => {
-        const next = new Set(prev)
-        for (const id of pending.lineIds) next.delete(id)
-        return next
-      })
-    } else {
-      setHiddenSpeakerIds((prev) => {
-        const next = new Set(prev)
-        next.delete(pending.id)
-        return next
-      })
-      setPendingReassign((prev) => {
-        const next = new Map(prev)
-        for (const lineId of pending.lineIds) next.delete(lineId)
-        return next
-      })
-    }
-    setPendingAction(null)
-  }
-
-  async function exportAs(format: ExportFormat): Promise<void> {
-    setActionError(null)
-    setNotice(null)
-    setExportedPath(null)
-    try {
-      const path = await api.invoke('transcript:export', { id, format, includeScreenshots })
-      if (path) {
-        setNotice(`Saved to ${path}`)
-        setExportedPath(path)
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const visibleSpeakers = speakers.filter((s) => !hiddenSpeakerIds.has(s.id))
-
-  // Guards against a filter left pointing at a speaker that a merge — or a
-  // pending delete — just removed. The chip it came from is gone, so the
-  // filter should clear rather than silently hide the whole transcript.
-  const activeFilter = visibleSpeakers.some((s) => s.id === speakerFilter) ? speakerFilter : null
-  // Memoized so playback's ~4Hz currentMs updates don't re-filter/re-map the
-  // whole utterance list on every tick — only hiddenIds/pendingReassign
-  // changing (a hide, a delete, a reassign) actually needs to redo this.
-  const visibleUtterances = useMemo(
-    () =>
-      utterances
-        .filter((u) => !hiddenIds.has(u.id))
-        .map((u) => {
-          const reassignedTo = pendingReassign.get(u.id)
-          return reassignedTo ? { ...u, speakerId: reassignedTo } : u
-        }),
-    [utterances, hiddenIds, pendingReassign]
-  )
-
-  const showHours = (recording.durationMs ?? 0) >= 3_600_000
-  // 'queued' is excluded on purpose — see jobActive above.
-  const busy =
-    jobActive ||
-    recording.status === 'transcribing' ||
-    recording.status === 'diarizing' ||
-    recording.status === 'merging'
-  const canTranscribe = tracks.length > 0 && settings?.modelId != null
-  const usedModel = recording.modelId ? findModel(recording.modelId) : undefined
-  const hasTranscript = utterances.length > 0
 
   return (
     <div className={playbackSrc ? 'page page--has-player' : 'page'}>
@@ -443,207 +178,126 @@ export default function Editor(): React.JSX.Element {
           <p className="page__subtitle">
             <StatusPill status={recording.status} />
             <span className="page__meta">{formatDuration(recording.durationMs)}</span>
-            {usedModel && <span className="page__meta">{usedModel.label}</span>}
-            {speakers.length > 0 && (
-              <span className="page__meta">
-                {speakers.length} speaker{speakers.length === 1 ? '' : 's'}
-              </span>
-            )}
           </p>
         </div>
 
         <div className="page__actions">
-          {hasTranscript && screenshots.length > 0 && (
-            <label className="toolbar__toggle" title="Copies the screenshots alongside the exported file and links them from it">
-              <input
-                type="checkbox"
-                checked={includeScreenshots}
-                onChange={(e) => setIncludeScreenshots(e.target.checked)}
-              />
-              Include screenshots
-            </label>
+          {recording.sourcePath && (
+            <>
+              <Link className="btn btn--primary" to={`/recordings/${recording.id}/edit`}>
+                Edit
+              </Link>
+              <button
+                className="btn"
+                onClick={() =>
+                  void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
+                }
+              >
+                Reveal in folder
+              </button>
+            </>
           )}
-          {hasTranscript && (
-            <Select
-              // Nothing stays chosen: picking a format performs the export
-              // rather than setting a preference, so the trigger keeps reading
-              // "Export…" and every pick fires.
-              value=""
-              placeholder="Export…"
-              align="end"
-              options={EXPORT_FORMATS.map((f) => ({ value: f.id, label: f.label }))}
-              onChange={(id) => void exportAs(id as ExportFormat)}
-              ariaLabel="Export transcript"
-            />
-          )}
-          {busy ? (
-            <button
-              className="btn btn--ghost"
-              onClick={() => {
-                setJobActive(false)
-                setJob(null)
-                void run(() => api.invoke('transcribe:cancel', { id: recording.id }))
-              }}
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              className="btn btn--primary"
-              disabled={!canTranscribe}
-              title={!canTranscribe ? 'Choose a model on the Settings page first' : undefined}
-              onClick={() => {
-                // Optimistic: the first progress event can take a moment on a
-                // large model, and the button must respond immediately.
-                setJobActive(true)
-                setJobStartedAt(Date.now())
-                setJob(null)
-                void run(() => api.invoke('transcribe:start', { id: recording.id })).catch(() =>
-                  setJobActive(false)
-                )
-              }}
-            >
-              {hasTranscript ? 'Transcribe again' : 'Transcribe'}
-            </button>
-          )}
+          <button className="btn btn--danger" onClick={() => setConfirmingDelete(true)}>
+            Delete recording
+          </button>
         </div>
       </header>
 
+      {confirmingDelete && (
+        <div className="modal-overlay" onClick={() => setConfirmingDelete(false)}>
+          <div
+            className="modal modal--confirm"
+            onClick={(e) => e.stopPropagation()}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirm-title"
+          >
+            <div className="modal__header">
+              <h2 id="delete-confirm-title">Delete recording?</h2>
+            </div>
+            <p>
+              This can&rsquo;t be undone — the audio file, and any cuts or markers on it, will
+              be permanently removed.
+            </p>
+            <div className="modal__footer">
+              <button
+                type="button"
+                className="btn btn--ghost"
+                autoFocus
+                onClick={() => setConfirmingDelete(false)}
+              >
+                Cancel
+              </button>
+              <button type="button" className="btn btn--danger" onClick={deleteRecording}>
+                Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {recording.error && <div className="banner banner--error">{recording.error}</div>}
       {actionError && <div className="banner banner--error">{actionError}</div>}
-      {notice && (
-        <div className="banner banner--ok">
-          <span>{notice}</span>
-          {exportedPath && (
-            <button
-              className="banner__action"
-              onClick={() => void api.invoke('shell:showItemInFolder', { path: exportedPath })}
-            >
-              Open folder
-            </button>
-          )}
-        </div>
-      )}
-      {!canTranscribe && tracks.length > 0 && (
-        <div className="banner banner--warn">
-          No transcription model selected. Pick one on the <Link to="/settings">Settings</Link>{' '}
-          page.
-        </div>
-      )}
 
       {playbackSrc && (
         <>
           <audio ref={audio.ref} src={playbackSrc} preload="metadata" {...audio.bind} />
           <div ref={playerSentinelRef}>
-            <PlayerBar audio={audio} peaks={peaks} durationMs={recording.durationMs ?? 0} />
+            <PlayerBar
+              audio={audio}
+              peaks={compressed}
+              durationMs={recording.durationMs ?? 0}
+              virtualDurationMs={virtualDur}
+              positionMs={virtualPosition}
+              onSeek={seekVirtual}
+              seams={compressed.seams}
+              markers={markerPins}
+            />
           </div>
           {playerFloating && (
             <PlayerBar
               audio={audio}
-              peaks={peaks}
+              peaks={compressed}
               durationMs={recording.durationMs ?? 0}
+              virtualDurationMs={virtualDur}
+              positionMs={virtualPosition}
+              onSeek={seekVirtual}
+              seams={compressed.seams}
+              markers={markerPins}
               floating
             />
           )}
+
+          <div className="page__actions page__actions--inline">
+            <button
+              type="button"
+              className="btn btn--ghost icon-btn"
+              onClick={() => addMarkerAt(audio.currentMs)}
+              aria-label={`Add marker at ${formatDuration(audio.currentMs)}`}
+              title={`Add marker at ${formatDuration(audio.currentMs)}`}
+            >
+              🚩
+            </button>
+          </div>
+
+          <MarkerChips
+            markers={annotatedMarkers}
+            onJump={(marker) => audio.seek(marker.timeMs)}
+            onRename={renameMarker}
+            onRecolor={recolorMarker}
+            onRemove={removeMarker}
+            onClearAll={clearAllMarkers}
+          />
         </>
       )}
 
-      {busy && <JobProgress job={job} startedAt={jobStartedAt || Date.now()} />}
-
-      {hasTranscript && (
-        <SpeakerBar
-          speakers={visibleSpeakers}
-          utterances={visibleUtterances}
-          filter={activeFilter}
-          onFilterChange={setSpeakerFilter}
-          onRename={async (speakerId, displayName) => {
-            await api.invoke('speakers:rename', { id: speakerId, displayName })
-            refetch()
-          }}
-          onMerge={mergeSpeakersUndoable}
-          onDelete={deleteSpeakerBulk}
-          onSetColor={(speakerId, color) =>
-            void run(() => api.invoke('speakers:setColor', { recordingId, id: speakerId, color }))
-          }
-        />
-      )}
-
-      {hasTranscript && (
-        <div className="search">
-          <input
-            className="input search-input"
-            type="search"
-            placeholder="Search this transcript…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      )}
-
-      {hasTranscript && <AskPanel recordingId={recordingId} onSeek={audio.seek} />}
-
-      {hasTranscript && (
-        <div className="toolbar">
-          <label className="toolbar__toggle">
-            <input
-              type="checkbox"
-              checked={follow}
-              onChange={(e) => setFollow(e.target.checked)}
-            />
-            Follow playback
-          </label>
-          {activeFilter ? (
-            <button className="btn btn--ghost" onClick={() => setSpeakerFilter(null)}>
-              Showing {speakers.find((s) => s.id === activeFilter)?.displayName} only ✕
-            </button>
-          ) : (
-            <span className="toolbar__hint">Double-click a line to edit</span>
-          )}
-        </div>
-      )}
-
-      {pendingAction && (
-        <div className="toast">
-          <span>{pendingAction.label}</span>
-          <button className="toast__action" onClick={undoPendingAction}>
-            Undo
-          </button>
-        </div>
-      )}
-
-      {hasTranscript ? (
-        <Transcript
-          utterances={visibleUtterances}
-          speakers={visibleSpeakers}
-          screenshots={screenshots}
-          currentMs={audio.currentMs}
-          showHours={showHours}
-          query={query}
-          speakerFilter={activeFilter}
-          follow={follow}
-          onSeek={audio.seek}
-          onEdit={async (utteranceId, text) => {
-            await api.invoke('utterances:update', { id: utteranceId, text })
-            refetch()
-          }}
-          onReassign={async (utteranceId, speakerId) => {
-            await api.invoke('speakers:reassign', { utteranceId, speakerId })
-            refetch()
-          }}
-          onDelete={deleteLine}
-          onDeleteScreenshot={(id) => {
-            void api.invoke('screenshots:delete', { id }).then(refetch)
-          }}
-        />
-      ) : (
+      {!playbackSrc && (
         <div className="empty">
-          <h2>No transcript yet</h2>
+          <h2>{recording.status === 'normalizing' ? 'Preparing…' : 'No audio'}</h2>
           <p>
-            {busy
-              ? 'Working — this runs entirely on your machine, so it takes a while.'
-              : recording.status === 'queued'
-                ? 'Audio is ready. Press Transcribe to start.'
-                : 'This recording has no transcript.'}
+            {recording.status === 'normalizing'
+              ? 'This recording is still being prepared.'
+              : 'This recording has no audio file.'}
           </p>
         </div>
       )}

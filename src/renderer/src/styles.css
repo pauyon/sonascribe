@@ -481,6 +481,7 @@ body {
   color: var(--danger);
 }
 
+
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -699,6 +700,104 @@ body {
   font-size: var(--fs-caption);
 }
 
+/* ---------- dedicated editor page (Trim.tsx) ---------- */
+
+.trim__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.trim__toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trim__toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+}
+
+.trim__toolbar-spacer {
+  flex: 1;
+}
+
+/* Shared by any page-level icon button — the trim toolbar's transport/tool
+   buttons, and the detail page's flag-icon marker button. */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.icon-btn--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.trim__zoom-level {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: center;
+}
+
+.trim__time {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Its own full-width panel now, not squeezed into a card beside transport
+   buttons — taller than the inline player's 56px for room to drag precisely
+   once zoomed in. */
+.trim__waveform .waveform {
+  height: 160px;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.minimap {
+  position: relative;
+  height: 40px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.minimap .waveform {
+  height: 40px;
+  cursor: pointer;
+}
+
+.minimap__viewport {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-inline: 1px solid var(--accent);
+  cursor: grab;
+}
+
+.minimap__viewport:active {
+  cursor: grabbing;
+}
+
 /* ---------- models ---------- */
 
 .models {
@@ -855,6 +954,10 @@ body {
   height: 56px;
   cursor: pointer;
   min-width: 0;
+  /* A distinct, pale "canvas" panel behind the bars, rather than blending
+     into the surrounding card. */
+  background: var(--bg-hover);
+  border-radius: var(--r-xs);
 }
 
 .waveform:focus-visible {
@@ -874,6 +977,212 @@ body {
   width: 1px;
   background: var(--text-muted);
   pointer-events: none;
+}
+
+.waveform--editable {
+  cursor: crosshair;
+}
+
+.waveform--navigate {
+  cursor: grab;
+}
+
+.waveform--navigate:active {
+  cursor: grabbing;
+}
+
+/* ---------- time ruler (TimeRuler.tsx) ---------- */
+
+.ruler {
+  position: relative;
+  height: 18px;
+  margin-bottom: 2px;
+}
+
+.ruler__tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.ruler__label {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.waveform__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
+  border-inline: 1px solid var(--danger);
+  pointer-events: none;
+}
+
+/* ---------- cut chips (recording-detail trim editor) ---------- */
+
+.cuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.cuts__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 6px 4px 10px;
+}
+
+.cuts__undo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cuts__undo:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+/* ---------- marker chips (jump-to points, both player pages) ---------- */
+
+.page__actions--inline {
+  margin: 4px 0 12px;
+}
+
+.markers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.markers__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 6px 4px 6px;
+}
+
+.markers__swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+}
+
+/* Native color inputs paint their own border/padding by default — strip it
+   down to just the swatch itself so it reads as a color dot, not a form field. */
+.markers__swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.markers__swatch::-webkit-color-swatch {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.markers__label,
+.markers__jump {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  padding: 0;
+}
+
+.markers__jump {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.markers__jump:hover,
+.markers__label:hover {
+  color: var(--accent);
+}
+
+.markers__label-input {
+  font-size: var(--fs-caption);
+  padding: 1px 4px;
+  width: 90px;
+}
+
+.markers__orphaned {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.markers__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.markers__remove:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+/* ---------- live waveform (Record screen, while recording) ---------- */
+
+.live-waveform {
+  width: 100%;
+  max-width: 640px;
+  height: 90px;
+  margin-inline: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-hover);
+}
+
+.live-waveform canvas {
+  display: block;
 }
 
 .player {
@@ -1430,6 +1739,15 @@ body {
   gap: 10px;
   width: 100%;
   max-width: 420px;
+}
+
+/* Occupies the same slot as .recorder__meters once recording starts —
+   see the comment in Record.tsx where these swap. */
+.recorder__live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
 }
 
 .meter {
@@ -3063,6 +3381,21 @@ label.toolbar__toggle {
 .modal__footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+/* A small yes/no dialog, distinct from the wide .modal (log viewer) — no
+   scrollable body, so it sizes to its text instead of taking most of the
+   window. */
+.modal--confirm {
+  width: min(420px, 90vw);
+  max-height: none;
+}
+
+.modal--confirm p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* ---------- transcript keyword filter ---------- */

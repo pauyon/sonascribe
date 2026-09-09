@@ -3,8 +3,8 @@ import { accessSync, constants } from 'node:fs'
 import { delimiter, join } from 'node:path'
 
 /**
- * Locates the bundled sidecar executables (ffmpeg now; whisper.cpp and
- * sherpa-onnx in later phases).
+ * Locates the bundled ffmpeg binary — the only sidecar this app still needs,
+ * for normalizing an imported file to WAV.
  *
  * Resolution order:
  *   1. packaged   <resources>/bin/<name>
@@ -14,28 +14,7 @@ import { delimiter, join } from 'node:path'
  *                 that works rather than to a hard failure
  */
 
-export type SidecarName =
-  | 'ffmpeg'
-  | 'whisper-cli'
-  // Ships inside the same whisper.cpp release archive as whisper-cli.
-  | 'parakeet-cli'
-  | 'sherpa-onnx-offline-speaker-diarization'
-  // A long-lived HTTP server, not a run-to-completion CLI like the others —
-  // see services/embeddings.ts for the lifecycle that implies.
-  | 'llama-server'
-
-/**
- * Models shipped with the app rather than downloaded.
- *
- * The diarization pair qualifies because together they are ~47 MB, and the
- * segmentation model is published only inside a .tar.bz2, so fetching it at
- * runtime would mean shipping an archive extractor for a single file. The
- * embedding model qualifies on size alone (~84 MB, a single direct download)
- * — it's the only offline path to semantic search over transcripts, so it
- * isn't optional the way a choice of Whisper model is. Whisper models stay a
- * runtime download because they reach 1.6 GB.
- */
-export type BundledModel = 'segmentation.onnx' | 'speaker-embedding.onnx' | 'embedding-model.gguf'
+export type SidecarName = 'ffmpeg'
 
 function exeName(name: SidecarName): string {
   return process.platform === 'win32' ? `${name}.exe` : name
@@ -51,16 +30,6 @@ function isExecutable(path: string): boolean {
   try {
     // X_OK is not meaningful on Windows; existence is the real check there.
     accessSync(path, process.platform === 'win32' ? constants.F_OK : constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Plain existence — model files are data and carry no execute bit. */
-function fileExists(path: string): boolean {
-  try {
-    accessSync(path, constants.F_OK)
     return true
   } catch {
     return false
@@ -119,38 +88,6 @@ export function resolveSidecar(name: SidecarName): string {
 export function hasSidecar(name: SidecarName): boolean {
   try {
     resolveSidecar(name)
-    return true
-  } catch {
-    return false
-  }
-}
-
-export class BundledModelMissingError extends Error {
-  constructor(name: BundledModel) {
-    super(`Bundled model "${name}" was not found. Run "npm run sidecars" to download it.`)
-    this.name = 'BundledModelMissingError'
-  }
-}
-
-/**
- * Path to a model shipped inside the app bundle.
- *
- * Unlike the binaries these are platform-independent, so they live in one
- * `resources/models` directory rather than one per OS.
- */
-export function resolveBundledModel(name: BundledModel): string {
-  const candidate = app.isPackaged
-    ? join(process.resourcesPath, 'models', name)
-    : // __dirname is out/main in dev, so the repo root is two levels up.
-      join(__dirname, '..', '..', 'resources', 'models', name)
-
-  if (!fileExists(candidate)) throw new BundledModelMissingError(name)
-  return candidate
-}
-
-export function hasBundledModel(name: BundledModel): boolean {
-  try {
-    resolveBundledModel(name)
     return true
   } catch {
     return false

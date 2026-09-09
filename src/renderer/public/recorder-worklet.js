@@ -2,16 +2,18 @@
  * Captures raw PCM from an audio graph.
  *
  * Used instead of MediaRecorder so the audio never goes through a WebM/Opus
- * encode-decode round trip on its way to disk. The AudioContext is created at
- * 16 kHz, so the browser resamples for us and what arrives here is already the
- * exact format whisper.cpp wants.
+ * encode-decode round trip on its way to disk. The AudioContext runs at the
+ * hardware's own sample rate (see lib/capture.ts), and this processor is
+ * agnostic to how many sources feed it — connecting more than one source to
+ * the same node input sums them, which is how mic and system audio get mixed
+ * into one recording with no DSP code of its own.
  *
  * Served from public/ rather than a blob: URL because the renderer's CSP is
  * script-src 'self', and worklet modules are subject to it.
  */
 
-// ~256 ms at 16 kHz. Small enough that the level meter stays responsive, large
-// enough that IPC is not woken 125 times a second.
+// ~85 ms at 48 kHz. Small enough that the level meter stays responsive, large
+// enough that IPC is not woken hundreds of times a second.
 const BLOCK_SIZE = 4096
 
 class RecorderProcessor extends AudioWorkletProcessor {

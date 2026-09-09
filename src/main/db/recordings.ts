@@ -1,22 +1,15 @@
 import { randomUUID } from 'node:crypto'
-import type {
-  CreateRecordingInput,
-  Recording,
-  RecordingSummary,
-  Screenshot,
-  Speaker,
-  Track,
-  TranscriptBundle,
-  TranscriptWordSpan,
-  Utterance
-} from '@shared/types'
+import type { CreateRecordingInput, Cut, Marker, Recording } from '@shared/types'
 import { getDb } from './index'
 
 /**
- * Repository for recordings and their transcript rows.
- *
- * All SQL in the app lives in the db/ directory. Callers deal in domain types
- * from @shared/types; the snake_case-to-camelCase mapping stays here.
+ * Repository for the `recordings` table — the only table this app's own code
+ * writes to. (Older tables from before the rewrite to a single-track,
+ * no-transcription recorder — `tracks`, `speakers`, `utterances`, `words`,
+ * `voice_profiles`, `chunk_embeddings`, `screenshots` — are left in the
+ * schema untouched rather than dropped: nothing here references them, and an
+ * existing recording's `source_path` already points at a playable file
+ * without needing any of them.)
  */
 
 interface RecordingRow {
@@ -28,8 +21,18 @@ interface RecordingRow {
   source_path: string | null
   status: string
   error: string | null
-  model_id: string | null
-  language: string | null
+  cuts: string | null
+  markers: string | null
+}
+
+function parseJsonArray<T>(json: string | null): T[] {
+  if (!json) return []
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return Array.isArray(parsed) ? (parsed as T[]) : []
+  } catch {
+    return []
+  }
 }
 
 function toRecording(row: RecordingRow): Recording {
@@ -42,39 +45,17 @@ function toRecording(row: RecordingRow): Recording {
     sourcePath: row.source_path,
     status: row.status as Recording['status'],
     error: row.error,
-    modelId: row.model_id,
-    language: row.language
+    cuts: parseJsonArray<Cut>(row.cuts),
+    markers: parseJsonArray<Marker>(row.markers)
   }
 }
 
-/**
- * Recordings for the library, each with the opening of its transcript.
- *
- * Built in SQL rather than by loading every transcript and discarding most of
- * it: a two-hour recording is thousands of utterance rows and the card shows a
- * few hundred characters. The limit applies before the concatenation, so the
- * cost does not grow with the length of the recording.
- */
-export function listRecordings(): RecordingSummary[] {
+export function listRecordings(): Recording[] {
   const rows = getDb()
-    .prepare(
-      `SELECT r.*,
-              (SELECT group_concat(text, ' ')
-                 FROM (SELECT text FROM utterances
-                        WHERE recording_id = r.id
-                        ORDER BY start_ms
-                        LIMIT 6)) AS preview
-         FROM recordings r
-        ORDER BY r.created_at DESC`
-    )
-    .all() as unknown as Array<RecordingRow & { preview: string | null }>
-
-  return rows.map((row) => ({
-    ...toRecording(row),
-    preview: row.preview ? row.preview.slice(0, 400) : null
-  }))
+    .prepare('SELECT * FROM recordings ORDER BY created_at DESC')
+    .all() as unknown as RecordingRow[]
+  return rows.map(toRecording)
 }
-
 
 export function getRecording(id: string): Recording | null {
   const row = getDb()
@@ -93,8 +74,8 @@ export function createRecording(input: CreateRecordingInput): Recording {
     sourcePath: input.sourcePath ?? null,
     status: 'new',
     error: null,
-    modelId: null,
-    language: null
+    cuts: [],
+    markers: []
   }
 
   getDb()
@@ -124,130 +105,82 @@ export function renameRecording(id: string, title: string): Recording {
 }
 
 export function deleteRecording(id: string): void {
-  // Child rows go via ON DELETE CASCADE; media files are cleaned up by the
-  // caller, which owns the filesystem side.
+  // Media files are cleaned up by the caller, which owns the filesystem side.
   getDb().prepare('DELETE FROM recordings WHERE id = ?').run(id)
 }
 
-export function getTranscriptBundle(id: string): TranscriptBundle | null {
-  const recording = getRecording(id)
-  if (!recording) return null
+export function setRecordingSourcePath(id: string, sourcePath: string): void {
+  getDb().prepare('UPDATE recordings SET source_path = ? WHERE id = ?').run(sourcePath, id)
+}
 
-  const db = getDb()
+export function setRecordingDuration(id: string, durationMs: number): void {
+  getDb().prepare('UPDATE recordings SET duration_ms = ? WHERE id = ?').run(durationMs, id)
+}
 
-  const trackRows = db
-    .prepare('SELECT * FROM tracks WHERE recording_id = ?')
-    .all(id) as unknown as Array<{
-    id: string
-    recording_id: string
-    kind: string
-    wav_path: string
-    duration_ms: number | null
-  }>
+export function setRecordingStatus(
+  id: string,
+  status: Recording['status'],
+  error: string | null = null
+): void {
+  getDb().prepare('UPDATE recordings SET status = ?, error = ? WHERE id = ?').run(status, error, id)
+}
 
-  const speakerRows = db
-    .prepare('SELECT * FROM speakers WHERE recording_id = ? ORDER BY cluster_id')
-    .all(id) as unknown as Array<{
-    id: string
-    recording_id: string
-    cluster_id: number
-    display_name: string
-    color: string
-    profile_id: string | null
-  }>
+/**
+ * Clamps every region to the recording's actual length, drops anything left
+ * with zero or negative length, sorts by start, and merges overlapping or
+ * touching regions into one — so every reader (the renderer's compression
+ * math, a future export) can assume a clean, sorted, non-overlapping list
+ * without re-validating it themselves.
+ */
+function normalizeCuts(cuts: Cut[], durationMs: number): Cut[] {
+  const clamped = cuts
+    .map((cut) => ({
+      startMs: Math.max(0, Math.min(cut.startMs, durationMs)),
+      endMs: Math.max(0, Math.min(cut.endMs, durationMs))
+    }))
+    .filter((cut) => cut.endMs > cut.startMs)
+    .sort((a, b) => a.startMs - b.startMs)
 
-  const screenshotRows = db
-    .prepare('SELECT * FROM screenshots WHERE recording_id = ? ORDER BY timestamp_ms')
-    .all(id) as unknown as Array<{
-    id: string
-    recording_id: string
-    timestamp_ms: number
-    display_label: string
-  }>
-
-  const utteranceRows = db
-    .prepare('SELECT * FROM utterances WHERE recording_id = ? ORDER BY start_ms')
-    .all(id) as unknown as Array<{
-    id: string
-    recording_id: string
-    speaker_id: string | null
-    start_ms: number
-    end_ms: number
-    text: string
-    edited: number
-    confidence: number | null
-  }>
-
-  const tracks: Track[] = trackRows.map((r) => ({
-    id: r.id,
-    recordingId: r.recording_id,
-    kind: r.kind as Track['kind'],
-    wavPath: r.wav_path,
-    durationMs: r.duration_ms
-  }))
-
-  const speakers: Speaker[] = speakerRows.map((r) => ({
-    id: r.id,
-    recordingId: r.recording_id,
-    clusterId: r.cluster_id,
-    displayName: r.display_name,
-    color: r.color,
-    profileId: r.profile_id
-  }))
-
-  const screenshots: Screenshot[] = screenshotRows.map((r) => ({
-    id: r.id,
-    recordingId: r.recording_id,
-    timestampMs: r.timestamp_ms,
-    displayLabel: r.display_label
-  }))
-
-  /*
-   * Word timings, fetched in one query and grouped in memory.
-   *
-   * They were written at transcription time and then never read: the editor
-   * could only follow along a line at a time, because a line was all it had.
-   * One query for the whole recording rather than one per utterance — a long
-   * transcript is thousands of rows either way, and thousands of statements is
-   * the slow way to fetch them.
-   */
-  const wordRows = db
-    .prepare(
-      `SELECT w.utterance_id, w.start_ms, w.end_ms, w.text
-         FROM words w
-         JOIN utterances u ON u.id = w.utterance_id
-        WHERE u.recording_id = ?
-        ORDER BY w.start_ms`
-    )
-    .all(id) as unknown as Array<{
-    utterance_id: string
-    start_ms: number
-    end_ms: number
-    text: string
-  }>
-
-  const wordsByUtterance = new Map<string, TranscriptWordSpan[]>()
-  for (const row of wordRows) {
-    const list = wordsByUtterance.get(row.utterance_id)
-    const word = { startMs: row.start_ms, endMs: row.end_ms, text: row.text }
-    if (list) list.push(word)
-    else wordsByUtterance.set(row.utterance_id, [word])
+  const merged: Cut[] = []
+  for (const cut of clamped) {
+    const last = merged[merged.length - 1]
+    if (last && cut.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, cut.endMs)
+    } else {
+      merged.push({ ...cut })
+    }
   }
+  return merged
+}
 
-  const utterances: Utterance[] = utteranceRows.map((r) => ({
-    id: r.id,
-    recordingId: r.recording_id,
-    speakerId: r.speaker_id,
-    startMs: r.start_ms,
-    endMs: r.end_ms,
-    text: r.text,
-    edited: r.edited === 1,
-    confidence: r.confidence,
-    // Absent for a line a human has retyped: the words it was built from no
-    // longer describe the text on screen.
-    words: r.edited === 1 ? [] : (wordsByUtterance.get(r.id) ?? [])
-  }))
+/** Replaces a recording's whole cut list — see `normalizeCuts` for what it enforces. */
+export function setRecordingCuts(id: string, cuts: Cut[], durationMs: number): Recording {
+  const normalized = normalizeCuts(cuts, durationMs)
+  getDb()
+    .prepare('UPDATE recordings SET cuts = ? WHERE id = ?')
+    .run(normalized.length > 0 ? JSON.stringify(normalized) : null, id)
+  const updated = getRecording(id)
+  if (!updated) throw new Error(`Recording ${id} not found`)
+  return updated
+}
 
+/**
+ * Clamps every marker's time to the recording's actual length and sorts by
+ * it. Unlike cuts there's nothing to merge — markers are points, not ranges.
+ */
+function normalizeMarkers(markers: Marker[], durationMs: number): Marker[] {
+  return markers
+    .map((marker) => ({ ...marker, timeMs: Math.max(0, Math.min(marker.timeMs, durationMs)) }))
+    .sort((a, b) => a.timeMs - b.timeMs)
+}
 
-  return { recording, tracks, speakers, utterances, screenshots }
+/** Replaces a recording's whole marker list — see `normalizeMarkers` for what it enforces. */
+export function setRecordingMarkers(id: string, markers: Marker[], durationMs: number): Recording {
+  const normalized = normalizeMarkers(markers, durationMs)
+  getDb()
+    .prepare('UPDATE recordings SET markers = ? WHERE id = ?')
+    .run(normalized.length > 0 ? JSON.stringify(normalized) : null, id)
+  const updated = getRecording(id)
+  if (!updated) throw new Error(`Recording ${id} not found`)
+  return updated
 }
