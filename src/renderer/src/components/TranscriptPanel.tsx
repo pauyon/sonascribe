@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Speaker, TranscriptWord, Utterance } from '@shared/types'
+import type { Marker, Speaker, TranscriptWord, Utterance } from '@shared/types'
 import { formatDuration } from '../lib/format'
 import Select from './Select'
 import Icon from './Icon'
+
+/** The first marker landing in `[startMs, endMs)`, if any — used to flag a timestamp that has one nearby. */
+function markerIn(markers: Marker[], startMs: number, endMs: number): Marker | undefined {
+  return markers.find((m) => m.timeMs >= startMs && m.timeMs < endMs)
+}
 
 /**
  * Roughly how many characters a paragraph is allowed to reach before the
@@ -53,7 +58,10 @@ function paragraphize(words: TranscriptWord[]): TranscriptWord[][] {
  * picker over every known speaker, not just a link to the chips above. A
  * wrong word an edit-button turns into a plain textarea for the whole
  * line — editing loses that line's word-level timing/highlighting, since a
- * hand-typed correction has no ASR timings of its own to offer.
+ * hand-typed correction has no ASR timings of its own to offer. A timestamp
+ * with a marker nearby carries a small flag in that marker's own color, so a
+ * marked moment stays findable while scrolling or reading instead of living
+ * only in the chip row above.
  */
 export default function TranscriptPanel({
   utterances,
@@ -62,7 +70,8 @@ export default function TranscriptPanel({
   mode,
   speakers,
   onReassignSpeaker,
-  onEditText
+  onEditText,
+  markers
 }: {
   utterances: Utterance[]
   currentMs: number
@@ -71,6 +80,7 @@ export default function TranscriptPanel({
   speakers: Speaker[]
   onReassignSpeaker: (utteranceId: string, speakerId: string) => void
   onEditText: (utteranceId: string, text: string) => void
+  markers: Marker[]
 }): React.JSX.Element {
   const activeRef = useRef<HTMLDivElement>(null)
   const hasSpeakers = useMemo(() => utterances.some((u) => u.speaker != null), [utterances])
@@ -148,6 +158,10 @@ export default function TranscriptPanel({
                 onClick={() => onSeek(u.startMs)}
                 title="Jump to this moment"
               >
+                {(() => {
+                  const marker = markerIn(markers, u.startMs, u.endMs)
+                  return marker && <Icon name="flag" className="utterance__time-flag" style={{ color: marker.color }} />
+                })()}
                 {formatDuration(u.startMs)}
               </button>
               {editingId !== u.id && (
@@ -185,16 +199,24 @@ export default function TranscriptPanel({
             ) : paragraphs ? (
               paragraphs.map((paragraph, pi) => (
                 <p key={pi} className="utterance__text">
-                  {pi > 0 && (
-                    <button
-                      type="button"
-                      className="utterance__time utterance__time--inline"
-                      onClick={() => onSeek(paragraph[0].startMs)}
-                      title="Jump to this moment"
-                    >
-                      {formatDuration(paragraph[0].startMs)}
-                    </button>
-                  )}
+                  {pi > 0 &&
+                    (() => {
+                      const paragraphEndMs = paragraphs[pi + 1]?.[0]?.startMs ?? u.endMs
+                      const marker = markerIn(markers, paragraph[0].startMs, paragraphEndMs)
+                      return (
+                        <button
+                          type="button"
+                          className="utterance__time utterance__time--inline"
+                          onClick={() => onSeek(paragraph[0].startMs)}
+                          title="Jump to this moment"
+                        >
+                          {marker && (
+                            <Icon name="flag" className="utterance__time-flag" style={{ color: marker.color }} />
+                          )}
+                          {formatDuration(paragraph[0].startMs)}
+                        </button>
+                      )
+                    })()}
                   {paragraph.map((word, i) => {
                     const spoken = currentMs >= word.startMs
                     const now = spoken && currentMs < word.endMs

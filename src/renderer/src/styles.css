@@ -697,6 +697,51 @@ body {
   color: var(--accent);
 }
 
+.player__marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.player__marker svg {
+  width: 14px;
+  height: 14px;
+}
+
+.player__marker:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.player__marker-color {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+}
+
+.player__marker-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.player__marker-color::-webkit-color-swatch {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
 .player__error {
   color: var(--danger);
   font-size: var(--fs-caption);
@@ -1369,6 +1414,17 @@ body {
   vertical-align: baseline;
 }
 
+/* Stays inline with the timestamp's own text flow — the button around it
+   (especially the --inline variant) runs mid-paragraph, so this can't
+   become a flex box without breaking that wrap. */
+.utterance__time-flag {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+
 /* Marks a screenshot taken around this timestamp; opens it full-size on
    click. Sits right after the timestamp it belongs to, whether that's the
    line's own header or one of its inline paragraph timestamps. */
@@ -1511,7 +1567,7 @@ body {
 }
 
 .chip--merging {
-  box-shadow: 0 0 0 2px rgba(108, 140, 255, 0.35);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /* Narrowed to one speaker: the ring uses that speaker's own hue rather than
@@ -1574,6 +1630,9 @@ body {
 }
 
 .chip__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-hover);
   border: none;
   border-radius: 50%;
@@ -1582,15 +1641,28 @@ body {
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
-  font-size: var(--fs-caption);
+}
+
+.chip__action svg {
+  width: 12px;
+  height: 12px;
 }
 
 .chip__action:hover {
   color: var(--text);
 }
 
-.chip__action--target {
+/* Two classes, not one: a later same-specificity .chip__action rule
+   (further down, tinting the action button from the chip's own --speaker
+   hue) would otherwise win this fight by source order alone and the target
+   arrow would fade into each chip's own color instead of standing out. */
+.chip__action.chip__action--target {
   background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.chip__action.chip__action--target:hover {
+  background: var(--accent-hover);
   color: var(--accent-fg);
 }
 
@@ -1649,6 +1721,23 @@ body {
   margin: 10px 0 0;
   font-size: var(--fs-caption);
   color: var(--text-muted);
+}
+
+.speakers__hint-icon {
+  width: 11px;
+  height: 11px;
+  vertical-align: -1px;
+}
+
+.speakers__hint-cancel {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 /* The confirm step before a merge or a speaker delete commits — both move or
@@ -2519,8 +2608,12 @@ body {
   background: color-mix(in srgb, var(--speaker, var(--accent)) 20%, var(--surface));
 }
 
+/* Deliberately not var(--speaker) here, unlike the rest of this component —
+   a ring in the chip's own hue would all but disappear against its own
+   tinted fill. The flat accent stays visible as a distinct "merge in
+   progress" signal regardless of which speaker started it. */
 .chip--merging {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--speaker, var(--accent)) 40%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 /* The count and the menu sit quieter than the name, but still inside the chip's

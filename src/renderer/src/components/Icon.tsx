@@ -74,6 +74,12 @@ const STROKE = {
     </>
   ),
   chevronRight: <path d="M9 5l7 7-7 7" />,
+  arrowLeft: (
+    <>
+      <path d="M11 5 4 12l7 7" />
+      <path d="M4 12h16" />
+    </>
+  ),
   flag: (
     <>
       <path d="M5 3v18" />
@@ -107,11 +113,20 @@ const FILLED = {
 
 export type IconName = keyof typeof STROKE | keyof typeof FILLED
 
-export default function Icon({ name, className }: { name: IconName; className?: string }): React.JSX.Element {
+export default function Icon({
+  name,
+  className,
+  style
+}: {
+  name: IconName
+  className?: string
+  /** For a one-off tint (e.g. a marker's own color) — most icons should just inherit currentColor from their button instead. */
+  style?: React.CSSProperties
+}): React.JSX.Element {
   const filled = (FILLED as Record<string, React.ReactNode>)[name]
   if (filled) {
     return (
-      <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <svg className={className} style={style} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         {filled}
       </svg>
     )
@@ -119,6 +134,7 @@ export default function Icon({ name, className }: { name: IconName; className?: 
   return (
     <svg
       className={className}
+      style={style}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

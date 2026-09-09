@@ -5,7 +5,7 @@ import { EXPORT_FORMATS } from '@shared/export'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
 import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
-import { useMarkers } from '../lib/useMarkers'
+import { DEFAULT_MARKER_COLOR, useMarkers } from '../lib/useMarkers'
 import { useTranscript } from '../lib/useTranscript'
 import { useSpeakers } from '../lib/useSpeakers'
 import { copyPlainText, copyWithSpeakers, copyWithTimestamps } from '../lib/transcriptCopy'
@@ -29,6 +29,8 @@ export default function Editor(): React.JSX.Element {
   const [actionError, setActionError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [transcriptMode, setTranscriptMode] = useState<'speakers' | 'timestamps'>('speakers')
+  /** The color the next marker will use — sticky across adds until the user picks a different one, so a run of moments can be tagged the same color in one pass. */
+  const [markerColor, setMarkerColor] = useState(DEFAULT_MARKER_COLOR)
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -422,6 +424,9 @@ export default function Editor(): React.JSX.Element {
               onSeek={seekVirtual}
               seams={compressed.seams}
               markers={markerPins}
+              onAddMarker={() => addMarkerAt(audio.currentMs, markerColor)}
+              markerColor={markerColor}
+              onMarkerColorChange={setMarkerColor}
             />
           </div>
           {playerFloating && (
@@ -434,21 +439,12 @@ export default function Editor(): React.JSX.Element {
               onSeek={seekVirtual}
               seams={compressed.seams}
               markers={markerPins}
+              onAddMarker={() => addMarkerAt(audio.currentMs, markerColor)}
+              markerColor={markerColor}
+              onMarkerColorChange={setMarkerColor}
               floating
             />
           )}
-
-          <div className="page__actions page__actions--inline">
-            <button
-              type="button"
-              className="btn btn--ghost icon-btn"
-              onClick={() => addMarkerAt(audio.currentMs)}
-              aria-label={`Add marker at ${formatDuration(audio.currentMs)}`}
-              title={`Add marker at ${formatDuration(audio.currentMs)}`}
-            >
-              <Icon name="flag" />
-            </button>
-          </div>
 
           <MarkerChips
             markers={annotatedMarkers}
@@ -462,6 +458,7 @@ export default function Editor(): React.JSX.Element {
           {transcriptMode === 'speakers' && (
             <SpeakerChips
               speakers={speakers.speakers}
+              utterances={transcript.utterances ?? []}
               onRename={speakers.rename}
               onRecolor={speakers.recolor}
               onMerge={speakers.merge}
@@ -478,6 +475,7 @@ export default function Editor(): React.JSX.Element {
               speakers={speakers.speakers}
               onReassignSpeaker={speakers.reassignUtterance}
               onEditText={transcript.editText}
+              markers={markers}
             />
           )}
         </>
