@@ -5,6 +5,7 @@ import type { Channel, Request, Response, RecordingSettings, TranscriptionSettin
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
 import { ENGINES, DEFAULT_ENGINE, defaultModelForEngine } from '@shared/models'
 import { EXPORT_FORMATS } from '@shared/export'
+import { DEFAULT_OLLAMA_SERVER_URL, type RagSettings } from '@shared/ollama'
 import { engineSidecar } from '../services/transcription'
 import { defaultMediaPath, userDataPath } from '../paths'
 import { logFilePath } from '../log'
@@ -24,7 +25,13 @@ import {
   setModelIdForEngine,
   setNoiseSuppression,
   setTranscriptionEngine,
-  setTranscriptionLanguage
+  setTranscriptionLanguage,
+  getRagEmbeddingModel,
+  getRagChatModel,
+  getRagServerUrl,
+  setRagEmbeddingModel,
+  setRagChatModel,
+  setRagServerUrl
 } from '../db/settings'
 import { DEFAULT_BUCKETS, getPeaks } from '../services/peaks'
 import {
@@ -69,6 +76,9 @@ import {
 } from '../services/speaker-jobs'
 import { renderTranscript } from '../services/transcript-export'
 import { openMiniRecorderWindow } from '../windows/mini-recorder'
+import * as ollama from '../services/ollama'
+import { getRagIndexStatus, reindexAllRecordings, triggerReindex } from '../services/search'
+import { answerQuestion } from '../services/answering'
 import { emit } from './events'
 
 /**
@@ -279,11 +289,11 @@ const handlers: Handlers = {
   'transcript:get': ({ recordingId }) => getUtterances(recordingId),
 
   'transcript:editUtterance': ({ utteranceId, text }) => {
-    updateUtteranceText(utteranceId, text)
+    triggerReindex(updateUtteranceText(utteranceId, text))
   },
 
   'transcript:splitUtterance': ({ utteranceId, wordIndex }) => {
-    splitUtterance(utteranceId, wordIndex)
+    triggerReindex(splitUtterance(utteranceId, wordIndex))
   },
 
   'transcript:listActive': () => listActiveTranscriptions(),
@@ -371,7 +381,32 @@ const handlers: Handlers = {
     deleteSpeakerKeepingLines(id)
   },
 
-  'speakers:listActive': () => listActiveSpeakerDetections()
+  'speakers:listActive': () => listActiveSpeakerDetections(),
+
+  'ollama:status': () => ollama.getStatus(),
+
+  'ollama:pullModel': ({ modelName }) => ollama.pullModel(modelName),
+
+  'ollama:cancelPull': ({ modelName }) => {
+    ollama.cancelPull(modelName)
+  },
+
+  'ollama:deleteModel': ({ modelName }) => ollama.deleteModel(modelName),
+
+  'rag:getSettings': () => currentRagSettings(),
+
+  'rag:setSettings': (patch) => {
+    if (patch.embeddingModel != null) setRagEmbeddingModel(patch.embeddingModel)
+    if (patch.chatModel != null) setRagChatModel(patch.chatModel)
+    if (patch.serverUrl != null) setRagServerUrl(patch.serverUrl)
+    return currentRagSettings()
+  },
+
+  'rag:getIndexStatus': () => getRagIndexStatus(),
+
+  'rag:reindexAll': () => reindexAllRecordings(),
+
+  'ask:ask': ({ question, recordingId }) => answerQuestion(question, recordingId)
 }
 
 function safeFileName(title: string): string {
@@ -403,6 +438,14 @@ function currentTranscriptionSettings(): TranscriptionSettings {
       parakeet: getModelIdForEngine('parakeet') ?? defaultModelForEngine('parakeet')
     },
     language: getTranscriptionLanguage()
+  }
+}
+
+function currentRagSettings(): RagSettings {
+  return {
+    embeddingModel: getRagEmbeddingModel(),
+    chatModel: getRagChatModel(),
+    serverUrl: getRagServerUrl() || DEFAULT_OLLAMA_SERVER_URL
   }
 }
 

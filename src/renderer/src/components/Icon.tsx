@@ -110,6 +110,30 @@ const STROKE = {
       <rect x="13" y="4" width="8" height="16" rx="1" />
     </>
   ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.35-4.35" />
+    </>
+  ),
+  chat: (
+    <path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+  ),
+  send: (
+    <>
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4Z" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
+      <path d="M3 21v-5h5" />
+    </>
+  ),
+  check: <path d="M20 6 9 17l-5-5" />,
   /** Half-filled circle for the Appearance setting — the left path overrides
       the parent's fill="none" with its own fill, which SVG allows even
       though every other icon here is stroke-only. */

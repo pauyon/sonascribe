@@ -9,6 +9,27 @@ function markerIn(markers: Marker[], startMs: number, endMs: number): Marker | u
   return markers.find((m) => m.timeMs >= startMs && m.timeMs < endMs)
 }
 
+/** Splits `text` around every case-insensitive occurrence of `query`, wrapping matches in a highlight span. */
+function highlightText(text: string, query: string): React.ReactNode {
+  if (!query) return text
+  const lower = text.toLowerCase()
+  const parts: React.ReactNode[] = []
+  let start = 0
+  let index = lower.indexOf(query, start)
+  while (index !== -1) {
+    if (index > start) parts.push(text.slice(start, index))
+    parts.push(
+      <mark className="hl" key={index}>
+        {text.slice(index, index + query.length)}
+      </mark>
+    )
+    start = index + query.length
+    index = lower.indexOf(query, start)
+  }
+  if (start < text.length) parts.push(text.slice(start))
+  return parts
+}
+
 /**
  * Roughly how many characters a paragraph is allowed to reach before the
  * next sentence end splits it. Low enough that a paragraph is usually one
@@ -77,6 +98,7 @@ export default function TranscriptPanel({
   onEditText,
   onSplitUtterance,
   markers,
+  highlightQuery,
   isolatedSpeakerName
 }: {
   utterances: Utterance[]
@@ -88,6 +110,8 @@ export default function TranscriptPanel({
   onEditText: (utteranceId: string, text: string) => void
   onSplitUtterance: (utteranceId: string, wordIndex: number) => void
   markers: Marker[]
+  /** A lowercased keyword search term — matching words get a highlight and `utterances` has already been narrowed to lines containing it. */
+  highlightQuery?: string
   /** Name of the speaker `utterances` has already been narrowed to, if any — distinguishes "this speaker has no lines" from "no transcript yet" in the empty state. */
   isolatedSpeakerName?: string | null
 }): React.JSX.Element {
@@ -148,11 +172,19 @@ export default function TranscriptPanel({
   if (utterances.length === 0) {
     return (
       <div className="empty">
-        <h2>{isolatedSpeakerName ? `No lines from ${isolatedSpeakerName}` : 'No transcript yet'}</h2>
+        <h2>
+          {highlightQuery
+            ? `No matches for "${highlightQuery}"`
+            : isolatedSpeakerName
+              ? `No lines from ${isolatedSpeakerName}`
+              : 'No transcript yet'}
+        </h2>
         <p>
-          {isolatedSpeakerName
-            ? 'Every line here turned out to be someone else — try another speaker, or show everyone again.'
-            : 'Transcribe this recording to see its text here.'}
+          {highlightQuery
+            ? 'Try a different word or phrase.'
+            : isolatedSpeakerName
+              ? 'Every line here turned out to be someone else — try another speaker, or show everyone again.'
+              : 'Transcribe this recording to see its text here.'}
         </p>
       </div>
     )
@@ -295,14 +327,16 @@ export default function TranscriptPanel({
                         onClick={() => onSeek(word.startMs)}
                         title={formatDuration(word.startMs)}
                       >
-                        {word.text}{' '}
+                        {highlightQuery ? highlightText(word.text, highlightQuery) : word.text}{' '}
                       </span>
                     )
                   })}
                 </p>
               ))
             ) : (
-              <p className="utterance__text">{u.text}</p>
+              <p className="utterance__text">
+                {highlightQuery ? highlightText(u.text, highlightQuery) : u.text}
+              </p>
             )}
           </div>
         )

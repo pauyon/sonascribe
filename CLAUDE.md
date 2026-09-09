@@ -42,6 +42,13 @@ maintenance instruction.
   `Object.assign(console, log.functions)` once at startup, so every existing
   `console.*` call writes to `<userData>/logs/main.log` for free; nothing
   should ever call `log.*` directly instead of `console.*`.
+- **Ollama**, for the opt-in Knowledge Base (transcript embedding + Q&A) —
+  the one exception to "every model this app uses is bundled or downloaded
+  by it directly." Ollama is a separate program the user installs and runs
+  themselves; `services/ollama.ts` is only ever an HTTP client against it
+  (`http://127.0.0.1:11434` by default, editable), never a spawned/managed
+  process. "Not running" is treated as a normal state throughout, not an
+  error — see the Knowledge Base step below.
 
 ## Directory map
 
@@ -54,16 +61,19 @@ src/
     db/                                      ALL SQL lives here
       index.ts            getDb()/initDb(), WAL mode, migration runner
       migrations.ts        forward-only, numbered — NEVER edit a shipped one, append.
-                            `tracks`/`speakers`/`voice_profiles`/`chunk_embeddings`/
-                            `screenshots` are historical (diarization/RAG, since removed)
-                            and still unreferenced; `utterances`/`words` are back in use
-                            for transcription — see db/transcript.ts.
+                            `tracks`/`voice_profiles`/`screenshots` are historical
+                            (diarization/RAG, since removed) and still unreferenced;
+                            `utterances`/`words` are back in use for transcription — see
+                            db/transcript.ts; `speakers` is active — see db/speakers.ts;
+                            `chunk_embeddings` is active again too — see db/chunks.ts.
       recordings.ts         CRUD + status/duration/source-path/transcript-status setters
       transcript.ts          utterances/words CRUD — a recording's transcript
+      chunks.ts               chunk_embeddings CRUD for the knowledge base — one recording's
+                              chunks, or every recording's for a library-wide Ask
       repair-paths.ts       startup repair: repoint stale paths, resolve interrupted
                             recordings/transcriptions
       settings.ts            typed key/value accessors — recording settings + chosen
-                            transcription engine/model/language
+                            transcription engine/model/language + Ollama server URL/models
     services/                               everything that isn't SQL or IPC wiring
       recorder.ts             owns the in-progress WavWriter; start/chunk/pause/stop/cancel;
                                discards a recording whose peak level never cleared silence
@@ -82,6 +92,16 @@ src/
       models.ts                 resumable ASR model download/inventory (`<userData>/models/`)
       jobs.ts                   serial transcription queue: one job at a time, AbortController
                                 per recording, in-memory progress for a page opened mid-job
+      ollama.ts                 HTTP client for a locally-installed Ollama server — never
+                                bundled or spawned by this app, unlike every ASR sidecar;
+                                "not running" is a normal, handled state, not an error
+      chunking.ts                groups a transcript's utterances into ~800-char embedding
+                                chunks, splitting long ones at sentence boundaries
+      search.ts                   reindexes a recording's chunks via ollama.ts's embed call;
+                                brute-force cosine similarity search, one recording's chunks
+                                or every recording's — see "Knowledge Base" below
+      answering.ts                retrieval-augmented answers: searchChunks's top excerpts
+                                grounding an Ollama chat model's response
     ipc/index.ts, ipc/events.ts             handler registry (must implement every ApiSchema channel) + event emitter
     windows/                                 BrowserWindow setup (main window, mini recorder)
   preload/            the only renderer↔main bridge; allowlists channels from shared/ipc.ts
@@ -89,12 +109,18 @@ src/
     ipc.ts       ApiSchema (request/response) + EventSchema (push) — the one IPC contract, see below
     types.ts     domain types mirroring the SQLite schema — `Recording`, `Utterance` and friends
     models.ts    the ASR model catalogue (curated, not the full upstream zoo) + engine specs
+    ollama.ts     recommended-model catalogue + types for the Ollama-backed knowledge base —
+                 no download URLs here, unlike models.ts, since Ollama manages its own models
   renderer/src/
     routes/       Library, Record, Settings (recordings-folder location, transcription models,
-                  logs), Editor (recording detail — playback, transcribe action, transcript),
+                  Knowledge Base, logs), Editor (recording detail — playback, transcribe
+                  action, transcript, Ask), Ask (library-wide question answering),
                   Trim (dedicated cut/marker editor), MiniRecorder
     components/    RecordingCard, PlayerBar, Waveform, StatusPill, Select, HelpTip, LogViewer,
-                  ModelPicker (Settings' engine/model download UI), TranscriptPanel
+                  ModelPicker (Settings' engine/model download UI), TranscriptPanel,
+                  AskPanel (question/answer + citations, mounted scoped-to-one-recording on
+                  Editor and library-wide on Ask), KnowledgeBaseSettings (Settings' Ollama
+                  status/model picker/reindex card)
     lib/           api.ts (useQuery/useEvent/api.invoke), capture.ts (Web Audio capture + mixing),
                    useAudio.ts, useTranscript.ts, format.ts
 resources/bin/<platform>/    ffmpeg/whisper-cli/parakeet-cli, git-ignored, fetched by
@@ -145,6 +171,24 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
    (`db/transcript.ts`); `components/TranscriptPanel.tsx` groups a long
    utterance's words into paragraphs for display without touching the
    stored row.
+6. **Knowledge Base** (opt-in, needs a locally-installed and running
+   [Ollama](https://ollama.com) — never bundled the way the ASR sidecars
+   are) — every text-changing write to a recording's transcript
+   (`saveTranscript`, `saveSpeakerMergedTranscript`,
+   `updateUtteranceText`, `splitUtterance`) fires a best-effort, fire-
+   and-forget reindex (`services/search.ts`'s `triggerReindex`): chunk
+   the transcript (`chunking.ts`), embed each chunk via Ollama
+   (`ollama.ts`'s `embedChunks`), store the vectors (`db/chunks.ts`).
+   Asking a question (`components/AskPanel.tsx`, mounted scoped to one
+   recording on `Editor.tsx` or library-wide on `routes/Ask.tsx`) embeds
+   the question, ranks every stored chunk by cosine similarity in plain
+   JS (`search.ts`'s `searchChunks` — no vector database; personal-scale
+   transcript data doesn't need one), and hands the top excerpts to an
+   Ollama chat model as grounding context (`answering.ts`). A citation
+   for a recording other than the one currently open navigates there and
+   seeks once its audio metadata loads (`Editor.tsx`'s `location.state`
+   effect) rather than a query-param deep link, since it's a one-shot
+   jump, not a shareable URL.
 
 ## Patterns to follow
 

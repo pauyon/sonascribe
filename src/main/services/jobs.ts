@@ -16,6 +16,7 @@ import { engineSidecar, TranscriptionError, type TranscriptSegment } from './tra
 import { transcribeWithWhisper } from './whisper'
 import { transcribeWithParakeet } from './parakeet'
 import { hasSidecar } from './sidecars'
+import { triggerReindex } from './search'
 import { emit } from '../ipc/events'
 
 /**
@@ -220,6 +221,7 @@ export function queueTranscription(recordingId: string): void {
       }
 
       saveTranscript(recordingId, result.segments)
+      triggerReindex(recordingId)
       // A fresh transcription means entirely new utterance rows — whatever
       // speaker detection previously produced no longer has anything to
       // point at (db/transcript.ts::saveTranscript already dropped the

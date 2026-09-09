@@ -21,6 +21,13 @@ import type {
 } from './types'
 import type { AsrEngine, ModelDownloadProgress, ModelStatus } from './models'
 import type { ExportFormat } from './export'
+import type {
+  AskResult,
+  OllamaPullProgress,
+  OllamaStatus,
+  RagIndexStatus,
+  RagSettings
+} from './ollama'
 
 export interface ApiSchema {
   'recordings:list': {
@@ -362,6 +369,49 @@ export interface ApiSchema {
     request: void
     response: Array<{ recordingId: string; fraction: number | null }>
   }
+
+  /** Ollama's own reachability/version plus its installed model list, for the Settings "Knowledge Base" card. Never throws — an unreachable server reports `running: false` rather than an error. */
+  'ollama:status': {
+    request: void
+    response: OllamaStatus
+  }
+  /** Downloads a model via Ollama's own `/api/pull`. Progress arrives via `ollama:pullProgress`; resolves once the pull confirms success. */
+  'ollama:pullModel': {
+    request: { modelName: string }
+    response: void
+  }
+  'ollama:cancelPull': {
+    request: { modelName: string }
+    response: void
+  }
+  'ollama:deleteModel': {
+    request: { modelName: string }
+    response: void
+  }
+  /** Which Ollama models (and server URL) the knowledge base uses. */
+  'rag:getSettings': {
+    request: void
+    response: RagSettings
+  }
+  'rag:setSettings': {
+    request: Partial<RagSettings>
+    response: RagSettings
+  }
+  /** Chunk/recording counts for the Settings "N chunks indexed" line. */
+  'rag:getIndexStatus': {
+    request: void
+    response: RagIndexStatus
+  }
+  /** Reindexes every recording with a ready transcript — for a model change, or catching up recordings transcribed before this feature was configured. Progress arrives via `rag:indexProgress`. */
+  'rag:reindexAll': {
+    request: void
+    response: void
+  }
+  /** Answers a question grounded in retrieved transcript chunks — one recording's when `recordingId` is given, the whole library's otherwise. */
+  'ask:ask': {
+    request: { question: string; recordingId?: string }
+    response: AskResult
+  }
 }
 
 export interface RecordingSettings {
@@ -451,6 +501,11 @@ export interface EventSchema {
   'transcript:progress': { recordingId: string; fraction: number | null }
   /** Fractional progress for an in-flight speaker detection, or null when not yet known. */
   'speaker:progress': { recordingId: string; fraction: number | null }
+
+  /** Byte-level progress for an in-flight Ollama model pull. */
+  'ollama:pullProgress': OllamaPullProgress
+  /** Progress for a `rag:reindexAll` pass — how many of the targeted recordings are done. */
+  'rag:indexProgress': { completed: number; total: number; done: boolean }
 }
 
 export type Channel = keyof ApiSchema
@@ -515,7 +570,16 @@ export const CHANNELS = [
   'speakers:reassignUtterance',
   'speakers:delete',
   'speakers:deleteKeepingLines',
-  'speakers:listActive'
+  'speakers:listActive',
+  'ollama:status',
+  'ollama:pullModel',
+  'ollama:cancelPull',
+  'ollama:deleteModel',
+  'rag:getSettings',
+  'rag:setSettings',
+  'rag:getIndexStatus',
+  'rag:reindexAll',
+  'ask:ask'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [
@@ -528,7 +592,9 @@ export const EVENTS = [
   'recording:discarded',
   'model:progress',
   'transcript:progress',
-  'speaker:progress'
+  'speaker:progress',
+  'ollama:pullProgress',
+  'rag:indexProgress'
 ] as const satisfies readonly EventName[]
 
 /**

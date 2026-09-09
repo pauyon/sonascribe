@@ -9,6 +9,7 @@ import { resampleForAsr } from './ffmpeg'
 import { diarize, minDurationOnFor, SPLITTING_PRESETS, DiarizationError } from './diarize'
 import { absorbTinySpeakers, mergeWordsWithSpeakers, minSpeakerSpeechFor } from './merge'
 import { hasBundledModel, hasSidecar } from './sidecars'
+import { triggerReindex } from './search'
 import { emit } from '../ipc/events'
 
 /**
@@ -171,6 +172,7 @@ export function queueSpeakerDetection(recordingId: string): void {
       }
 
       saveSpeakerMergedTranscript(recordingId, merged, speakerIdByCluster)
+      triggerReindex(recordingId)
       setSpeakerStatus(recordingId, 'ready')
       publishRecording(recordingId)
     } catch (err) {

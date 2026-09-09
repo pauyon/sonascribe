@@ -5,6 +5,7 @@ import Library from './routes/Library'
 import Record from './routes/Record'
 import Editor from './routes/Editor'
 import Trim from './routes/Trim'
+import Ask from './routes/Ask'
 import Settings from './routes/Settings'
 import MiniRecorder from './routes/MiniRecorder'
 
@@ -30,12 +31,16 @@ const ICON = {
       <circle cx="12" cy="12" r="3.2" />
       <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
     </>
+  ),
+  ask: (
+    <path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
   )
 } as const
 
 const NAV = [
   { to: '/library', label: 'Library', icon: 'library' as const },
   { to: '/record', label: 'Record', icon: 'record' as const },
+  { to: '/ask', label: 'Ask', icon: 'ask' as const },
   { to: '/settings', label: 'Settings', icon: 'settings' as const }
 ]
 
@@ -151,6 +156,7 @@ export default function App(): React.JSX.Element {
           <Route path="/" element={<Navigate to="/library" replace />} />
           <Route path="/library" element={<Library />} />
           <Route path="/record" element={<Record />} />
+          <Route path="/ask" element={<Ask />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/recordings/:id" element={<Editor />} />
           <Route path="/recordings/:id/edit" element={<Trim />} />

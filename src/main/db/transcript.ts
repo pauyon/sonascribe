@@ -112,13 +112,20 @@ export function getAllWords(recordingId: string): TranscriptWord[] {
  * the ASR — part of the schema from before this app was stripped down,
  * unused until now.
  */
-export function updateUtteranceText(utteranceId: string, text: string): void {
+/** Returns the owning recording's id, so a caller can trigger a knowledge-base reindex without a second query. */
+export function updateUtteranceText(utteranceId: string, text: string): string {
   const db = getDb()
   db.exec('BEGIN')
   try {
+    const utterance = db.prepare('SELECT recording_id FROM utterances WHERE id = ?').get(utteranceId) as unknown as
+      | { recording_id: string }
+      | undefined
+    if (!utterance) throw new Error('That line no longer exists')
+
     db.prepare('DELETE FROM words WHERE utterance_id = ?').run(utteranceId)
     db.prepare('UPDATE utterances SET text = ?, edited = 1 WHERE id = ?').run(text, utteranceId)
     db.exec('COMMIT')
+    return utterance.recording_id
   } catch (err) {
     db.exec('ROLLBACK')
     throw err
@@ -137,7 +144,8 @@ export function updateUtteranceText(utteranceId: string, text: string): void {
  * clash is usually exactly two different speakers — reassigning it is a
  * separate, already-existing action once the split lands.
  */
-export function splitUtterance(utteranceId: string, wordIndex: number): void {
+/** Returns the owning recording's id, so a caller can trigger a knowledge-base reindex without a second query. */
+export function splitUtterance(utteranceId: string, wordIndex: number): string {
   const db = getDb()
   db.exec('BEGIN')
   try {
@@ -178,6 +186,7 @@ export function splitUtterance(utteranceId: string, wordIndex: number): void {
     for (const word of secondWords) reassignWord.run(secondId, word.id)
 
     db.exec('COMMIT')
+    return utterance.recording_id
   } catch (err) {
     db.exec('ROLLBACK')
     throw err

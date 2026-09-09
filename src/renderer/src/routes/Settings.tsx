@@ -3,6 +3,7 @@ import { api, useQuery } from '../lib/api'
 import { useTheme, type ThemePreference } from '../lib/useTheme'
 import LogViewer from '../components/LogViewer'
 import ModelPicker from '../components/ModelPicker'
+import KnowledgeBaseSettings from '../components/KnowledgeBaseSettings'
 import Select from '../components/Select'
 import Icon from '../components/Icon'
 
@@ -125,6 +126,11 @@ export default function Settings(): React.JSX.Element {
         ) : (
           <p className="recorder__fine">Loading…</p>
         )}
+      </div>
+
+      <div className="settings-section">
+        <h2 className="settings-section__title">Knowledge Base</h2>
+        <KnowledgeBaseSettings />
       </div>
 
       {showLogs && <LogViewer onClose={() => setShowLogs(false)} />}

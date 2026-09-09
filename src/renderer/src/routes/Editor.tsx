@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { sourceMediaUrl } from '@shared/ipc'
 import { EXPORT_FORMATS } from '@shared/export'
 import { api, useEvent, useQuery } from '../lib/api'
@@ -16,6 +16,7 @@ import PlayerBar from '../components/PlayerBar'
 import MarkerChips from '../components/MarkerChips'
 import SpeakerChips from '../components/SpeakerChips'
 import TranscriptPanel from '../components/TranscriptPanel'
+import AskPanel from '../components/AskPanel'
 import OverflowMenu, { type OverflowMenuItem } from '../components/OverflowMenu'
 import Icon from '../components/Icon'
 
@@ -23,6 +24,7 @@ import Icon from '../components/Icon'
 export default function Editor(): React.JSX.Element {
   const { id = '' } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { data: recording, error, loading, refetch } = useQuery('recordings:get', { id })
 
   const [draftTitle, setDraftTitle] = useState<string | null>(null)
@@ -33,6 +35,9 @@ export default function Editor(): React.JSX.Element {
   const [markerColor, setMarkerColor] = useState(DEFAULT_MARKER_COLOR)
   /** Speaker id the transcript below is narrowed to, or null to show every speaker. */
   const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [askOpen, setAskOpen] = useState(false)
 
   /**
    * Speakers (and their lines) hidden immediately on delete, before the
@@ -71,6 +76,22 @@ export default function Editor(): React.JSX.Element {
 
   const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
+
+  /**
+   * A citation from the library-wide Ask screen navigates here with a
+   * target timestamp in router state (`Ask.tsx`) rather than a query
+   * param, since it's a one-shot "jump once loaded" rather than a
+   * shareable URL. Waits for `durationMs` — metadata loaded — since a
+   * seek issued before that can be silently dropped by the media element.
+   * Clears the state afterward so revisiting this page normally (back
+   * button, sidebar) doesn't reseek.
+   */
+  useEffect(() => {
+    const seekMs = (location.state as { seekMs?: number } | null)?.seekMs
+    if (seekMs == null || audio.durationMs == null) return
+    audio.seek(seekMs)
+    navigate(location.pathname, { replace: true, state: null })
+  }, [audio.durationMs, audio.seek, location.state, location.pathname, navigate])
   const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
   const {
     markers,
@@ -279,6 +300,13 @@ export default function Editor(): React.JSX.Element {
 
   const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
   const hasSpeakers = speakers.speakers.length > 0
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const visibleUtterances = (transcript.utterances ?? []).filter(
+    (u) =>
+      !hiddenUtteranceIds.has(u.id) &&
+      (!speakerFilter || u.speaker?.id === speakerFilter) &&
+      (!normalizedSearch || u.text.toLowerCase().includes(normalizedSearch))
+  )
   const speakerBusy = recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting'
 
   const overflowGroups: OverflowMenuItem[][] = [
@@ -393,6 +421,35 @@ export default function Editor(): React.JSX.Element {
         </div>
 
         <div className="page__actions">
+          {hasTranscript && (
+            <button
+              type="button"
+              className={searchOpen ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'}
+              aria-pressed={searchOpen}
+              aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
+              title="Search transcript"
+              onClick={() =>
+                setSearchOpen((open) => {
+                  if (open) setSearchQuery('')
+                  return !open
+                })
+              }
+            >
+              <Icon name="search" />
+            </button>
+          )}
+          {hasTranscript && (
+            <button
+              type="button"
+              className={askOpen ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'}
+              aria-pressed={askOpen}
+              aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
+              title="Ask about this recording"
+              onClick={() => setAskOpen((open) => !open)}
+            >
+              <Icon name="chat" />
+            </button>
+          )}
           {hasSpeakers && (
             <button
               type="button"
@@ -554,6 +611,56 @@ export default function Editor(): React.JSX.Element {
             </div>
           )}
 
+          {askOpen && (
+            <div className="ask-card">
+              <AskPanel
+                recordingId={recording.id}
+                onSeek={audio.seek}
+                onNavigateToRecording={(targetId, ms) =>
+                  navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
+                }
+              />
+            </div>
+          )}
+
+          {searchOpen && (
+            <div className="search-bar">
+              <Icon name="search" className="search-bar__icon" />
+              <input
+                type="text"
+                className="input search-bar__input"
+                value={searchQuery}
+                autoFocus
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="Search transcript…"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSearchOpen(false)
+                    setSearchQuery('')
+                  }
+                }}
+              />
+              {normalizedSearch && (
+                <span className="search-bar__count">
+                  {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
+                </span>
+              )}
+              <button
+                type="button"
+                className="search-bar__close"
+                onClick={() => {
+                  setSearchOpen(false)
+                  setSearchQuery('')
+                }}
+                aria-label="Close search"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
+
           {transcriptMode === 'speakers' && (
             <SpeakerChips
               speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
@@ -570,9 +677,7 @@ export default function Editor(): React.JSX.Element {
 
           {recording.transcriptStatus === 'ready' && transcript.utterances && (
             <TranscriptPanel
-              utterances={transcript.utterances.filter(
-                (u) => !hiddenUtteranceIds.has(u.id) && (!speakerFilter || u.speaker?.id === speakerFilter)
-              )}
+              utterances={visibleUtterances}
               currentMs={audio.currentMs}
               onSeek={audio.seek}
               mode={transcriptMode}
@@ -581,6 +686,7 @@ export default function Editor(): React.JSX.Element {
               onEditText={transcript.editText}
               onSplitUtterance={transcript.splitUtterance}
               markers={markers}
+              highlightQuery={normalizedSearch || undefined}
               isolatedSpeakerName={speakerFilter ? (speakers.speakers.find((s) => s.id === speakerFilter)?.displayName ?? null) : null}
             />
           )}

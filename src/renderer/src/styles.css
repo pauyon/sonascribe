@@ -1579,18 +1579,18 @@ body {
 .speakers__list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
-  padding: 4px 6px 4px 10px;
+  padding: 3px 4px 3px 8px;
   background: var(--bg-raised);
-  font-size: var(--fs-small);
+  font-size: var(--fs-caption);
 }
 
 .chip--merging {
@@ -1621,8 +1621,8 @@ body {
 }
 
 .chip--add svg {
-  width: 13px;
-  height: 13px;
+  width: 11px;
+  height: 11px;
 }
 
 .chip__dot {
@@ -1682,22 +1682,23 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-hover);
+  background: none;
   border: none;
   border-radius: 50%;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
 }
 
 .chip__action svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 .chip__action:hover {
+  background: var(--bg-hover);
   color: var(--text);
 }
 
@@ -1742,26 +1743,27 @@ body {
 }
 
 .chip__menu .overflow-menu__trigger {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: none;
   border-radius: 50%;
-  background: var(--bg-hover);
+  background: none;
   color: var(--text-muted);
 }
 
 .chip__menu .overflow-menu__trigger-icon {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
 }
 
 .chip__menu .overflow-menu__trigger:hover {
+  background: var(--bg-hover);
   color: var(--text);
 }
 
 .speakers__swatch {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -1800,6 +1802,74 @@ body {
   font-size: inherit;
   cursor: pointer;
   text-decoration: underline;
+}
+
+/* ---------- transcript search ---------- */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+}
+
+.search-bar__icon {
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.search-bar__input {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 6px 0;
+}
+
+.search-bar__input:focus {
+  outline: none;
+}
+
+.search-bar__count {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.search-bar__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.search-bar__close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.search-bar__close:hover {
+  color: var(--text);
+}
+
+.hl {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 /* The confirm step before a merge or a speaker delete commits — both move or
@@ -2217,6 +2287,229 @@ button.settings-card__row--link:hover {
   font-size: inherit;
   cursor: pointer;
   text-decoration: underline;
+}
+
+/* ---------- Knowledge Base settings ---------- */
+
+.kb-field-label {
+  flex: none;
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.settings-card__row-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.kb-dot--on {
+  background: var(--ok);
+}
+
+.kb-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.kb-refresh-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.kb-refresh-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.kb-download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.kb-download-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+.kb-models {
+  margin-top: 16px;
+}
+
+.kb-subtitle {
+  margin-top: 20px;
+}
+
+.kb-recommend-row {
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.kb-recommend-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-recommend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-recommend-blurb {
+  margin: 4px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.kb-recommend-row .progress {
+  margin-top: 8px;
+}
+
+/* ---------- Ask panel ---------- */
+
+.ask-card {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.ask__form {
+  display: flex;
+  gap: 8px;
+}
+
+.ask__input {
+  flex: 1;
+}
+
+.ask__submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
+  flex: none;
+}
+
+.ask__submit svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ask__loading {
+  margin: 12px 2px 0;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.ask__result {
+  margin-top: 12px;
+}
+
+.ask__answer-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ask__answer {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ask__copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ask__copy svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ask__copy:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ask__sources {
+  margin-top: 12px;
+}
+
+.ask__sources-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ask__citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ask__citation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.ask__citation:hover {
+  background: var(--bg-hover);
+}
+
+.ask__citation-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ask__citation-time {
+  color: var(--text-muted);
 }
 
 /* Live transcript on the Record screen: text arriving while capture runs. */
@@ -2796,7 +3089,6 @@ button.settings-card__row--link:hover {
 }
 
 .chip__action {
-  background: color-mix(in srgb, var(--speaker, var(--accent)) 16%, transparent);
   color: inherit;
 }
 
