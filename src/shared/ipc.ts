@@ -279,6 +279,11 @@ export interface ApiSchema {
     request: { utteranceId: string; text: string }
     response: void
   }
+  /** Splits one utterance into two at a word boundary — for two people's sentences the diarizer ran together into one line. Both halves keep their real per-word timing; the second half starts credited to the same speaker as the original. */
+  'transcript:splitUtterance': {
+    request: { utteranceId: string; wordIndex: number }
+    response: void
+  }
   /**
    * Every recording currently queued or transcribing, with its latest known
    * progress — the source a freshly (re)mounted page reads from, so a
@@ -496,6 +501,7 @@ export const CHANNELS = [
   'transcript:cancel',
   'transcript:get',
   'transcript:editUtterance',
+  'transcript:splitUtterance',
   'transcript:listActive',
   'transcript:export',
   'audio:export',

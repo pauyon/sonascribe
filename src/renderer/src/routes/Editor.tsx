@@ -579,6 +579,7 @@ export default function Editor(): React.JSX.Element {
               speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
               onReassignSpeaker={speakers.reassignUtterance}
               onEditText={transcript.editText}
+              onSplitUtterance={transcript.splitUtterance}
               markers={markers}
               isolatedSpeakerName={speakerFilter ? (speakers.speakers.find((s) => s.id === speakerFilter)?.displayName ?? null) : null}
             />

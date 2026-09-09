@@ -3347,6 +3347,40 @@ label.toolbar__toggle {
   font-weight: 600;
 }
 
+/* The word-boundary picker a "Split" click opens — every word but the first
+   becomes a target; hovering one previews exactly where the cut lands with
+   an insertion-point edge rather than just a background tint. */
+.word--split-target:hover {
+  background: var(--accent-soft);
+  box-shadow: -2px 0 0 var(--accent);
+}
+
+.word--split-disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.word--split-disabled:hover {
+  background: none;
+}
+
+.utterance__split {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--r-md);
+}
+
+.utterance__split-hint {
+  margin: 0 0 8px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.utterance__split .btn {
+  margin-top: 10px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .word {
     transition: none;

@@ -36,7 +36,7 @@ import {
   setRecordingCuts,
   setRecordingMarkers
 } from '../db/recordings'
-import { getUtterances, updateUtteranceText } from '../db/transcript'
+import { getUtterances, splitUtterance, updateUtteranceText } from '../db/transcript'
 import {
   createSpeaker,
   deleteSpeaker,
@@ -280,6 +280,10 @@ const handlers: Handlers = {
 
   'transcript:editUtterance': ({ utteranceId, text }) => {
     updateUtteranceText(utteranceId, text)
+  },
+
+  'transcript:splitUtterance': ({ utteranceId, wordIndex }) => {
+    splitUtterance(utteranceId, wordIndex)
   },
 
   'transcript:listActive': () => listActiveTranscriptions(),

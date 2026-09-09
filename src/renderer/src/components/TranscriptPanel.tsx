@@ -61,7 +61,11 @@ function paragraphize(words: TranscriptWord[]): TranscriptWord[][] {
  * hand-typed correction has no ASR timings of its own to offer. A timestamp
  * with a marker nearby carries a small flag in that marker's own color, so a
  * marked moment stays findable while scrolling or reading instead of living
- * only in the chip row above.
+ * only in the chip row above. Two people's sentences the diarizer ran
+ * together into one line can be split at any word boundary — both halves
+ * keep their real per-word ASR timing, and the new second line starts
+ * credited to the same speaker as the original, ready for the existing
+ * per-line reassignment picker to fix.
  */
 export default function TranscriptPanel({
   utterances,
@@ -71,6 +75,7 @@ export default function TranscriptPanel({
   speakers,
   onReassignSpeaker,
   onEditText,
+  onSplitUtterance,
   markers,
   isolatedSpeakerName
 }: {
@@ -81,6 +86,7 @@ export default function TranscriptPanel({
   speakers: Speaker[]
   onReassignSpeaker: (utteranceId: string, speakerId: string) => void
   onEditText: (utteranceId: string, text: string) => void
+  onSplitUtterance: (utteranceId: string, wordIndex: number) => void
   markers: Marker[]
   /** Name of the speaker `utterances` has already been narrowed to, if any — distinguishes "this speaker has no lines" from "no transcript yet" in the empty state. */
   isolatedSpeakerName?: string | null
@@ -89,10 +95,22 @@ export default function TranscriptPanel({
   const hasSpeakers = useMemo(() => utterances.some((u) => u.speaker != null), [utterances])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [splittingId, setSplittingId] = useState<string | null>(null)
 
   function startEdit(u: Utterance): void {
+    setSplittingId(null)
     setEditingId(u.id)
     setDraft(u.text)
+  }
+
+  function startSplit(u: Utterance): void {
+    setEditingId(null)
+    setSplittingId(u.id)
+  }
+
+  function splitAt(u: Utterance, wordIndex: number): void {
+    setSplittingId(null)
+    onSplitUtterance(u.id, wordIndex)
   }
 
   /** Grows the edit textarea to fit its content instead of leaving it a fixed size with a scrollbar/manual resize handle. Reset to 'auto' first so shrinking a line (not just growing one) is picked up too. */
@@ -178,7 +196,7 @@ export default function TranscriptPanel({
                 })()}
                 {formatDuration(u.startMs)}
               </button>
-              {editingId !== u.id && (
+              {editingId !== u.id && splittingId !== u.id && (
                 <button
                   type="button"
                   className="utterance__edit-btn"
@@ -189,9 +207,39 @@ export default function TranscriptPanel({
                   <Icon name="edit" />
                 </button>
               )}
+              {editingId !== u.id && splittingId !== u.id && u.words.length > 1 && (
+                <button
+                  type="button"
+                  className="utterance__edit-btn"
+                  onClick={() => startSplit(u)}
+                  aria-label="Split this line into two"
+                  title="Split this line into two — for two speakers run together"
+                >
+                  <Icon name="split" />
+                </button>
+              )}
             </div>
 
-            {editingId === u.id ? (
+            {splittingId === u.id ? (
+              <div className="utterance__split">
+                <p className="utterance__split-hint">Click the word where the new line should start.</p>
+                <p className="utterance__text">
+                  {u.words.map((word, i) => (
+                    <span
+                      key={i}
+                      className={i === 0 ? 'word word--split-disabled' : 'word word--split-target'}
+                      onClick={() => i > 0 && splitAt(u, i)}
+                      title={i === 0 ? undefined : `Split before "${word.text}"`}
+                    >
+                      {word.text}{' '}
+                    </span>
+                  ))}
+                </p>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSplittingId(null)}>
+                  Cancel
+                </button>
+              </div>
+            ) : editingId === u.id ? (
               <textarea
                 className="utterance__input"
                 value={draft}

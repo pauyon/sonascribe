@@ -103,6 +103,12 @@ const STROKE = {
       <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
       <circle cx="12" cy="12" r="3" />
     </>
+  ),
+  split: (
+    <>
+      <rect x="3" y="4" width="8" height="16" rx="1" />
+      <rect x="13" y="4" width="8" height="16" rx="1" />
+    </>
   )
 } as const
 
