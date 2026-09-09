@@ -197,7 +197,7 @@ export interface ApiSchema {
    */
   'recording:status': {
     request: void
-    response: { recordingId: string; paused: boolean } | null
+    response: { recordingId: string; paused: boolean; markerCount: number } | null
   }
   /**
    * Relays the elapsed time Record.tsx already tracks (it alone accounts for
@@ -207,6 +207,20 @@ export interface ApiSchema {
   'recording:elapsed': {
     request: { elapsedMs: number }
     response: void
+  }
+  /**
+   * Marks the current moment during an in-progress recording — flag-while-
+   * capturing, rather than only after the fact on the recording-detail page.
+   * `elapsedMs` is the caller's own already-paused-time-excluded timer
+   * (Record.tsx's directly, or the mini window's relayed copy of it), since
+   * main doesn't track elapsed time itself. Persisted for real once the
+   * recording stops; broadcast via `recording:markerAdded` so every open
+   * window (main or mini, regardless of which one this was called from)
+   * can show the running count.
+   */
+  'recording:addMarker': {
+    request: { elapsedMs: number }
+    response: Marker
   }
 
   /** Reveals a file in the OS file manager, selected. */
@@ -466,6 +480,8 @@ export interface EventSchema {
   'recording:updated': Recording
   /** Fine-grained progress for an in-flight ingest job. */
   'import:progress': ImportProgress
+  /** A recording just started — lets the sidebar lock navigation for its whole duration, not just react to it ending. */
+  'recording:started': { recordingId: string }
   /**
    * Pause state changed, from whichever window (main or mini controls)
    * toggled it. Both treat `paused` as derived from this rather than
@@ -475,6 +491,8 @@ export interface EventSchema {
   'recording:pauseChanged': { paused: boolean }
   /** Relayed elapsed time, from Record.tsx's `recording:elapsed` calls. */
   'recording:elapsedTick': { elapsedMs: number }
+  /** A marker was added during the in-progress recording, from whichever window called `recording:addMarker`. */
+  'recording:markerAdded': Marker
   /**
    * A stop has begun and the session is gone in main, ahead of the (brief)
    * finalize work `recording:stopped` waits for. Every window still
@@ -544,6 +562,7 @@ export const CHANNELS = [
   'recording:openMiniControls',
   'recording:status',
   'recording:elapsed',
+  'recording:addMarker',
   'shell:showItemInFolder',
   'logs:read',
   'models:list',
@@ -585,8 +604,10 @@ export const CHANNELS = [
 export const EVENTS = [
   'recording:updated',
   'import:progress',
+  'recording:started',
   'recording:pauseChanged',
   'recording:elapsedTick',
+  'recording:markerAdded',
   'recording:sessionEnded',
   'recording:stopped',
   'recording:discarded',

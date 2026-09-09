@@ -196,6 +196,17 @@ body {
   color: var(--text);
 }
 
+/* Two classes, not one — same reason as .chip__action.chip__action--target
+   elsewhere: a later same-specificity .navlink/.navlink--active rule would
+   otherwise win by source order and this would never actually look locked. */
+.navlink.navlink--locked,
+.navlink.navlink--locked:hover {
+  background: none;
+  color: var(--text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .sidebar__footer {
   margin-top: auto;
   font-size: var(--fs-caption);
@@ -320,6 +331,20 @@ body {
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* An icon paired with a text label, not an icon-only button (those size their
+   svg per surface instead — .mini__icon-btn, .chip__action, etc.). */
+.btn--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.btn--icon svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 .btn--primary {
@@ -2642,8 +2667,12 @@ button.settings-card__row--link:hover {
 }
 
 .mini__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 20px;
   height: 20px;
+  padding: 0;
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
@@ -2651,6 +2680,11 @@ button.settings-card__row--link:hover {
   cursor: pointer;
   line-height: 1;
   -webkit-app-region: no-drag;
+}
+
+.mini__close svg {
+  width: 12px;
+  height: 12px;
 }
 
 .mini__close:hover {
@@ -2687,9 +2721,31 @@ button.settings-card__row--link:hover {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   padding: 8px 0;
   font-size: 16px;
   line-height: 1;
+}
+
+.mini__icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mini__mark-count {
+  position: absolute;
+  top: 2px;
+  right: 14px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
 }
 
 /* The two toggles in this row (transcript, display picker) get a pressed
@@ -2810,6 +2866,20 @@ button.settings-card__row--link:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.recorder__marker-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.recorder__marker-count svg {
+  width: 13px;
+  height: 13px;
 }
 
 .recorder__detail {
@@ -3151,6 +3221,16 @@ button.settings-card__row--link:hover {
 .recent__item--active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Two classes, not one — same specificity-over-source-order reason as
+   .navlink.navlink--locked above. */
+.recent__item.recent__item--locked,
+.recent__item.recent__item--locked:hover {
+  background: none;
+  color: var(--text);
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* One line each: the sidebar is a shortcut, not a second library. */

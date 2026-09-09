@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useEvent, useQuery } from './lib/api'
 import { formatDuration } from './lib/format'
@@ -68,7 +69,8 @@ function NavIcon({ name }: { name: keyof typeof ICON }): React.JSX.Element {
  * not a second copy of the library. It refreshes on the same event the library
  * listens to, so a recording that finishes transcribing updates here too.
  */
-function RecentList(): React.JSX.Element | null {
+/** `locked`: a recording is in progress, so following this link would silently end it (see App.tsx's own nav lock for why). */
+function RecentList({ locked }: { locked: boolean }): React.JSX.Element | null {
   const { data: recordings, refetch } = useQuery('recordings:list')
   useEvent('recording:updated', () => refetch())
 
@@ -82,8 +84,20 @@ function RecentList(): React.JSX.Element | null {
         <NavLink
           key={recording.id}
           to={`/recordings/${recording.id}`}
-          className={({ isActive }) => (isActive ? 'recent__item recent__item--active' : 'recent__item')}
-          title={recording.title}
+          className={({ isActive }) =>
+            [
+              'recent__item',
+              isActive ? 'recent__item--active' : null,
+              locked ? 'recent__item--locked' : null
+            ]
+              .filter(Boolean)
+              .join(' ')
+          }
+          onClick={(e) => {
+            if (locked) e.preventDefault()
+          }}
+          aria-disabled={locked}
+          title={locked ? 'Finish or discard the current recording first' : recording.title}
         >
           <span className="recent__title">{recording.title}</span>
           <span className="recent__meta">
@@ -102,6 +116,30 @@ function RecentList(): React.JSX.Element | null {
 export default function App(): React.JSX.Element {
   const { data: info } = useQuery('app:info')
   const location = useLocation()
+
+  /**
+   * Whether a recording is currently in progress, anywhere — locks every
+   * sidebar link except Record itself so leaving the page can't silently
+   * end it the way it used to (Record.tsx's own capture teardown fires on
+   * unmount; navigating away mid-recording used to discard the take
+   * outright). Bootstraps from the same `recording:status` query
+   * `MiniRecorder.tsx` uses, then tracks live via broadcasts so it stays
+   * correct regardless of which window (this one or the mini pop-out)
+   * actually started/stopped/discarded it.
+   */
+  const { data: recordingStatus, loading: statusLoading } = useQuery('recording:status')
+  const [recordingActive, setRecordingActive] = useState(false)
+  const appliedInitialStatus = useRef(false)
+
+  useEffect(() => {
+    if (appliedInitialStatus.current || statusLoading) return
+    appliedInitialStatus.current = true
+    setRecordingActive(recordingStatus !== null)
+  }, [statusLoading, recordingStatus])
+
+  useEvent('recording:started', () => setRecordingActive(true))
+  useEvent('recording:stopped', () => setRecordingActive(false))
+  useEvent('recording:discarded', () => setRecordingActive(false))
 
   // The mini controls window loads this same bundle at a different hash
   // route and has no sidebar of its own — it's a bare, frameless utility
@@ -129,21 +167,38 @@ export default function App(): React.JSX.Element {
           <span>SonaScribe</span>
         </div>
         <nav className="sidebar__nav">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                isActive ? 'navlink navlink--active' : 'navlink'
-              }
-            >
-              <NavIcon name={item.icon} />
-              {item.label}
-            </NavLink>
-          ))}
+          {NAV.map((item) => {
+            // Record itself stays clickable — there must always be a way
+            // back to the live page — everything else is locked while a
+            // recording is in progress, the same reasoning as RecentList.
+            const locked = recordingActive && item.to !== '/record'
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  [
+                    'navlink',
+                    isActive ? 'navlink--active' : null,
+                    locked ? 'navlink--locked' : null
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                }
+                onClick={(e) => {
+                  if (locked) e.preventDefault()
+                }}
+                aria-disabled={locked}
+                title={locked ? 'Finish or discard the current recording first' : undefined}
+              >
+                <NavIcon name={item.icon} />
+                {item.label}
+              </NavLink>
+            )
+          })}
         </nav>
 
-        <RecentList />
+        <RecentList locked={recordingActive} />
 
         <div className="sidebar__footer">
           <span>Local-only · nothing leaves this device</span>

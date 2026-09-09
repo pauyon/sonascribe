@@ -59,6 +59,7 @@ import { queueImport } from '../services/importer'
 import { deleteRecordingMedia } from '../services/media-cleanup'
 import { getMediaRoot, isDefaultMediaRoot, relocateMediaRoot } from '../services/storage'
 import {
+  addMarker,
   cancelRecording,
   getRecordingStatus,
   isRecording,
@@ -245,6 +246,8 @@ const handlers: Handlers = {
   'recording:elapsed': ({ elapsedMs }) => {
     emit('recording:elapsedTick', { elapsedMs })
   },
+
+  'recording:addMarker': ({ elapsedMs }) => addMarker(elapsedMs),
 
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)

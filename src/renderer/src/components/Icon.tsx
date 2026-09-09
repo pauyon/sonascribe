@@ -153,6 +153,8 @@ const FILLED = {
       <rect x="14" y="4" width="4" height="16" rx="1" />
     </>
   ),
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  record: <circle cx="12" cy="12" r="7" />,
   more: (
     <>
       <circle cx="5" cy="12" r="1.7" />
