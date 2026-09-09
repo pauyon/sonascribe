@@ -481,6 +481,7 @@ body {
   color: var(--danger);
 }
 
+
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -728,7 +729,9 @@ body {
   flex: 1;
 }
 
-.trim__icon-btn {
+/* Shared by any page-level icon button — the trim toolbar's transport/tool
+   buttons, and the detail page's flag-icon marker button. */
+.icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -739,7 +742,7 @@ body {
   line-height: 1;
 }
 
-.trim__icon-btn--active {
+.icon-btn--active {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -3378,6 +3381,21 @@ label.toolbar__toggle {
 .modal__footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+/* A small yes/no dialog, distinct from the wide .modal (log viewer) — no
+   scrollable body, so it sizes to its text instead of taking most of the
+   window. */
+.modal--confirm {
+  width: min(420px, 90vw);
+  max-height: none;
+}
+
+.modal--confirm p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* ---------- transcript keyword filter ---------- */

@@ -19,6 +19,7 @@ export default function Editor(): React.JSX.Element {
 
   const [draftTitle, setDraftTitle] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -81,6 +82,36 @@ export default function Editor(): React.JSX.Element {
     refetch()
   })
 
+  // Space to play/pause, matching the dedicated editor page. Ignored while a
+  // text field has focus (renaming the title, editing a marker label) so it
+  // types a literal space instead of hijacking playback.
+  useEffect(() => {
+    if (!playbackSrc) return
+
+    function isTypingTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false
+      return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+    }
+
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key !== ' ' || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return
+      e.preventDefault()
+      audio.toggle()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [playbackSrc, audio])
+
+  useEffect(() => {
+    if (!confirmingDelete) return
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setConfirmingDelete(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [confirmingDelete])
+
   if (loading) return <div className="page">Loading…</div>
   if (error) return <div className="page banner banner--error">{error}</div>
   if (!recording) {
@@ -102,6 +133,18 @@ export default function Editor(): React.JSX.Element {
     if (!next || !recording || next === recording.title) return
     await api.invoke('recordings:rename', { id: recording.id, title: next })
     refetch()
+  }
+
+  function deleteRecording(): void {
+    if (!recording) return
+    setActionError(null)
+    api
+      .invoke('recordings:delete', { id: recording.id })
+      .then(() => navigate('/library'))
+      .catch((err: unknown) => {
+        setActionError(err instanceof Error ? err.message : String(err))
+        setConfirmingDelete(false)
+      })
   }
 
   return (
@@ -138,22 +181,60 @@ export default function Editor(): React.JSX.Element {
           </p>
         </div>
 
-        {recording.sourcePath && (
-          <div className="page__actions">
-            <Link className="btn btn--primary" to={`/recordings/${recording.id}/edit`}>
-              Edit
-            </Link>
-            <button
-              className="btn"
-              onClick={() =>
-                void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
-              }
-            >
-              Reveal in folder
-            </button>
-          </div>
-        )}
+        <div className="page__actions">
+          {recording.sourcePath && (
+            <>
+              <Link className="btn btn--primary" to={`/recordings/${recording.id}/edit`}>
+                Edit
+              </Link>
+              <button
+                className="btn"
+                onClick={() =>
+                  void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
+                }
+              >
+                Reveal in folder
+              </button>
+            </>
+          )}
+          <button className="btn btn--danger" onClick={() => setConfirmingDelete(true)}>
+            Delete recording
+          </button>
+        </div>
       </header>
+
+      {confirmingDelete && (
+        <div className="modal-overlay" onClick={() => setConfirmingDelete(false)}>
+          <div
+            className="modal modal--confirm"
+            onClick={(e) => e.stopPropagation()}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirm-title"
+          >
+            <div className="modal__header">
+              <h2 id="delete-confirm-title">Delete recording?</h2>
+            </div>
+            <p>
+              This can&rsquo;t be undone — the audio file, and any cuts or markers on it, will
+              be permanently removed.
+            </p>
+            <div className="modal__footer">
+              <button
+                type="button"
+                className="btn btn--ghost"
+                autoFocus
+                onClick={() => setConfirmingDelete(false)}
+              >
+                Cancel
+              </button>
+              <button type="button" className="btn btn--danger" onClick={deleteRecording}>
+                Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {recording.error && <div className="banner banner--error">{recording.error}</div>}
       {actionError && <div className="banner banner--error">{actionError}</div>}
@@ -188,8 +269,14 @@ export default function Editor(): React.JSX.Element {
           )}
 
           <div className="page__actions page__actions--inline">
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => addMarkerAt(audio.currentMs)}>
-              Add marker at {formatDuration(audio.currentMs)}
+            <button
+              type="button"
+              className="btn btn--ghost icon-btn"
+              onClick={() => addMarkerAt(audio.currentMs)}
+              aria-label={`Add marker at ${formatDuration(audio.currentMs)}`}
+              title={`Add marker at ${formatDuration(audio.currentMs)}`}
+            >
+              🚩
             </button>
           </div>
 
@@ -214,23 +301,6 @@ export default function Editor(): React.JSX.Element {
           </p>
         </div>
       )}
-
-      <div className="page__footer">
-        <button
-          className="btn btn--ghost menu__danger"
-          onClick={() => {
-            setActionError(null)
-            api
-              .invoke('recordings:delete', { id: recording.id })
-              .then(() => navigate('/library'))
-              .catch((err: unknown) => {
-                setActionError(err instanceof Error ? err.message : String(err))
-              })
-          }}
-        >
-          Delete recording
-        </button>
-      </div>
     </div>
   )
 }

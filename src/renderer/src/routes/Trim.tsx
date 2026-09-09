@@ -250,7 +250,7 @@ export default function Trim(): React.JSX.Element {
             <div className="trim__toolbar-group">
               <button
                 type="button"
-                className="btn btn--ghost trim__icon-btn"
+                className="btn btn--ghost icon-btn"
                 onClick={audio.play}
                 disabled={audio.playing}
                 aria-label="Play"
@@ -260,7 +260,7 @@ export default function Trim(): React.JSX.Element {
               </button>
               <button
                 type="button"
-                className="btn btn--ghost trim__icon-btn"
+                className="btn btn--ghost icon-btn"
                 onClick={audio.pause}
                 disabled={!audio.playing}
                 aria-label="Pause"
@@ -270,7 +270,7 @@ export default function Trim(): React.JSX.Element {
               </button>
               <button
                 type="button"
-                className="btn btn--ghost trim__icon-btn"
+                className="btn btn--ghost icon-btn"
                 onClick={stop}
                 aria-label="Stop"
                 title="Stop"
@@ -285,7 +285,7 @@ export default function Trim(): React.JSX.Element {
               <button
                 type="button"
                 className={
-                  tool === 'cut' ? 'btn btn--ghost trim__icon-btn trim__icon-btn--active' : 'btn btn--ghost trim__icon-btn'
+                  tool === 'cut' ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'
                 }
                 onClick={() => setTool('cut')}
                 aria-label="Cut tool: drag to select and cut a range"
@@ -298,8 +298,8 @@ export default function Trim(): React.JSX.Element {
                 type="button"
                 className={
                   tool === 'navigate'
-                    ? 'btn btn--ghost trim__icon-btn trim__icon-btn--active'
-                    : 'btn btn--ghost trim__icon-btn'
+                    ? 'btn btn--ghost icon-btn icon-btn--active'
+                    : 'btn btn--ghost icon-btn'
                 }
                 onClick={() => setTool('navigate')}
                 aria-label="Navigate tool: drag to scroll, scroll wheel to zoom"
@@ -314,7 +314,7 @@ export default function Trim(): React.JSX.Element {
 
             <button
               type="button"
-              className="btn btn--ghost trim__icon-btn"
+              className="btn btn--ghost icon-btn"
               onClick={() => addMarkerAt(audio.currentMs)}
               aria-label={`Add marker at ${formatDuration(audio.currentMs)}`}
               title="Add marker (M)"
