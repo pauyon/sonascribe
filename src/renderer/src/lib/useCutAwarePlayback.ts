@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Recording } from '@shared/types'
 import { api } from './api'
 import type { AudioController } from './useAudio'
-import { compressPeaks, cutAt, realToVirtual, virtualDuration, virtualToReal } from './cuts'
+import { compressPeaks, cutAt, realToVirtual, virtualDuration, virtualToReal, type PeakBuckets } from './cuts'
+
+const EMPTY_PEAKS: PeakBuckets = { min: [], max: [] }
 
 /**
  * The "respect whatever cuts exist" layer shared by every page that plays a
@@ -20,13 +22,13 @@ export function useCutAwarePlayback(
   recording: Recording | null | undefined,
   audio: AudioController
 ): {
-  compressed: { values: number[]; seams: number[] }
+  compressed: PeakBuckets & { seams: number[] }
   virtualDur: number
   virtualPosition: number
   /** Seeks real playback to the real ms that corresponds to a virtual ms. */
   seekVirtual: (virtualMs: number) => void
 } {
-  const [peaks, setPeaks] = useState<number[] | null>(null)
+  const [peaks, setPeaks] = useState<PeakBuckets | null>(null)
 
   const id = recording?.id
   const status = recording?.status
@@ -45,7 +47,7 @@ export function useCutAwarePlayback(
     api
       .invoke('peaks:get', { recordingId: id })
       .then((result) => {
-        if (!cancelled) setPeaks(result.values)
+        if (!cancelled) setPeaks({ min: result.min, max: result.max })
       })
       .catch(() => {
         // A missing waveform is cosmetic — the range-input fallback still seeks.
@@ -59,7 +61,10 @@ export function useCutAwarePlayback(
   // The trim math (lib/cuts.ts) is pure and cheap, but there's no reason to
   // re-run it on every playback tick — only when the underlying data (peaks,
   // duration, or the cut list itself) actually changes.
-  const compressed = useMemo(() => compressPeaks(peaks ?? [], durationMs, cuts), [peaks, durationMs, cuts])
+  const compressed = useMemo(
+    () => compressPeaks(peaks ?? EMPTY_PEAKS, durationMs, cuts),
+    [peaks, durationMs, cuts]
+  )
   const virtualDur = useMemo(() => virtualDuration(durationMs, cuts), [durationMs, cuts])
   const virtualPosition = useMemo(
     () => realToVirtual(audio.currentMs, durationMs, cuts),

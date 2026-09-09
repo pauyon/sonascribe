@@ -35,8 +35,14 @@ export default function Editor(): React.JSX.Element {
   const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
   const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
-  const { markers, addMarkerAt, rename: renameMarker, recolor: recolorMarker, remove: removeMarker } =
-    useMarkers(recording, refetch)
+  const {
+    markers,
+    addMarkerAt,
+    rename: renameMarker,
+    recolor: recolorMarker,
+    remove: removeMarker,
+    clearAll: clearAllMarkers
+  } = useMarkers(recording, refetch)
 
   const durationMs = recording?.durationMs ?? 0
   const cuts = useMemo(() => recording?.cuts ?? [], [recording?.cuts])
@@ -158,7 +164,7 @@ export default function Editor(): React.JSX.Element {
           <div ref={playerSentinelRef}>
             <PlayerBar
               audio={audio}
-              peaks={compressed.values}
+              peaks={compressed}
               durationMs={recording.durationMs ?? 0}
               virtualDurationMs={virtualDur}
               positionMs={virtualPosition}
@@ -170,7 +176,7 @@ export default function Editor(): React.JSX.Element {
           {playerFloating && (
             <PlayerBar
               audio={audio}
-              peaks={compressed.values}
+              peaks={compressed}
               durationMs={recording.durationMs ?? 0}
               virtualDurationMs={virtualDur}
               positionMs={virtualPosition}
@@ -193,6 +199,7 @@ export default function Editor(): React.JSX.Element {
             onRename={renameMarker}
             onRecolor={recolorMarker}
             onRemove={removeMarker}
+            onClearAll={clearAllMarkers}
           />
         </>
       )}

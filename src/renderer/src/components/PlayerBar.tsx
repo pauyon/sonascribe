@@ -1,5 +1,6 @@
 import { PLAYBACK_RATES, type AudioController } from '../lib/useAudio'
 import { formatDuration } from '../lib/format'
+import type { PeakBuckets } from '../lib/cuts'
 import Waveform from './Waveform'
 
 /** Transport controls plus the waveform, driven by a shared AudioController. */
@@ -17,7 +18,7 @@ export default function PlayerBar({
   onSelectRange
 }: {
   audio: AudioController
-  peaks: number[] | null
+  peaks: PeakBuckets | null
   /** Duration from the database, used until the media element reports its own. */
   durationMs: number
   /** Pinned to the bottom of the window, in place of the normal in-flow card. */
@@ -55,7 +56,7 @@ export default function PlayerBar({
 
       <span className="player__time">{formatDuration(position)}</span>
 
-      {peaks && peaks.length > 0 ? (
+      {peaks && peaks.max.length > 0 ? (
         <Waveform
           peaks={peaks}
           durationMs={total}

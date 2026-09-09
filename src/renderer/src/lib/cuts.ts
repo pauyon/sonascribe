@@ -79,24 +79,35 @@ export function cutAt(realMs: number, cuts: Cut[]): Cut | null {
   return cuts.find((cut) => realMs >= cut.startMs && realMs < cut.endMs) ?? null
 }
 
+/** The real (signed) waveform envelope per bucket — `min` <= 0 <= `max`, same length. */
+export interface PeakBuckets {
+  min: number[]
+  max: number[]
+}
+
 /**
- * Filters the full (evenly-spaced, real-time) peaks array down to the
- * buckets that fall in a kept region, concatenated with no gap — the
- * compressed waveform's bar data — plus the virtual-ms offset of each seam
- * between two consecutive kept regions, so the waveform can mark where a
- * cut happened even though the removed audio itself is invisible.
+ * Filters the full (evenly-spaced, real-time) peaks down to the buckets that
+ * fall in a kept region, concatenated with no gap — the compressed
+ * waveform's bar data — plus the virtual-ms offset of each seam between two
+ * consecutive kept regions, so the waveform can mark where a cut happened
+ * even though the removed audio itself is invisible.
+ *
+ * `min`/`max` are sliced together from the same bucket-index selection, not
+ * computed independently — they must never drift out of sync with each other.
  */
 export function compressPeaks(
-  peaks: number[],
+  peaks: PeakBuckets,
   durationMs: number,
   cuts: Cut[]
-): { values: number[]; seams: number[] } {
-  if (peaks.length === 0 || durationMs <= 0) return { values: [], seams: [] }
+): PeakBuckets & { seams: number[] } {
+  const bucketCount = peaks.max.length
+  if (bucketCount === 0 || durationMs <= 0) return { min: [], max: [], seams: [] }
 
   const regions = keptRegions(durationMs, cuts)
-  const msPerBucket = durationMs / peaks.length
+  const msPerBucket = durationMs / bucketCount
 
-  const values: number[] = []
+  const min: number[] = []
+  const max: number[] = []
   const seams: number[] = []
   let accumulatedMs = 0
   for (let i = 0; i < regions.length; i++) {
@@ -105,39 +116,64 @@ export function compressPeaks(
     if (i > 0) seams.push(accumulatedMs)
 
     const startBucket = Math.floor(region.start / msPerBucket)
-    const endBucket = Math.min(peaks.length, Math.ceil(region.end / msPerBucket))
-    for (let b = startBucket; b < endBucket; b++) values.push(peaks[b])
+    const endBucket = Math.min(bucketCount, Math.ceil(region.end / msPerBucket))
+    for (let b = startBucket; b < endBucket; b++) {
+      min.push(peaks.min[b])
+      max.push(peaks.max[b])
+    }
 
     accumulatedMs += region.end - region.start
   }
 
-  return { values, seams }
+  return { min, max, seams }
 }
 
 /**
- * Slices an already-compressed peaks array down to a virtual-ms window,
- * re-based to window-local ms — the zoom viewport on the dedicated editor
- * page. `compressed.values` is assumed evenly spaced across
- * `[0, virtualDurationMs)`, same assumption `compressPeaks` builds it under.
+ * Slices already-compressed peaks down to a virtual-ms window, re-based to
+ * window-local ms — the zoom viewport on the dedicated editor page.
+ * `compressed`'s buckets are assumed evenly spaced across
+ * `[0, virtualDurationMs)`, same assumption `compressPeaks` builds under.
  */
 export function sliceCompressed(
-  compressed: { values: number[]; seams: number[] },
+  compressed: PeakBuckets & { seams: number[] },
   virtualDurationMs: number,
   windowStartMs: number,
   windowEndMs: number
-): { values: number[]; seams: number[] } {
-  const { values, seams } = compressed
-  if (values.length === 0 || virtualDurationMs <= 0) return { values: [], seams: [] }
+): PeakBuckets & { seams: number[] } {
+  const { min, max, seams } = compressed
+  const bucketCount = max.length
+  if (bucketCount === 0 || virtualDurationMs <= 0) return { min: [], max: [], seams: [] }
 
   const start = Math.max(0, Math.min(windowStartMs, virtualDurationMs))
   const end = Math.max(start, Math.min(windowEndMs, virtualDurationMs))
-  const msPerBucket = virtualDurationMs / values.length
+  const msPerBucket = virtualDurationMs / bucketCount
 
   const startBucket = Math.floor(start / msPerBucket)
-  const endBucket = Math.min(values.length, Math.ceil(end / msPerBucket))
+  const endBucket = Math.min(bucketCount, Math.ceil(end / msPerBucket))
 
   return {
-    values: values.slice(startBucket, endBucket),
+    min: min.slice(startBucket, endBucket),
+    max: max.slice(startBucket, endBucket),
     seams: seams.filter((s) => s >= start && s < end).map((s) => s - start)
   }
+}
+
+/**
+ * Picks a readable tick interval (in ms) for a time ruler spanning
+ * `durationMs` across `pixelWidth` — the smallest "nice" interval (1/5/10/15/
+ * 30s, 1/5/10/30min, ...) that still leaves at least ~70px between labels, so
+ * they never crowd regardless of zoom level.
+ */
+export function pickTickIntervalMs(durationMs: number, pixelWidth: number): number {
+  const NICE_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
+  const MIN_LABEL_SPACING_PX = 70
+  if (pixelWidth <= 0 || durationMs <= 0) return 1000
+
+  for (const seconds of NICE_SECONDS) {
+    const px = (seconds * 1000 * pixelWidth) / durationMs
+    if (px >= MIN_LABEL_SPACING_PX) return seconds * 1000
+  }
+  // Longer than an hour: fall back to whole-hour steps.
+  const hours = Math.ceil(durationMs / 3_600_000 / (pixelWidth / MIN_LABEL_SPACING_PX))
+  return Math.max(1, hours) * 3_600_000
 }

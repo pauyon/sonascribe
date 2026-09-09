@@ -701,18 +701,47 @@ body {
 
 /* ---------- dedicated editor page (Trim.tsx) ---------- */
 
-/* Taller than the inline player's 56px — more room to drag precisely once
-   zoomed in. A CSS override on the reused .waveform rather than a prop, so
-   neither Waveform.tsx nor PlayerBar.tsx need to know this page exists. */
-.trim__player .waveform {
-  height: 160px;
-}
-
-.trim__zoom {
+.trim__toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.trim__toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trim__toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+}
+
+.trim__toolbar-spacer {
+  flex: 1;
+}
+
+.trim__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.trim__icon-btn--active {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .trim__zoom-level {
@@ -721,6 +750,22 @@ body {
   font-variant-numeric: tabular-nums;
   min-width: 40px;
   text-align: center;
+}
+
+.trim__time {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Its own full-width panel now, not squeezed into a card beside transport
+   buttons — taller than the inline player's 56px for room to drag precisely
+   once zoomed in. */
+.trim__waveform .waveform {
+  height: 160px;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
 }
 
 .minimap {
@@ -906,6 +951,10 @@ body {
   height: 56px;
   cursor: pointer;
   min-width: 0;
+  /* A distinct, pale "canvas" panel behind the bars, rather than blending
+     into the surrounding card. */
+  background: var(--bg-hover);
+  border-radius: var(--r-xs);
 }
 
 .waveform:focus-visible {
@@ -929,6 +978,40 @@ body {
 
 .waveform--editable {
   cursor: crosshair;
+}
+
+.waveform--navigate {
+  cursor: grab;
+}
+
+.waveform--navigate:active {
+  cursor: grabbing;
+}
+
+/* ---------- time ruler (TimeRuler.tsx) ---------- */
+
+.ruler {
+  position: relative;
+  height: 18px;
+  margin-bottom: 2px;
+}
+
+.ruler__tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.ruler__label {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .waveform__selection {
@@ -986,10 +1069,6 @@ body {
 
 .page__actions--inline {
   margin: 4px 0 12px;
-}
-
-.trim__actions {
-  margin: -8px 0 16px;
 }
 
 .markers {

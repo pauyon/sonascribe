@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { PeakBuckets } from '../lib/cuts'
 import Waveform from './Waveform'
 
 /**
@@ -22,7 +23,7 @@ export default function WaveformMinimap({
   onViewportChange,
   onSeek
 }: {
-  peaks: number[]
+  peaks: PeakBuckets
   /** Virtual duration of the whole recording. */
   durationMs: number
   /** Overall playhead position, for the background strip's own progress line. */

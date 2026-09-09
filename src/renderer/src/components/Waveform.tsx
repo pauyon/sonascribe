@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
+import type { PeakBuckets } from '../lib/cuts'
 
 /**
  * Waveform strip with a playhead and click-to-seek.
  *
- * Drawn on a canvas from a peaks array supplied by the main process rather than
- * with wavesurfer.js: the audio is served over a custom scheme that the renderer
+ * Drawn on a canvas from peaks supplied by the main process rather than with
+ * wavesurfer.js: the audio is served over a custom scheme that the renderer
  * cannot fetch, so a library that loads the media itself has nothing to work
- * with. Given the peaks are already computed, drawing them is a small amount of
- * canvas code and keeps full control of theming and hit-testing.
+ * with. Given the peaks are already computed, drawing them is a small amount
+ * of canvas code and keeps full control of theming and hit-testing. Each bar
+ * is drawn from the real signed min/max sample in that bucket — the actual
+ * (usually asymmetric) waveform envelope, not a magnitude reflected
+ * symmetrically around the center line.
  *
- * Unit-agnostic on purpose: `peaks`/`durationMs`/`positionMs`/`onSeek` are
- * always in whatever unit the caller passes — usually real (original-file)
+ * Unit-agnostic on purpose: `durationMs`/`positionMs`/`onSeek` are always in
+ * whatever unit the caller passes — usually real (original-file)
  * milliseconds, but the recording-detail page's trim editor feeds it
  * *virtual* (cuts-compressed) milliseconds instead and this component has no
  * idea, and doesn't need to (see `lib/cuts.ts`).
@@ -23,9 +27,12 @@ export default function Waveform({
   seams,
   markers,
   editable = false,
-  onSelectRange
+  tool = 'cut',
+  onSelectRange,
+  onPan,
+  onZoom
 }: {
-  peaks: number[]
+  peaks: PeakBuckets
   durationMs: number
   positionMs: number
   onSeek: (ms: number) => void
@@ -33,10 +40,21 @@ export default function Waveform({
   seams?: number[]
   /** Colored jump-to pins, same units as `durationMs`. Visual only — jumping happens through a chip list, not by clicking the pin. */
   markers?: Array<{ positionMs: number; color: string }>
-  /** Enables drag-to-select a range (for cutting) instead of click-only seeking. */
+  /** Enables dragging (for cutting or panning, per `tool`) instead of click-only seeking. */
   editable?: boolean
-  /** Fires on drag-release with the selected range, same units as `durationMs`. */
+  /**
+   * Only meaningful when `editable`. `'cut'` (default): drag selects a range
+   * to cut, exactly as before. `'navigate'`: drag pans the view instead
+   * (`onPan`) and the scroll wheel zooms (`onZoom`) — a plain click still
+   * seeks in either tool.
+   */
+  tool?: 'cut' | 'navigate'
+  /** Fires on drag-release with the selected range, same units as `durationMs`. Cut tool only. */
   onSelectRange?: (startMs: number, endMs: number) => void
+  /** Fires per mouse-move while dragging in the navigate tool, with the incremental ms delta since the last event. */
+  onPan?: (deltaMs: number) => void
+  /** Fires on scroll in the navigate tool, with a zoom direction and the cursor's position (same units as `durationMs`). */
+  onZoom?: (direction: 1 | -1, atMs: number) => void
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -55,12 +73,15 @@ export default function Waveform({
       const styles = getComputedStyle(document.documentElement)
       // The stronger blue rather than the brand blue: this is a graphical
       // object under WCAG 1.4.11, which asks 3:1 against the unplayed bars.
+      // Unplayed bars use --border-strong, not --border: the waveform's own
+      // panel background is --bg-hover, and --border sits too close to it in
+      // both themes to read as a bar at all once drawn on top of it.
       colorsRef.current = {
         played:
           styles.getPropertyValue('--accent-strong').trim() ||
           styles.getPropertyValue('--accent').trim() ||
           '#3569ff',
-        pending: styles.getPropertyValue('--border').trim() || '#2a2d3a',
+        pending: styles.getPropertyValue('--border-strong').trim() || '#566c91',
         text: styles.getPropertyValue('--text').trim() || '#e8e9ef'
       }
       setColorsVersion((v) => v + 1)
@@ -104,6 +125,28 @@ export default function Waveform({
     const { width, height, dpr } = layers
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
+
+    // Amplitude gridlines, drawn under the bars so they only show through
+    // gaps and quiet stretches — the center (zero) line a touch more visible
+    // than the +0.5/-0.5 reference lines above and below it.
+    const mid = height / 2
+    ctx.save()
+    ctx.strokeStyle = colors.text
+    ctx.lineWidth = 1
+    ctx.globalAlpha = 0.08
+    ctx.beginPath()
+    ctx.moveTo(0, mid / 2)
+    ctx.lineTo(width, mid / 2)
+    ctx.moveTo(0, mid + mid / 2)
+    ctx.lineTo(width, mid + mid / 2)
+    ctx.stroke()
+    ctx.globalAlpha = 0.16
+    ctx.beginPath()
+    ctx.moveTo(0, mid)
+    ctx.lineTo(width, mid)
+    ctx.stroke()
+    ctx.restore()
+
     ctx.drawImage(layers.pending, 0, 0, width * dpr, height * dpr, 0, 0, width, height)
 
     const progressX = duration > 0 ? (pos / duration) * width : 0
@@ -193,15 +236,16 @@ export default function Waveform({
       canvas.style.width = `${width}px`
       canvas.style.height = `${height}px`
 
+      const bucketCount = peaks.max.length
       const colors = colorsRef.current
-      if (peaks.length === 0 || !colors) {
+      if (bucketCount === 0 || !colors) {
         layersRef.current = null
         canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
         return
       }
 
       const mid = height / 2
-      const barWidth = width / peaks.length
+      const barWidth = width / bucketCount
 
       const makeLayer = (color: string): HTMLCanvasElement => {
         const layer = document.createElement('canvas')
@@ -211,11 +255,18 @@ export default function Waveform({
         if (!lctx) return layer
         lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         lctx.fillStyle = color
-        for (let i = 0; i < peaks.length; i++) {
+        for (let i = 0; i < bucketCount; i++) {
           const x = i * barWidth
+          // The real signed envelope — usually asymmetric, unlike a plain
+          // magnitude reflected the same amount above and below center.
+          let top = mid - peaks.max[i] * mid
+          let bottom = mid - peaks.min[i] * mid
           // Always leave a hairline so silence still reads as a track.
-          const amplitude = Math.max(peaks[i] * (height / 2), 0.5)
-          lctx.fillRect(x, mid - amplitude, Math.max(barWidth - 0.5, 0.5), amplitude * 2)
+          if (bottom - top < 1) {
+            top = mid - 0.5
+            bottom = mid + 0.5
+          }
+          lctx.fillRect(x, top, Math.max(barWidth - 0.5, 0.5), bottom - top)
         }
         return layer
       }
@@ -258,18 +309,20 @@ export default function Waveform({
   }
 
   /**
-   * Drag-to-select, active only when `editable`. A plain click (negligible
-   * movement) still seeks, exactly like the read-only case — distinguished
-   * from a real selection by a small ms-distance threshold, not by a
-   * separate gesture, so there's nothing extra for the user to learn.
+   * Drag-to-select (cut tool) or drag-to-pan (navigate tool), active only
+   * when `editable`. A plain click (negligible movement) always still
+   * seeks, in either tool — distinguished from a real drag by a small
+   * ms-distance threshold, not by a separate gesture, so there's nothing
+   * extra for the user to learn.
    *
    * Tracked via window-level listeners (not React's onMouseMove/onMouseUp on
    * the div) so a drag that leaves the strip mid-gesture — normal mouse
    * behavior — still resolves correctly instead of getting stuck.
    */
   const dragStartMsRef = useRef<number | null>(null)
+  const lastPanMsRef = useRef<number | null>(null)
   const draggedRef = useRef(false)
-  /** Below this, a drag reads as a click instead of a selection. */
+  /** Below this, a drag reads as a click instead of a selection/pan. */
   const DRAG_THRESHOLD_MS = 60
 
   useEffect(() => {
@@ -279,6 +332,16 @@ export default function Waveform({
       const startMs = dragStartMsRef.current
       if (startMs == null) return
       const currentMs = msFromClientX(e.clientX)
+
+      if (tool === 'navigate') {
+        if (Math.abs(currentMs - startMs) > DRAG_THRESHOLD_MS) draggedRef.current = true
+        if (draggedRef.current && lastPanMsRef.current != null) {
+          onPan?.(currentMs - lastPanMsRef.current)
+        }
+        lastPanMsRef.current = currentMs
+        return
+      }
+
       if (Math.abs(currentMs - startMs) > DRAG_THRESHOLD_MS) draggedRef.current = true
       if (draggedRef.current) {
         setSelection({ startMs: Math.min(startMs, currentMs), endMs: Math.max(startMs, currentMs) })
@@ -288,7 +351,15 @@ export default function Waveform({
     function onUp(e: MouseEvent): void {
       const startMs = dragStartMsRef.current
       dragStartMsRef.current = null
+      lastPanMsRef.current = null
       if (startMs == null) return
+
+      if (tool === 'navigate') {
+        if (!draggedRef.current) onSeek(startMs)
+        draggedRef.current = false
+        return
+      }
+
       if (draggedRef.current) {
         const currentMs = msFromClientX(e.clientX)
         setSelection(null)
@@ -306,24 +377,41 @@ export default function Waveform({
       window.removeEventListener('mouseup', onUp)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, onSelectRange, onSeek, durationMs])
+  }, [editable, tool, onSelectRange, onPan, onSeek, durationMs])
 
   function handleMouseDown(e: React.MouseEvent<HTMLDivElement>): void {
     if (!editable) return
-    dragStartMsRef.current = msFromEvent(e)
+    const ms = msFromEvent(e)
+    dragStartMsRef.current = ms
+    lastPanMsRef.current = ms
     draggedRef.current = false
+  }
+
+  function handleWheel(e: React.WheelEvent<HTMLDivElement>): void {
+    if (!editable || tool !== 'navigate' || !onZoom) return
+    e.preventDefault()
+    onZoom(e.deltaY < 0 ? 1 : -1, msFromEvent(e))
   }
 
   return (
     <div
       ref={wrapRef}
-      className={editable ? 'waveform waveform--editable' : 'waveform'}
+      className={
+        editable ? `waveform waveform--${tool === 'navigate' ? 'navigate' : 'editable'}` : 'waveform'
+      }
       onClick={editable ? undefined : (e) => onSeek(msFromEvent(e))}
       onMouseDown={editable ? handleMouseDown : undefined}
       onMouseMove={(e) => setHoverMs(msFromEvent(e))}
       onMouseLeave={() => setHoverMs(null)}
+      onWheel={editable && tool === 'navigate' ? handleWheel : undefined}
       role="slider"
-      aria-label={editable ? 'Select a range to cut, or click to seek' : 'Seek through recording'}
+      aria-label={
+        editable
+          ? tool === 'navigate'
+            ? 'Drag to scroll, scroll wheel to zoom, or click to seek'
+            : 'Select a range to cut, or click to seek'
+          : 'Seek through recording'
+      }
       aria-valuemin={0}
       aria-valuemax={durationMs}
       aria-valuenow={positionMs}

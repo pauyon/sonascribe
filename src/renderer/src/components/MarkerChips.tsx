@@ -100,13 +100,15 @@ export default function MarkerChips({
   onJump,
   onRename,
   onRecolor,
-  onRemove
+  onRemove,
+  onClearAll
 }: {
   markers: Array<Marker & { jumpable: boolean }>
   onJump: (marker: Marker) => void
   onRename: (id: string, label: string) => void
   onRecolor: (id: string, color: string) => void
   onRemove: (id: string) => void
+  onClearAll: () => void
 }): React.JSX.Element | null {
   if (markers.length === 0) return null
 
@@ -123,6 +125,9 @@ export default function MarkerChips({
           onRemove={() => onRemove(marker.id)}
         />
       ))}
+      <button type="button" className="btn btn--ghost btn--sm" onClick={onClearAll}>
+        Clear all markers
+      </button>
     </div>
   )
 }

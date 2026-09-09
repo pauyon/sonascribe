@@ -130,7 +130,8 @@ export interface ApiSchema {
    */
   'peaks:get': {
     request: { recordingId: string; buckets?: number }
-    response: { values: number[]; durationMs: number }
+    /** The real (signed) waveform envelope per bucket — `min` <= 0 <= `max`. */
+    response: { min: number[]; max: number[]; durationMs: number }
   }
 
   /**

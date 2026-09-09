@@ -19,8 +19,10 @@ import { readWavInfo } from './wav'
 export const DEFAULT_BUCKETS = 2000
 
 export interface Peaks {
-  /** Normalized 0..1 amplitude per bucket, left to right. */
-  values: number[]
+  /** Normalized (<= 0) minimum sample per bucket, left to right — the real, signed envelope, not its magnitude. */
+  min: number[]
+  /** Normalized (>= 0) maximum sample per bucket, left to right. */
+  max: number[]
   durationMs: number
 }
 
@@ -58,7 +60,16 @@ async function readCache(wavPath: string, buckets: number): Promise<Peaks | null
   try {
     const raw = await readFile(cachePath(wavPath, buckets), 'utf8')
     const parsed = JSON.parse(raw) as Peaks
-    if (Array.isArray(parsed.values) && parsed.values.length === buckets) return parsed
+    // Also rejects a pre-min/max cache file (which had `values`, not
+    // `min`/`max`) — it just gets silently recomputed once, no migration needed.
+    if (
+      Array.isArray(parsed.min) &&
+      Array.isArray(parsed.max) &&
+      parsed.min.length === buckets &&
+      parsed.max.length === buckets
+    ) {
+      return parsed
+    }
     return null
   } catch {
     return null
@@ -75,11 +86,16 @@ async function computePeaks(wavPath: string, buckets: number): Promise<Peaks> {
   const bytesPerFrame = (info.bitsPerSample / 8) * info.channels
   const totalFrames = Math.floor(info.dataBytes / bytesPerFrame)
   if (totalFrames === 0) {
-    return { values: new Array<number>(buckets).fill(0), durationMs: info.durationMs }
+    return {
+      min: new Array<number>(buckets).fill(0),
+      max: new Array<number>(buckets).fill(0),
+      durationMs: info.durationMs
+    }
   }
 
   const framesPerBucket = Math.max(1, Math.ceil(totalFrames / buckets))
-  const values = new Array<number>(buckets).fill(0)
+  const min = new Array<number>(buckets).fill(0)
+  const max = new Array<number>(buckets).fill(0)
 
   const stream = createReadStream(wavPath, {
     start: info.dataOffset,
@@ -100,18 +116,20 @@ async function computePeaks(wavPath: string, buckets: number): Promise<Peaks> {
       // correct if it is ever pointed at a stereo file.
       const sample = buf.readInt16LE(f * bytesPerFrame)
       // 32768 is the magnitude of the most negative 16-bit value, so this maps
-      // the full range into 0..1 without ever exceeding it.
-      const amplitude = Math.abs(sample) / 32768
+      // the full range into -1..1 without ever exceeding it. Signed, not
+      // absolute — the real (asymmetric) waveform envelope, not its magnitude.
+      const normalized = sample / 32768
 
       const bucket = Math.min(buckets - 1, Math.floor((frameIndex + f) / framesPerBucket))
-      if (amplitude > values[bucket]) values[bucket] = amplitude
+      if (normalized > max[bucket]) max[bucket] = normalized
+      if (normalized < min[bucket]) min[bucket] = normalized
     }
 
     frameIndex += usableFrames
     carry = buf.subarray(usableBytes)
   }
 
-  return { values, durationMs: info.durationMs }
+  return { min, max, durationMs: info.durationMs }
 }
 
 /**

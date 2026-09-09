@@ -20,6 +20,7 @@ export function useMarkers(
   rename: (id: string, label: string) => void
   recolor: (id: string, color: string) => void
   remove: (id: string) => void
+  clearAll: () => void
 } {
   const markers = recording?.markers ?? []
 
@@ -47,5 +48,9 @@ export function useMarkers(
     persist(markers.filter((m) => m.id !== id))
   }
 
-  return { markers, addMarkerAt, rename, recolor, remove }
+  function clearAll(): void {
+    persist([])
+  }
+
+  return { markers, addMarkerAt, rename, recolor, remove, clearAll }
 }
