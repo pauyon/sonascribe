@@ -362,10 +362,12 @@ const peaks = await evaluate(
   client,
   `window.api.invoke('peaks:get', { recordingId: ${json(tone.id)}, buckets: 200 })`
 )
-check('peaks:get returns the requested resolution', peaks?.values?.length === 200,
-  `${peaks?.values?.length} buckets`)
-check('peaks are normalized to 0..1',
-  peaks.values.every((v) => typeof v === 'number' && v >= 0 && v <= 1))
+check('peaks:get returns the requested resolution',
+  peaks?.min?.length === 200 && peaks?.max?.length === 200,
+  `${peaks?.min?.length}/${peaks?.max?.length} buckets`)
+check('peaks are a signed min <= 0 <= max envelope',
+  peaks.min.every((v, i) => typeof v === 'number' && v <= 0 && v <= peaks.max[i]) &&
+    peaks.max.every((v) => typeof v === 'number' && v >= 0))
 check('peaks duration matches the recording', near(peaks.durationMs, tone.durationMs, 100),
   `${peaks.durationMs}ms`)
 
