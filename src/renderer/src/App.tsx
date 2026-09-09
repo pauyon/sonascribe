@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useEvent, useQuery } from './lib/api'
 import { formatDuration } from './lib/format'
@@ -6,6 +6,7 @@ import Library from './routes/Library'
 import Record from './routes/Record'
 import Editor from './routes/Editor'
 import Trim from './routes/Trim'
+import Ask from './routes/Ask'
 import Settings from './routes/Settings'
 import MiniRecorder from './routes/MiniRecorder'
 
@@ -31,12 +32,16 @@ const ICON = {
       <circle cx="12" cy="12" r="3.2" />
       <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
     </>
+  ),
+  ask: (
+    <path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
   )
 } as const
 
 const NAV = [
   { to: '/library', label: 'Library', icon: 'library' as const },
   { to: '/record', label: 'Record', icon: 'record' as const },
+  { to: '/ask', label: 'Ask', icon: 'ask' as const },
   { to: '/settings', label: 'Settings', icon: 'settings' as const }
 ]
 
@@ -64,7 +69,8 @@ function NavIcon({ name }: { name: keyof typeof ICON }): React.JSX.Element {
  * not a second copy of the library. It refreshes on the same event the library
  * listens to, so a recording that finishes transcribing updates here too.
  */
-function RecentList(): React.JSX.Element | null {
+/** `locked`: a recording is in progress, so following this link would silently end it (see App.tsx's own nav lock for why). */
+function RecentList({ locked }: { locked: boolean }): React.JSX.Element | null {
   const { data: recordings, refetch } = useQuery('recordings:list')
   useEvent('recording:updated', () => refetch())
 
@@ -78,8 +84,20 @@ function RecentList(): React.JSX.Element | null {
         <NavLink
           key={recording.id}
           to={`/recordings/${recording.id}`}
-          className={({ isActive }) => (isActive ? 'recent__item recent__item--active' : 'recent__item')}
-          title={recording.title}
+          className={({ isActive }) =>
+            [
+              'recent__item',
+              isActive ? 'recent__item--active' : null,
+              locked ? 'recent__item--locked' : null
+            ]
+              .filter(Boolean)
+              .join(' ')
+          }
+          onClick={(e) => {
+            if (locked) e.preventDefault()
+          }}
+          aria-disabled={locked}
+          title={locked ? 'Finish or discard the current recording first' : recording.title}
         >
           <span className="recent__title">{recording.title}</span>
           <span className="recent__meta">
@@ -95,35 +113,33 @@ function RecentList(): React.JSX.Element | null {
   )
 }
 
-/**
- * The theme already applied to the document.
- *
- * Read from the element rather than from storage: main.tsx sets it before React
- * mounts so the first frame is the right colour, and this keeps the button in
- * step with whatever it decided.
- */
-function currentTheme(): 'light' | 'dark' {
-  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
-}
-
 export default function App(): React.JSX.Element {
-  const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { data: info } = useQuery('app:info')
   const location = useLocation()
 
-  const toggleTheme = useCallback(() => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    // Light is the default, so it is expressed by the absence of the attribute
-    // rather than by a value — one less state for the stylesheet to handle.
-    if (next === 'dark') document.documentElement.dataset.theme = 'dark'
-    else delete document.documentElement.dataset.theme
-    try {
-      localStorage.setItem('sonascribe.theme', next)
-    } catch {
-      // Blocked storage only costs the preference surviving a restart.
-    }
-    setTheme(next)
-  }, [theme])
+  /**
+   * Whether a recording is currently in progress, anywhere — locks every
+   * sidebar link except Record itself so leaving the page can't silently
+   * end it the way it used to (Record.tsx's own capture teardown fires on
+   * unmount; navigating away mid-recording used to discard the take
+   * outright). Bootstraps from the same `recording:status` query
+   * `MiniRecorder.tsx` uses, then tracks live via broadcasts so it stays
+   * correct regardless of which window (this one or the mini pop-out)
+   * actually started/stopped/discarded it.
+   */
+  const { data: recordingStatus, loading: statusLoading } = useQuery('recording:status')
+  const [recordingActive, setRecordingActive] = useState(false)
+  const appliedInitialStatus = useRef(false)
+
+  useEffect(() => {
+    if (appliedInitialStatus.current || statusLoading) return
+    appliedInitialStatus.current = true
+    setRecordingActive(recordingStatus !== null)
+  }, [statusLoading, recordingStatus])
+
+  useEvent('recording:started', () => setRecordingActive(true))
+  useEvent('recording:stopped', () => setRecordingActive(false))
+  useEvent('recording:discarded', () => setRecordingActive(false))
 
   // The mini controls window loads this same bundle at a different hash
   // route and has no sidebar of its own — it's a bare, frameless utility
@@ -151,32 +167,40 @@ export default function App(): React.JSX.Element {
           <span>SonaScribe</span>
         </div>
         <nav className="sidebar__nav">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                isActive ? 'navlink navlink--active' : 'navlink'
-              }
-            >
-              <NavIcon name={item.icon} />
-              {item.label}
-            </NavLink>
-          ))}
+          {NAV.map((item) => {
+            // Record itself stays clickable — there must always be a way
+            // back to the live page — everything else is locked while a
+            // recording is in progress, the same reasoning as RecentList.
+            const locked = recordingActive && item.to !== '/record'
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  [
+                    'navlink',
+                    isActive ? 'navlink--active' : null,
+                    locked ? 'navlink--locked' : null
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                }
+                onClick={(e) => {
+                  if (locked) e.preventDefault()
+                }}
+                aria-disabled={locked}
+                title={locked ? 'Finish or discard the current recording first' : undefined}
+              >
+                <NavIcon name={item.icon} />
+                {item.label}
+              </NavLink>
+            )
+          })}
         </nav>
 
-        <RecentList />
+        <RecentList locked={recordingActive} />
 
         <div className="sidebar__footer">
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
-          >
-            {theme === 'dark' ? '☀' : '☾'}
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </button>
           <span>Local-only · nothing leaves this device</span>
           {info?.version && <span className="sidebar__version">v{info.version}</span>}
         </div>
@@ -187,6 +211,7 @@ export default function App(): React.JSX.Element {
           <Route path="/" element={<Navigate to="/library" replace />} />
           <Route path="/library" element={<Library />} />
           <Route path="/record" element={<Record />} />
+          <Route path="/ask" element={<Ask />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/recordings/:id" element={<Editor />} />
           <Route path="/recordings/:id/edit" element={<Trim />} />

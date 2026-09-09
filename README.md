@@ -90,11 +90,13 @@ src/
     services/ recorder.ts (WAV writer), importer.ts (ffmpeg normalize),
               peaks.ts, media-cleanup.ts, storage.ts (where recordings live, and relocating them),
               whisper.ts/parakeet.ts (transcription engines), models.ts (ASR model downloads),
-              jobs.ts (transcription queue)
+              jobs.ts (transcription queue), ollama.ts/chunking.ts/search.ts/answering.ts
+              (knowledge base: embed, chunk, retrieve, answer via a user-installed Ollama)
   preload/    the only renderer↔main bridge; allowlists channels
   shared/     types + the IPC contract both processes compile against
-  renderer/   React UI — Library, Record, Settings (incl. transcription models), the
-              recording detail view (playback + transcript), the dedicated trim editor
+  renderer/   React UI — Library, Record, Settings (incl. transcription models and the
+              knowledge base), the recording detail view (playback + transcript + Ask),
+              the library-wide Ask screen, the dedicated trim editor
 resources/bin/<platform>/   ffmpeg/whisper-cli/parakeet-cli binaries (git-ignored)
 ```
 
@@ -186,17 +188,19 @@ written file before finalizing; system-audio loopback with nothing playing
 produces a full-length file of digital zeroes, which byte count alone would
 not catch.
 
-**Transcription came back, scoped down.** This app used to transcribe,
-diarize speakers, answer questions about a transcript (offline RAG via
-llama.cpp), and capture screenshots during a recording, before all of that
-was stripped down to a plain recorder. Plain transcription (no speakers, no
-diarization, no RAG) was later added back on top of the stripped-down
-recorder, reusing the schema that stripping left behind: `utterances`/`words`
-are active again (`db/transcript.ts`), with `speaker_id`/`track_id` left
-`NULL` since there's no diarization or multi-track recording pointing at
-them. `tracks`, `speakers`, `voice_profiles`, `chunk_embeddings` and
-`screenshots` remain unreferenced. See `db/migrations.ts` for the full
-history.
+**Transcription, speakers, and the knowledge base all came back, reusing the
+original schema.** This app used to transcribe, diarize speakers, answer
+questions about a transcript (offline RAG via a bundled llama.cpp), and
+capture screenshots during a recording, before all of that was stripped down
+to a plain recorder. Transcription, speaker diarization, and RAG (now against
+a user-installed Ollama instead of a bundled model — see below) have all
+since been added back on top of the stripped-down recorder, reusing the
+schema that stripping left behind rather than re-deriving it: `utterances`/
+`words` (`db/transcript.ts`), `speakers` (`db/speakers.ts`), and
+`chunk_embeddings` (`db/chunks.ts`) are all active again. `tracks`,
+`voice_profiles`, and `screenshots` remain unreferenced — the multi-track
+recording and screenshot-capture features they supported haven't come back.
+See `db/migrations.ts` for the full history.
 
 **Transcription runs two possible engines, both native CLI sidecars —
 whisper.cpp for Whisper models, `parakeet-cli` (same whisper.cpp project) for
@@ -217,6 +221,29 @@ long utterance's words into ~500-character paragraphs for display (split
 only at sentence ends) without touching the stored row, so one five-minute
 monologue doesn't render as an unbroken wall of text under a single
 timestamp.
+
+**The knowledge base talks to a user-installed Ollama, never a bundled
+model.** Every other model this app uses (Whisper, Parakeet) is fetched and
+managed by the app itself, to a resumable download in `<userData>/models/`.
+Ollama is the one exception: `services/ollama.ts` is only ever an HTTP client
+against whatever the user already has running (`http://127.0.0.1:11434` by
+default, editable in Settings), the same way the earlier, since-removed RAG
+feature ran its own bundled `llama-server` — except here there's no process
+to spawn or manage, since Ollama runs on its own. "Not running" is a normal,
+common state throughout, not an error condition: Settings shows "not
+detected," and indexing/answering both no-op or degrade cleanly rather than
+throwing. Retrieval itself carries over unchanged from that earlier feature —
+transcripts are chunked (`services/chunking.ts`, ~800 characters, split at
+sentence boundaries using real word timings) and embedded once at index time
+(triggered after every write that changes a recording's utterances — a fresh
+transcription, a speaker-merge rewrite, or a hand edit — via
+`services/search.ts`'s `triggerReindex`); a question is embedded the same
+way and ranked against every stored chunk by cosine similarity in plain JS,
+no vector database, since personal-scale transcript data doesn't need one.
+The one real difference from before: retrieval can now span every indexed
+recording, not just the one currently open, which is what backs the
+library-wide Ask screen (`routes/Ask.tsx`) alongside the per-recording panel
+on `Editor.tsx`.
 
 **Logging persists to a file, because a packaged build has no terminal.**
 `src/main/log.ts` calls `electron-log`'s `Object.assign(console, log.functions)`

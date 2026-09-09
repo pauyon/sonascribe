@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { sourceMediaUrl } from '@shared/ipc'
 import { EXPORT_FORMATS } from '@shared/export'
+import { DEFAULT_MARKER_COLOR } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
 import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
@@ -16,18 +17,51 @@ import PlayerBar from '../components/PlayerBar'
 import MarkerChips from '../components/MarkerChips'
 import SpeakerChips from '../components/SpeakerChips'
 import TranscriptPanel from '../components/TranscriptPanel'
+import AskPanel from '../components/AskPanel'
 import OverflowMenu, { type OverflowMenuItem } from '../components/OverflowMenu'
+import Icon from '../components/Icon'
 
 /** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
 export default function Editor(): React.JSX.Element {
   const { id = '' } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { data: recording, error, loading, refetch } = useQuery('recordings:get', { id })
 
   const [draftTitle, setDraftTitle] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [transcriptMode, setTranscriptMode] = useState<'speakers' | 'timestamps'>('speakers')
+  /** The color the next marker will use — sticky across adds until the user picks a different one, so a run of moments can be tagged the same color in one pass. */
+  const [markerColor, setMarkerColor] = useState(DEFAULT_MARKER_COLOR)
+  /** Speaker id the transcript below is narrowed to, or null to show every speaker. */
+  const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [askOpen, setAskOpen] = useState(false)
+
+  /**
+   * Speakers (and their lines) hidden immediately on delete, before the
+   * delete is actually committed — the real IPC call is deferred behind
+   * `speakerDeleteTimers` so a misclick has a few seconds to be undone
+   * before it's unrecoverable. Deleting a speaker also deletes every line
+   * credited to them, so this is the one destructive action here that
+   * genuinely needs a way back.
+   */
+  const [hiddenSpeakerIds, setHiddenSpeakerIds] = useState<Set<string>>(new Set())
+  const [hiddenUtteranceIds, setHiddenUtteranceIds] = useState<Set<string>>(new Set())
+  const [pendingSpeakerDelete, setPendingSpeakerDelete] = useState<{
+    id: string
+    label: string
+    keepLines: boolean
+  } | null>(null)
+  // Deliberately never cleared on unmount: a delete the user didn't undo
+  // should still land even if they navigate away before the timer fires,
+  // rather than silently reverting. Keyed by speaker id (not a single ref)
+  // so deleting a second speaker before the first one's window elapses
+  // doesn't cancel the first one's real deletion — only the visible toast
+  // (a single `pendingSpeakerDelete`) is limited to the most recent.
+  const speakerDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -43,6 +77,22 @@ export default function Editor(): React.JSX.Element {
 
   const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
+
+  /**
+   * A citation from the library-wide Ask screen navigates here with a
+   * target timestamp in router state (`Ask.tsx`) rather than a query
+   * param, since it's a one-shot "jump once loaded" rather than a
+   * shareable URL. Waits for `durationMs` — metadata loaded — since a
+   * seek issued before that can be silently dropped by the media element.
+   * Clears the state afterward so revisiting this page normally (back
+   * button, sidebar) doesn't reseek.
+   */
+  useEffect(() => {
+    const seekMs = (location.state as { seekMs?: number } | null)?.seekMs
+    if (seekMs == null || audio.durationMs == null) return
+    audio.seek(seekMs)
+    navigate(location.pathname, { replace: true, state: null })
+  }, [audio.durationMs, audio.seek, location.state, location.pathname, navigate])
   const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
   const {
     markers,
@@ -184,38 +234,110 @@ export default function Editor(): React.JSX.Element {
     }
   }
 
+  const SPEAKER_DELETE_UNDO_MS = 6000
+
+  /**
+   * Hides a speaker (and, unless `keepLines`, their lines) immediately; the
+   * real delete lands after the undo window unless `undoSpeakerDelete`
+   * cancels it first. `keepLines` unassigns rather than removes each line,
+   * so nothing needs hiding on the transcript side for that case — the line
+   * just loses its speaker credit once the real call lands.
+   */
+  function removeSpeakerPending(speakerId: string, keepLines: boolean): void {
+    const target = speakers.speakers.find((s) => s.id === speakerId)
+    if (!target) return
+    const lineIds = keepLines
+      ? []
+      : (transcript.utterances ?? []).filter((u) => u.speaker?.id === speakerId).map((u) => u.id)
+
+    if (speakerFilter === speakerId) setSpeakerFilter(null)
+    setHiddenSpeakerIds((prev) => new Set(prev).add(speakerId))
+    if (!keepLines) {
+      setHiddenUtteranceIds((prev) => {
+        const next = new Set(prev)
+        for (const lineId of lineIds) next.add(lineId)
+        return next
+      })
+    }
+    setPendingSpeakerDelete({
+      id: speakerId,
+      keepLines,
+      label: keepLines
+        ? `${target.displayName} removed — their lines are kept, unassigned.`
+        : `${target.displayName} removed (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
+    })
+
+    const existing = speakerDeleteTimers.current.get(speakerId)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      speakerDeleteTimers.current.delete(speakerId)
+      setPendingSpeakerDelete((current) => (current?.id === speakerId ? null : current))
+      void (keepLines ? speakers.removeKeepLines(speakerId) : speakers.remove(speakerId))
+    }, SPEAKER_DELETE_UNDO_MS)
+    speakerDeleteTimers.current.set(speakerId, timer)
+  }
+
+  function undoSpeakerDelete(): void {
+    const pending = pendingSpeakerDelete
+    if (!pending) return
+    const timer = speakerDeleteTimers.current.get(pending.id)
+    if (timer) clearTimeout(timer)
+    speakerDeleteTimers.current.delete(pending.id)
+
+    setPendingSpeakerDelete(null)
+    setHiddenSpeakerIds((prev) => {
+      const next = new Set(prev)
+      next.delete(pending.id)
+      return next
+    })
+    setHiddenUtteranceIds((prev) => {
+      const next = new Set(prev)
+      for (const u of transcript.utterances ?? []) {
+        if (u.speaker?.id === pending.id) next.delete(u.id)
+      }
+      return next
+    })
+  }
+
   const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
   const hasSpeakers = speakers.speakers.length > 0
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const visibleUtterances = (transcript.utterances ?? []).filter(
+    (u) =>
+      !hiddenUtteranceIds.has(u.id) &&
+      (!speakerFilter || u.speaker?.id === speakerFilter) &&
+      (!normalizedSearch || u.text.toLowerCase().includes(normalizedSearch))
+  )
   const speakerBusy = recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting'
 
   const overflowGroups: OverflowMenuItem[][] = [
     // Edit — the one action used almost every time, so it leads.
     recording.sourcePath
-      ? [{ icon: '✏️', label: 'Edit', onClick: () => navigate(`/recordings/${recording.id}/edit`) }]
+      ? [{ icon: 'edit', label: 'Edit', onClick: () => navigate(`/recordings/${recording.id}/edit`) }]
       : [],
     // Processing: (re-)transcribe, then detect speakers off that transcript.
     [
       ...(recording.sourcePath && (recording.transcriptStatus === 'none' || recording.transcriptStatus === 'failed')
-        ? [
+        ? ([
             {
-              icon: '📝',
+              icon: 'transcribe',
               label: recording.transcriptStatus === 'failed' ? 'Retry transcription' : 'Transcribe',
               onClick: () => void transcript.start()
             }
-          ]
+          ] satisfies OverflowMenuItem[])
         : []),
       ...(recording.sourcePath && recording.transcriptStatus === 'ready'
-        ? [{ icon: '📝', label: 'Re-transcribe', onClick: () => void transcript.start() }]
+        ? ([{ icon: 'transcribe', label: 'Re-transcribe', onClick: () => void transcript.start() }] satisfies OverflowMenuItem[])
         : []),
       ...(hasTranscript
-        ? [
+        ? ([
             {
-              icon: '👥',
+              icon: 'speakers',
               label: hasSpeakers ? 'Re-run Speaker Detection' : 'Detect Speakers',
               onClick: () => void speakers.detect(),
               disabled: speakerBusy
             }
-          ]
+          ] satisfies OverflowMenuItem[])
         : [])
     ],
     // Copy: quick clipboard variants of the transcript already in view — collapsed
@@ -223,7 +345,7 @@ export default function Editor(): React.JSX.Element {
     hasTranscript
       ? [
           {
-            icon: '📋',
+            icon: 'copy',
             label: 'Copy Transcript',
             children: [
               { label: 'Copy Text', onClick: () => void copy(copyPlainText(transcript.utterances!)) },
@@ -239,30 +361,30 @@ export default function Editor(): React.JSX.Element {
     // the five transcript formats collapse into one flyout for the same reason.
     [
       ...(recording.sourcePath
-        ? [
+        ? ([
             {
-              icon: '📁',
+              icon: 'folder',
               label: 'Reveal in folder',
               onClick: () => void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
             },
-            { icon: '🔊', label: 'Export Audio', onClick: () => void exportAudio() }
-          ]
+            { icon: 'volume', label: 'Export Audio', onClick: () => void exportAudio() }
+          ] satisfies OverflowMenuItem[])
         : []),
       ...(hasTranscript
-        ? [
+        ? ([
             {
-              icon: '⬇️',
+              icon: 'download',
               label: 'Export Transcript',
               children: EXPORT_FORMATS.map((spec) => ({
                 label: spec.label,
                 onClick: () => void exportTranscript(spec.id)
               }))
             }
-          ]
+          ] satisfies OverflowMenuItem[])
         : [])
     ],
     // Delete — destructive, so it trails on its own.
-    [{ icon: '🗑️', label: 'Delete recording', danger: true, onClick: () => setConfirmingDelete(true) }]
+    [{ icon: 'trash', label: 'Delete recording', danger: true, onClick: () => setConfirmingDelete(true) }]
   ]
 
   return (
@@ -300,6 +422,35 @@ export default function Editor(): React.JSX.Element {
         </div>
 
         <div className="page__actions">
+          {hasTranscript && (
+            <button
+              type="button"
+              className={searchOpen ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'}
+              aria-pressed={searchOpen}
+              aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
+              title="Search transcript"
+              onClick={() =>
+                setSearchOpen((open) => {
+                  if (open) setSearchQuery('')
+                  return !open
+                })
+              }
+            >
+              <Icon name="search" />
+            </button>
+          )}
+          {hasTranscript && (
+            <button
+              type="button"
+              className={askOpen ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'}
+              aria-pressed={askOpen}
+              aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
+              title="Ask about this recording"
+              onClick={() => setAskOpen((open) => !open)}
+            >
+              <Icon name="chat" />
+            </button>
+          )}
           {hasSpeakers && (
             <button
               type="button"
@@ -311,7 +462,7 @@ export default function Editor(): React.JSX.Element {
               title={transcriptMode === 'speakers' ? 'Showing speakers & timestamps' : 'Showing timestamps only'}
               onClick={() => setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))}
             >
-              👥
+              <Icon name="speakers" />
             </button>
           )}
           <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
@@ -421,6 +572,9 @@ export default function Editor(): React.JSX.Element {
               onSeek={seekVirtual}
               seams={compressed.seams}
               markers={markerPins}
+              onAddMarker={() => addMarkerAt(audio.currentMs, markerColor)}
+              markerColor={markerColor}
+              onMarkerColorChange={setMarkerColor}
             />
           </div>
           {playerFloating && (
@@ -433,21 +587,12 @@ export default function Editor(): React.JSX.Element {
               onSeek={seekVirtual}
               seams={compressed.seams}
               markers={markerPins}
+              onAddMarker={() => addMarkerAt(audio.currentMs, markerColor)}
+              markerColor={markerColor}
+              onMarkerColorChange={setMarkerColor}
               floating
             />
           )}
-
-          <div className="page__actions page__actions--inline">
-            <button
-              type="button"
-              className="btn btn--ghost icon-btn"
-              onClick={() => addMarkerAt(audio.currentMs)}
-              aria-label={`Add marker at ${formatDuration(audio.currentMs)}`}
-              title={`Add marker at ${formatDuration(audio.currentMs)}`}
-            >
-              🚩
-            </button>
-          </div>
 
           <MarkerChips
             markers={annotatedMarkers}
@@ -458,25 +603,92 @@ export default function Editor(): React.JSX.Element {
             onClearAll={clearAllMarkers}
           />
 
+          {pendingSpeakerDelete && (
+            <div className="toast">
+              <span>{pendingSpeakerDelete.label}</span>
+              <button type="button" className="toast__action" onClick={undoSpeakerDelete}>
+                Undo
+              </button>
+            </div>
+          )}
+
+          {askOpen && (
+            <div className="ask-card">
+              <AskPanel
+                recordingId={recording.id}
+                onSeek={audio.seek}
+                onNavigateToRecording={(targetId, ms) =>
+                  navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
+                }
+              />
+            </div>
+          )}
+
+          {searchOpen && (
+            <div className="search-bar">
+              <Icon name="search" className="search-bar__icon" />
+              <input
+                type="text"
+                className="input search-bar__input"
+                value={searchQuery}
+                autoFocus
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="Search transcript…"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSearchOpen(false)
+                    setSearchQuery('')
+                  }
+                }}
+              />
+              {normalizedSearch && (
+                <span className="search-bar__count">
+                  {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
+                </span>
+              )}
+              <button
+                type="button"
+                className="search-bar__close"
+                onClick={() => {
+                  setSearchOpen(false)
+                  setSearchQuery('')
+                }}
+                aria-label="Close search"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
+
           {transcriptMode === 'speakers' && (
             <SpeakerChips
-              speakers={speakers.speakers}
+              speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
+              utterances={transcript.utterances ?? []}
+              filter={speakerFilter}
+              onFilterChange={setSpeakerFilter}
               onRename={speakers.rename}
               onRecolor={speakers.recolor}
               onMerge={speakers.merge}
-              onRemove={speakers.remove}
+              onRemove={removeSpeakerPending}
+              onCreate={speakers.create}
             />
           )}
 
           {recording.transcriptStatus === 'ready' && transcript.utterances && (
             <TranscriptPanel
-              utterances={transcript.utterances}
+              utterances={visibleUtterances}
               currentMs={audio.currentMs}
               onSeek={audio.seek}
               mode={transcriptMode}
-              speakers={speakers.speakers}
+              speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
               onReassignSpeaker={speakers.reassignUtterance}
               onEditText={transcript.editText}
+              onSplitUtterance={transcript.splitUtterance}
+              markers={markers}
+              highlightQuery={normalizedSearch || undefined}
+              isolatedSpeakerName={speakerFilter ? (speakers.speakers.find((s) => s.id === speakerFilter)?.displayName ?? null) : null}
             />
           )}
         </>

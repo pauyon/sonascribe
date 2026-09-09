@@ -2,6 +2,7 @@ import { PLAYBACK_RATES, type AudioController } from '../lib/useAudio'
 import { formatDuration } from '../lib/format'
 import type { PeakBuckets } from '../lib/cuts'
 import Waveform from './Waveform'
+import Icon from './Icon'
 
 /** Transport controls plus the waveform, driven by a shared AudioController. */
 export default function PlayerBar({
@@ -15,7 +16,10 @@ export default function PlayerBar({
   seams,
   markers,
   editable = false,
-  onSelectRange
+  onSelectRange,
+  onAddMarker,
+  markerColor,
+  onMarkerColorChange
 }: {
   audio: AudioController
   peaks: PeakBuckets | null
@@ -39,6 +43,12 @@ export default function PlayerBar({
   markers?: Array<{ positionMs: number; color: string }>
   editable?: boolean
   onSelectRange?: (startMs: number, endMs: number) => void
+  /** Shows a "flag this moment" button next to the rate control when supplied — the recording-detail page's own marker tool, kept inside the transport row rather than as a separate button below it. */
+  onAddMarker?: () => void
+  /** Current color new markers stamp with. Shown as a swatch beside the flag button, only when both this and `onMarkerColorChange` are supplied. */
+  markerColor?: string
+  /** Changes the color the *next* marker (and every one after, until changed again) will use — lets one pass mark a run of moments the same color before switching for the next batch, rather than recoloring each one after the fact. */
+  onMarkerColorChange?: (color: string) => void
 }): React.JSX.Element {
   const total = virtualDurationMs ?? audio.durationMs ?? durationMs
   const position = positionMs ?? audio.currentMs
@@ -51,7 +61,7 @@ export default function PlayerBar({
         onClick={audio.toggle}
         aria-label={audio.playing ? 'Pause' : 'Play'}
       >
-        {audio.playing ? '❚❚' : '▶'}
+        <Icon name={audio.playing ? 'pause' : 'play'} />
       </button>
 
       <span className="player__time">{formatDuration(position)}</span>
@@ -96,6 +106,30 @@ export default function PlayerBar({
       >
         {audio.rate}×
       </button>
+
+      {onAddMarker && markerColor && onMarkerColorChange && (
+        <input
+          type="color"
+          className="player__marker-color"
+          value={markerColor}
+          onChange={(e) => onMarkerColorChange(e.target.value)}
+          aria-label="Color for the next marker"
+          title="Color for the next marker"
+        />
+      )}
+
+      {onAddMarker && (
+        <button
+          type="button"
+          className="player__marker"
+          style={markerColor ? { color: markerColor } : undefined}
+          onClick={onAddMarker}
+          aria-label={`Add marker at ${formatDuration(position)}`}
+          title={`Add marker at ${formatDuration(position)}`}
+        >
+          <Icon name="flag" />
+        </button>
+      )}
 
       {audio.error && <span className="player__error">{audio.error}</span>}
     </div>

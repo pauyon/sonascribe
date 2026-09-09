@@ -1,4 +1,5 @@
 import type { AsrEngine } from '@shared/models'
+import { DEFAULT_OLLAMA_SERVER_URL } from '@shared/ollama'
 import { getDb } from './index'
 
 /** Typed accessors over the settings key/value table. */
@@ -12,7 +13,10 @@ const KEYS = {
   mediaRoot: 'recording.mediaRoot',
   transcriptionEngine: 'transcription.engine',
   transcriptionLanguage: 'transcription.language',
-  modelIdForEngine: (engine: AsrEngine): string => `transcription.modelId.${engine}`
+  modelIdForEngine: (engine: AsrEngine): string => `transcription.modelId.${engine}`,
+  ragEmbeddingModel: 'rag.embeddingModel',
+  ragChatModel: 'rag.chatModel',
+  ragServerUrl: 'rag.serverUrl'
 } as const
 
 function get(key: string): string | null {
@@ -153,4 +157,31 @@ export function getTranscriptionLanguage(): string {
 
 export function setTranscriptionLanguage(language: string): void {
   set(KEYS.transcriptionLanguage, language)
+}
+
+/** Ollama model used to embed transcript chunks, or null until the user picks one in Settings. */
+export function getRagEmbeddingModel(): string | null {
+  return get(KEYS.ragEmbeddingModel)
+}
+
+export function setRagEmbeddingModel(model: string): void {
+  set(KEYS.ragEmbeddingModel, model)
+}
+
+/** Ollama model used to answer questions grounded in retrieved chunks. */
+export function getRagChatModel(): string | null {
+  return get(KEYS.ragChatModel)
+}
+
+export function setRagChatModel(model: string): void {
+  set(KEYS.ragChatModel, model)
+}
+
+/** Base URL of the Ollama server. Editable so a Docker/LAN Ollama install works too, not just localhost. */
+export function getRagServerUrl(): string {
+  return get(KEYS.ragServerUrl) || DEFAULT_OLLAMA_SERVER_URL
+}
+
+export function setRagServerUrl(url: string): void {
+  set(KEYS.ragServerUrl, url)
 }

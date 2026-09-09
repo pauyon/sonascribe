@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Marker } from '@shared/types'
 import { formatDuration } from '../lib/format'
+import Icon from './Icon'
 
 /** One chip: color swatch, editable label, timestamp, jump/remove. */
 function MarkerChip({
@@ -84,7 +85,7 @@ function MarkerChip({
         aria-label={`Remove marker ${marker.label || formatDuration(marker.timeMs)}`}
         title="Remove this marker"
       >
-        ×
+        <Icon name="close" />
       </button>
     </span>
   )

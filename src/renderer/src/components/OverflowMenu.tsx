@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import Icon, { type IconName } from './Icon'
 
 export interface OverflowMenuItem {
   label: string
   /** Omitted when `children` turns this row into a submenu trigger instead of an action. */
   onClick?: () => void
-  /** A plain Unicode glyph, matching this app's existing icon-button convention (see MiniRecorder.tsx) rather than a separate SVG asset per icon. */
-  icon?: string
+  icon?: IconName
   /** Turns this row into a hover/click-revealed flyout of further items — for collapsing a run of related actions (export formats, copy variants) into one row so the menu doesn't grow tall. */
   children?: OverflowMenuItem[]
   /** Red, for a destructive action — mirrors `.menu__danger` elsewhere in the app. */
@@ -118,7 +118,7 @@ export default function OverflowMenu({
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        ⋯
+        <Icon name="more" className="overflow-menu__trigger-icon" />
       </button>
       {open && (
         <div
@@ -155,17 +155,9 @@ export default function OverflowMenu({
                         item.onClick?.()
                       }}
                     >
-                      {item.icon && (
-                        <span className="overflow-menu__icon" aria-hidden="true">
-                          {item.icon}
-                        </span>
-                      )}
+                      {item.icon && <Icon name={item.icon} className="overflow-menu__icon" />}
                       {item.label}
-                      {item.children && (
-                        <span className="overflow-menu__chevron" aria-hidden="true">
-                          ›
-                        </span>
-                      )}
+                      {item.children && <Icon name="chevronRight" className="overflow-menu__chevron" />}
                     </button>
                     {item.children && openSubmenu === key && (
                       <div
@@ -188,11 +180,7 @@ export default function OverflowMenu({
                               sub.onClick?.()
                             }}
                           >
-                            {sub.icon && (
-                              <span className="overflow-menu__icon" aria-hidden="true">
-                                {sub.icon}
-                              </span>
-                            )}
+                            {sub.icon && <Icon name={sub.icon} className="overflow-menu__icon" />}
                             {sub.label}
                           </button>
                         ))}

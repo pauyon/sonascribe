@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { DEFAULT_MARKER_COLOR } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatDuration } from '../lib/format'
+import Icon from '../components/Icon'
 
 /**
  * The pop-out recording controls: a small always-on-top window with the
@@ -27,6 +29,7 @@ export default function MiniRecorder(): React.JSX.Element {
 
   const [paused, setPausedState] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(0)
+  const [markerCount, setMarkerCount] = useState(0)
   /**
    * True from the moment Stop or Discard is clicked — here, or in the main
    * Record window, which is why this is driven by `recording:sessionEnded`
@@ -37,18 +40,25 @@ export default function MiniRecorder(): React.JSX.Element {
    * through that whole window.
    */
   const [finishing, setFinishing] = useState(false)
-  // Bootstraps from the query once; every toggle after that arrives as a
-  // recording:pauseChanged broadcast instead, from whichever window sent it.
+  // Bootstraps from the query once; every change after that arrives as a
+  // broadcast instead (recording:pauseChanged, recording:markerAdded), from
+  // whichever window sent it. Markers added before this window even existed
+  // — this can open mid-session — never fired a broadcast it was around to
+  // hear, so its count starts from the real total, not zero.
   const appliedStatusRef = useRef(false)
 
   useEffect(() => {
     if (appliedStatusRef.current || !status) return
     appliedStatusRef.current = true
     setPausedState(status.paused)
+    setMarkerCount(status.markerCount)
   }, [status])
 
   useEvent('recording:pauseChanged', (payload) => setPausedState(payload.paused))
   useEvent('recording:elapsedTick', (payload) => setElapsedMs(payload.elapsedMs))
+  // Counts every marker added this session, regardless of which window (this
+  // one or the main Record screen) actually called recording:addMarker.
+  useEvent('recording:markerAdded', () => setMarkerCount((n) => n + 1))
   // Fired the instant a stop begins anywhere — before the slow work that
   // follows it — so the transport disables immediately even when Stop was
   // clicked on the main window rather than here. See `finishing` above.
@@ -90,6 +100,11 @@ export default function MiniRecorder(): React.JSX.Element {
     }
   }
 
+  /** Flags the current moment — `elapsedMs` here is the relayed copy of Record.tsx's own timer, the same position it shows. */
+  function mark(): void {
+    void api.invoke('recording:addMarker', { elapsedMs })
+  }
+
   return (
     <div className="mini">
       <div className="mini__head">
@@ -104,7 +119,7 @@ export default function MiniRecorder(): React.JSX.Element {
           aria-label="Close pop-out controls"
           title="Close (the recording keeps going)"
         >
-          ✕
+          <Icon name="close" />
         </button>
       </div>
 
@@ -119,13 +134,24 @@ export default function MiniRecorder(): React.JSX.Element {
           <div className="mini__toolbar">
             <button
               type="button"
+              className="btn btn--ghost mini__icon-btn mini__mark-btn"
+              onClick={mark}
+              disabled={finishing}
+              title="Mark this moment, to jump back to it later"
+              aria-label="Mark this moment"
+            >
+              <Icon name="flag" style={{ color: DEFAULT_MARKER_COLOR }} />
+              {markerCount > 0 && <span className="mini__mark-count">{markerCount}</span>}
+            </button>
+            <button
+              type="button"
               className="btn mini__icon-btn"
               onClick={() => void api.invoke('recording:pause', { paused: !paused })}
               disabled={finishing}
               title={paused ? 'Resume' : 'Pause'}
               aria-label={paused ? 'Resume' : 'Pause'}
             >
-              {paused ? '▶' : '⏸'}
+              <Icon name={paused ? 'play' : 'pause'} />
             </button>
             <button
               type="button"
@@ -135,7 +161,7 @@ export default function MiniRecorder(): React.JSX.Element {
               title="Stop & save"
               aria-label="Stop and save"
             >
-              ⏹
+              <Icon name="stop" />
             </button>
             <button
               type="button"
@@ -145,7 +171,7 @@ export default function MiniRecorder(): React.JSX.Element {
               title="Discard (delete this recording)"
               aria-label="Discard this recording"
             >
-              🗑
+              <Icon name="trash" />
             </button>
           </div>
         </>

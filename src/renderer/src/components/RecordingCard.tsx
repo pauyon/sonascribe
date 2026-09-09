@@ -5,6 +5,7 @@ import { useAudio } from '../lib/useAudio'
 import { formatDate, formatDuration } from '../lib/format'
 import StatusPill from './StatusPill'
 import OverflowMenu, { type OverflowMenuItem } from './OverflowMenu'
+import Icon from './Icon'
 
 /** Titles the app generated itself, which only repeat the timestamp below them. */
 const AUTO_TITLE = /^Recording \d{1,2}\/\d{1,2}\/\d{4}/
@@ -68,9 +69,9 @@ export default function RecordingCard({
 
   const menuGroups: OverflowMenuItem[][] = [
     [
-      { icon: '▶', label: 'Open', onClick: () => onOpen(recording.id) },
+      { icon: 'open', label: 'Open', onClick: () => onOpen(recording.id) },
       {
-        icon: '✏️',
+        icon: 'edit',
         label: 'Rename',
         onClick: () => {
           setDraft(recording.title)
@@ -80,18 +81,26 @@ export default function RecordingCard({
     ],
     [
       ...(recording.transcriptStatus === 'ready'
-        ? [{ icon: '📝', label: 'Re-Transcribe', onClick: () => onTranscribe(recording.id) }]
+        ? [{ icon: 'transcribe', label: 'Re-Transcribe', onClick: () => onTranscribe(recording.id) } satisfies OverflowMenuItem]
         : recording.sourcePath
-          ? [{ icon: '📝', label: 'Transcribe', onClick: () => onTranscribe(recording.id) }]
+          ? [{ icon: 'transcribe', label: 'Transcribe', onClick: () => onTranscribe(recording.id) } satisfies OverflowMenuItem]
           : [])
     ],
     [
       ...(recording.transcriptStatus === 'ready'
-        ? [{ icon: '⬇️', label: 'Export Transcript', onClick: () => onExportTranscript(recording.id) }]
+        ? [
+            {
+              icon: 'download',
+              label: 'Export Transcript',
+              onClick: () => onExportTranscript(recording.id)
+            } satisfies OverflowMenuItem
+          ]
         : []),
-      ...(recording.sourcePath ? [{ icon: '🔊', label: 'Export Audio', onClick: () => onExportAudio(recording.id) }] : [])
+      ...(recording.sourcePath
+        ? [{ icon: 'volume', label: 'Export Audio', onClick: () => onExportAudio(recording.id) } satisfies OverflowMenuItem]
+        : [])
     ],
-    [{ icon: '🗑️', label: 'Delete', danger: true, onClick: () => onDelete(recording.id) }]
+    [{ icon: 'trash', label: 'Delete', danger: true, onClick: () => onDelete(recording.id) }]
   ]
 
   return (
@@ -151,7 +160,7 @@ export default function RecordingCard({
             }}
           >
             <span className="rec__glyph" aria-hidden="true">
-              {audio.playing ? '❚❚' : '▶'}
+              <Icon name={audio.playing ? 'pause' : 'play'} />
             </span>
             <span className="rec__time">
               {formatDuration(

@@ -21,10 +21,15 @@ export function useSpeakers(
   detect: () => Promise<void>
   cancel: () => void
   detectError: string | null
+  /** Adds a new, empty speaker — for detection undercounting (missed someone) rather than misattributing a line. */
+  create: () => Promise<void>
   rename: (id: string, displayName: string) => Promise<void>
   recolor: (id: string, color: string) => Promise<void>
   merge: (fromId: string, intoId: string) => Promise<void>
+  /** Deletes the speaker and every line credited to them. */
   remove: (id: string) => Promise<void>
+  /** Deletes the speaker but leaves their lines in place, unassigned. */
+  removeKeepLines: (id: string) => Promise<void>
   reassignUtterance: (utteranceId: string, speakerId: string | null) => Promise<void>
 } {
   const { data, loading, error: loadError, refetch } = useQuery('speakers:list', { recordingId })
@@ -63,6 +68,12 @@ export function useSpeakers(
     void api.invoke('speakers:cancel', { recordingId })
   }
 
+  async function create(): Promise<void> {
+    await api.invoke('speakers:create', { recordingId })
+    refetch()
+    onChange?.()
+  }
+
   async function rename(id: string, displayName: string): Promise<void> {
     await api.invoke('speakers:rename', { id, displayName })
     refetch()
@@ -87,6 +98,12 @@ export function useSpeakers(
     onChange?.()
   }
 
+  async function removeKeepLines(id: string): Promise<void> {
+    await api.invoke('speakers:deleteKeepingLines', { id })
+    refetch()
+    onChange?.()
+  }
+
   async function reassignUtterance(utteranceId: string, speakerId: string | null): Promise<void> {
     await api.invoke('speakers:reassignUtterance', { utteranceId, speakerId })
     refetch()
@@ -101,10 +118,12 @@ export function useSpeakers(
     detect,
     cancel,
     detectError,
+    create,
     rename,
     recolor,
     merge,
     remove,
+    removeKeepLines,
     reassignUtterance
   }
 }

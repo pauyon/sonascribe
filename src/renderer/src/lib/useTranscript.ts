@@ -19,6 +19,8 @@ export function useTranscript(recordingId: string): {
   startError: string | null
   /** Hand-corrects one utterance's text. */
   editText: (utteranceId: string, text: string) => Promise<void>
+  /** Splits one utterance into two at a word boundary — two people's sentences the diarizer ran together into one line. */
+  splitUtterance: (utteranceId: string, wordIndex: number) => Promise<void>
   /** Re-fetches utterances — needed after a speaker rename/recolor/merge, which changes what each utterance's embedded `speaker` carries without touching `transcriptStatus`. */
   refetch: () => void
 } {
@@ -77,5 +79,21 @@ export function useTranscript(recordingId: string): {
     refetch()
   }
 
-  return { utterances: data, loading, loadError, progress, start, cancel, startError, editText, refetch }
+  async function splitUtterance(utteranceId: string, wordIndex: number): Promise<void> {
+    await api.invoke('transcript:splitUtterance', { utteranceId, wordIndex })
+    refetch()
+  }
+
+  return {
+    utterances: data,
+    loading,
+    loadError,
+    progress,
+    start,
+    cancel,
+    startError,
+    editText,
+    splitUtterance,
+    refetch
+  }
 }

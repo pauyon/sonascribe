@@ -51,6 +51,18 @@ export interface Marker {
   color: string
 }
 
+/**
+ * A warm amber rather than the app's own accent blue: a new marker's default
+ * color used to match the waveform's "played" bar fill exactly (both drew
+ * from `--accent-strong`), which read fine against the light theme's near-
+ * white waveform panel but all but vanished against the dark theme's navy
+ * one. Picked from `SPEAKER_COLORS` for the same colourblind-safe reasoning
+ * that palette was built for. Shared rather than renderer-only so a marker
+ * added live during a recording (main process) gets the identical default a
+ * marker added during playback (renderer) does.
+ */
+export const DEFAULT_MARKER_COLOR = '#e5a43b'
+
 export interface Recording {
   id: string
   title: string

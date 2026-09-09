@@ -112,13 +112,81 @@ export function getAllWords(recordingId: string): TranscriptWord[] {
  * the ASR — part of the schema from before this app was stripped down,
  * unused until now.
  */
-export function updateUtteranceText(utteranceId: string, text: string): void {
+/** Returns the owning recording's id, so a caller can trigger a knowledge-base reindex without a second query. */
+export function updateUtteranceText(utteranceId: string, text: string): string {
   const db = getDb()
   db.exec('BEGIN')
   try {
+    const utterance = db.prepare('SELECT recording_id FROM utterances WHERE id = ?').get(utteranceId) as unknown as
+      | { recording_id: string }
+      | undefined
+    if (!utterance) throw new Error('That line no longer exists')
+
     db.prepare('DELETE FROM words WHERE utterance_id = ?').run(utteranceId)
     db.prepare('UPDATE utterances SET text = ?, edited = 1 WHERE id = ?').run(text, utteranceId)
     db.exec('COMMIT')
+    return utterance.recording_id
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
+/**
+ * Splits one utterance into two at a word boundary — for the diarizer
+ * running two people's sentences together into one line rather than a
+ * misattribution (which reassigning the whole line already covers). Unlike
+ * `updateUtteranceText`, both halves keep their real per-word ASR timing:
+ * the boundary is a word index, not a hand-typed guess, so there's nothing
+ * to invalidate. The first half keeps the original row (and id — nothing
+ * else needs to know it split); the second half is a new row starting at
+ * `wordIndex`, initially crediting the same speaker as the original since a
+ * clash is usually exactly two different speakers — reassigning it is a
+ * separate, already-existing action once the split lands.
+ */
+/** Returns the owning recording's id, so a caller can trigger a knowledge-base reindex without a second query. */
+export function splitUtterance(utteranceId: string, wordIndex: number): string {
+  const db = getDb()
+  db.exec('BEGIN')
+  try {
+    const utterance = db
+      .prepare('SELECT recording_id, speaker_id, confidence FROM utterances WHERE id = ?')
+      .get(utteranceId) as unknown as { recording_id: string; speaker_id: string | null; confidence: number | null } | undefined
+    if (!utterance) throw new Error('That line no longer exists')
+
+    const words = db
+      .prepare('SELECT id, start_ms, end_ms, text FROM words WHERE utterance_id = ? ORDER BY start_ms')
+      .all(utteranceId) as unknown as Array<{ id: string; start_ms: number; end_ms: number; text: string }>
+    if (wordIndex <= 0 || wordIndex >= words.length) throw new Error('Nothing to split at that point')
+
+    const firstWords = words.slice(0, wordIndex)
+    const secondWords = words.slice(wordIndex)
+
+    db.prepare('UPDATE utterances SET end_ms = ?, text = ? WHERE id = ?').run(
+      firstWords[firstWords.length - 1].end_ms,
+      firstWords.map((w) => w.text).join(' '),
+      utteranceId
+    )
+
+    const secondId = randomUUID()
+    db.prepare(
+      `INSERT INTO utterances (id, recording_id, speaker_id, start_ms, end_ms, text, confidence)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      secondId,
+      utterance.recording_id,
+      utterance.speaker_id,
+      secondWords[0].start_ms,
+      secondWords[secondWords.length - 1].end_ms,
+      secondWords.map((w) => w.text).join(' '),
+      utterance.confidence
+    )
+
+    const reassignWord = db.prepare('UPDATE words SET utterance_id = ? WHERE id = ?')
+    for (const word of secondWords) reassignWord.run(secondId, word.id)
+
+    db.exec('COMMIT')
+    return utterance.recording_id
   } catch (err) {
     db.exec('ROLLBACK')
     throw err

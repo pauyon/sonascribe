@@ -1,7 +1,15 @@
 import { rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import type { Recording } from '@shared/types'
-import { createRecording, deleteRecording, setRecordingDuration, setRecordingSourcePath, setRecordingStatus } from '../db/recordings'
+import { DEFAULT_MARKER_COLOR, type Marker, type Recording } from '@shared/types'
+import {
+  createRecording,
+  deleteRecording,
+  setRecordingDuration,
+  setRecordingMarkers,
+  setRecordingSourcePath,
+  setRecordingStatus
+} from '../db/recordings'
 import { recordingMediaDir } from './storage'
 import { emit } from '../ipc/events'
 import { focusMainWindow } from '../windows/main-window'
@@ -33,6 +41,8 @@ interface Session {
   writer: WavWriter
   startedAt: number
   paused: boolean
+  /** Marked live, in the moment — see `addMarker` — and persisted once the recording stops. */
+  markers: Marker[]
 }
 
 let session: Session | null = null
@@ -70,8 +80,9 @@ export function startRecording(input: StartRecordingInput): Recording {
   const dir = recordingMediaDir(recording.id)
   const writer = new WavWriter(join(dir, 'recording.wav'), input.sampleRate)
 
-  session = { recordingId: recording.id, writer, startedAt: Date.now(), paused: false }
+  session = { recordingId: recording.id, writer, startedAt: Date.now(), paused: false, markers: [] }
   setRecordingStatus(recording.id, 'normalizing')
+  emit('recording:started', { recordingId: recording.id })
 
   return { ...recording, status: 'normalizing' }
 }
@@ -94,9 +105,33 @@ export function setPaused(paused: boolean): void {
   emit('recording:pauseChanged', { paused })
 }
 
-/** Current session, for a freshly opened mini controls window to bootstrap from. */
-export function getRecordingStatus(): { recordingId: string; paused: boolean } | null {
-  return session ? { recordingId: session.recordingId, paused: session.paused } : null
+/**
+ * Marks the current moment, for a user who wants to jump back to it later
+ * without waiting for the recording to finish first. `elapsedMs` comes from
+ * the caller (Record.tsx's own paused-time-excluding timer, or the mini
+ * window's relayed copy of it) since this module doesn't track elapsed time
+ * itself — only `recording:elapsed` calls relay it, for the broadcast mini
+ * windows read from. Held in memory and persisted for real by `stopRecording`,
+ * the same way the rest of a session's state lives only here until then.
+ */
+export function addMarker(elapsedMs: number): Marker {
+  if (!session) throw new RecordingError('No recording in progress')
+  const marker: Marker = {
+    id: randomUUID(),
+    timeMs: Math.max(0, elapsedMs),
+    label: '',
+    color: DEFAULT_MARKER_COLOR
+  }
+  session.markers.push(marker)
+  emit('recording:markerAdded', marker)
+  return marker
+}
+
+/** Current session, for a freshly opened mini controls window to bootstrap from — including markers already added before it existed to see their broadcasts. */
+export function getRecordingStatus(): { recordingId: string; paused: boolean; markerCount: number } | null {
+  return session
+    ? { recordingId: session.recordingId, paused: session.paused, markerCount: session.markers.length }
+    : null
 }
 
 export interface RecordingSummary {
@@ -147,6 +182,9 @@ export async function stopRecording(): Promise<RecordingSummary> {
   setRecordingDuration(current.recordingId, durationMs)
   setRecordingSourcePath(current.recordingId, current.writer.path)
   setRecordingStatus(current.recordingId, 'ready')
+  if (current.markers.length > 0) {
+    setRecordingMarkers(current.recordingId, current.markers, durationMs)
+  }
 
   const summary = { recordingId: current.recordingId, durationMs, silent: false }
   emit('recording:stopped', summary)

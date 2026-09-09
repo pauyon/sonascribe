@@ -21,6 +21,13 @@ import type {
 } from './types'
 import type { AsrEngine, ModelDownloadProgress, ModelStatus } from './models'
 import type { ExportFormat } from './export'
+import type {
+  AskResult,
+  OllamaPullProgress,
+  OllamaStatus,
+  RagIndexStatus,
+  RagSettings
+} from './ollama'
 
 export interface ApiSchema {
   'recordings:list': {
@@ -190,7 +197,7 @@ export interface ApiSchema {
    */
   'recording:status': {
     request: void
-    response: { recordingId: string; paused: boolean } | null
+    response: { recordingId: string; paused: boolean; markerCount: number } | null
   }
   /**
    * Relays the elapsed time Record.tsx already tracks (it alone accounts for
@@ -200,6 +207,20 @@ export interface ApiSchema {
   'recording:elapsed': {
     request: { elapsedMs: number }
     response: void
+  }
+  /**
+   * Marks the current moment during an in-progress recording — flag-while-
+   * capturing, rather than only after the fact on the recording-detail page.
+   * `elapsedMs` is the caller's own already-paused-time-excluded timer
+   * (Record.tsx's directly, or the mini window's relayed copy of it), since
+   * main doesn't track elapsed time itself. Persisted for real once the
+   * recording stops; broadcast via `recording:markerAdded` so every open
+   * window (main or mini, regardless of which one this was called from)
+   * can show the running count.
+   */
+  'recording:addMarker': {
+    request: { elapsedMs: number }
+    response: Marker
   }
 
   /** Reveals a file in the OS file manager, selected. */
@@ -279,6 +300,11 @@ export interface ApiSchema {
     request: { utteranceId: string; text: string }
     response: void
   }
+  /** Splits one utterance into two at a word boundary — for two people's sentences the diarizer ran together into one line. Both halves keep their real per-word timing; the second half starts credited to the same speaker as the original. */
+  'transcript:splitUtterance': {
+    request: { utteranceId: string; wordIndex: number }
+    response: void
+  }
   /**
    * Every recording currently queued or transcribing, with its latest known
    * progress — the source a freshly (re)mounted page reads from, so a
@@ -318,6 +344,11 @@ export interface ApiSchema {
     request: { recordingId: string }
     response: Speaker[]
   }
+  /** Adds a new, empty speaker — for correcting an undercount (diarization missed someone entirely) rather than a misattribution, which `reassignUtterance` covers. Named/colored the same way detection names/colors one, and lines are reassigned to it by hand afterward. */
+  'speakers:create': {
+    request: { recordingId: string }
+    response: Speaker
+  }
   'speakers:rename': {
     request: { id: string; displayName: string }
     response: Speaker
@@ -342,10 +373,58 @@ export interface ApiSchema {
     request: { id: string }
     response: void
   }
+  /** Removes a speaker but leaves their lines in place, unassigned — for a speaker who shouldn't have been split out, as opposed to a diarization artifact whose lines were never real content. */
+  'speakers:deleteKeepingLines': {
+    request: { id: string }
+    response: void
+  }
   /** Same shape as `transcript:listActive`, for speaker detection jobs. */
   'speakers:listActive': {
     request: void
     response: Array<{ recordingId: string; fraction: number | null }>
+  }
+
+  /** Ollama's own reachability/version plus its installed model list, for the Settings "Knowledge Base" card. Never throws — an unreachable server reports `running: false` rather than an error. */
+  'ollama:status': {
+    request: void
+    response: OllamaStatus
+  }
+  /** Downloads a model via Ollama's own `/api/pull`. Progress arrives via `ollama:pullProgress`; resolves once the pull confirms success. */
+  'ollama:pullModel': {
+    request: { modelName: string }
+    response: void
+  }
+  'ollama:cancelPull': {
+    request: { modelName: string }
+    response: void
+  }
+  'ollama:deleteModel': {
+    request: { modelName: string }
+    response: void
+  }
+  /** Which Ollama models (and server URL) the knowledge base uses. */
+  'rag:getSettings': {
+    request: void
+    response: RagSettings
+  }
+  'rag:setSettings': {
+    request: Partial<RagSettings>
+    response: RagSettings
+  }
+  /** Chunk/recording counts for the Settings "N chunks indexed" line. */
+  'rag:getIndexStatus': {
+    request: void
+    response: RagIndexStatus
+  }
+  /** Reindexes every recording with a ready transcript — for a model change, or catching up recordings transcribed before this feature was configured. Progress arrives via `rag:indexProgress`. */
+  'rag:reindexAll': {
+    request: void
+    response: void
+  }
+  /** Answers a question grounded in retrieved transcript chunks — one recording's when `recordingId` is given, the whole library's otherwise. */
+  'ask:ask': {
+    request: { question: string; recordingId?: string }
+    response: AskResult
   }
 }
 
@@ -401,6 +480,8 @@ export interface EventSchema {
   'recording:updated': Recording
   /** Fine-grained progress for an in-flight ingest job. */
   'import:progress': ImportProgress
+  /** A recording just started — lets the sidebar lock navigation for its whole duration, not just react to it ending. */
+  'recording:started': { recordingId: string }
   /**
    * Pause state changed, from whichever window (main or mini controls)
    * toggled it. Both treat `paused` as derived from this rather than
@@ -410,6 +491,8 @@ export interface EventSchema {
   'recording:pauseChanged': { paused: boolean }
   /** Relayed elapsed time, from Record.tsx's `recording:elapsed` calls. */
   'recording:elapsedTick': { elapsedMs: number }
+  /** A marker was added during the in-progress recording, from whichever window called `recording:addMarker`. */
+  'recording:markerAdded': Marker
   /**
    * A stop has begun and the session is gone in main, ahead of the (brief)
    * finalize work `recording:stopped` waits for. Every window still
@@ -436,6 +519,11 @@ export interface EventSchema {
   'transcript:progress': { recordingId: string; fraction: number | null }
   /** Fractional progress for an in-flight speaker detection, or null when not yet known. */
   'speaker:progress': { recordingId: string; fraction: number | null }
+
+  /** Byte-level progress for an in-flight Ollama model pull. */
+  'ollama:pullProgress': OllamaPullProgress
+  /** Progress for a `rag:reindexAll` pass — how many of the targeted recordings are done. */
+  'rag:indexProgress': { completed: number; total: number; done: boolean }
 }
 
 export type Channel = keyof ApiSchema
@@ -474,6 +562,7 @@ export const CHANNELS = [
   'recording:openMiniControls',
   'recording:status',
   'recording:elapsed',
+  'recording:addMarker',
   'shell:showItemInFolder',
   'logs:read',
   'models:list',
@@ -486,31 +575,47 @@ export const CHANNELS = [
   'transcript:cancel',
   'transcript:get',
   'transcript:editUtterance',
+  'transcript:splitUtterance',
   'transcript:listActive',
   'transcript:export',
   'audio:export',
   'speakers:detect',
   'speakers:cancel',
   'speakers:list',
+  'speakers:create',
   'speakers:rename',
   'speakers:recolor',
   'speakers:merge',
   'speakers:reassignUtterance',
   'speakers:delete',
-  'speakers:listActive'
+  'speakers:deleteKeepingLines',
+  'speakers:listActive',
+  'ollama:status',
+  'ollama:pullModel',
+  'ollama:cancelPull',
+  'ollama:deleteModel',
+  'rag:getSettings',
+  'rag:setSettings',
+  'rag:getIndexStatus',
+  'rag:reindexAll',
+  'ask:ask'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [
   'recording:updated',
   'import:progress',
+  'recording:started',
   'recording:pauseChanged',
   'recording:elapsedTick',
+  'recording:markerAdded',
   'recording:sessionEnded',
   'recording:stopped',
   'recording:discarded',
   'model:progress',
   'transcript:progress',
-  'speaker:progress'
+  'speaker:progress',
+  'ollama:pullProgress',
+  'rag:indexProgress'
 ] as const satisfies readonly EventName[]
 
 /**

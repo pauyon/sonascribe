@@ -1,7 +1,5 @@
-import type { Marker, Recording } from '@shared/types'
+import { DEFAULT_MARKER_COLOR, type Marker, type Recording } from '@shared/types'
 import { api } from './api'
-
-const DEFAULT_COLOR = '#3569ff'
 
 /**
  * Marker CRUD for a recording — labeled, colored jump-to points in the
@@ -16,7 +14,8 @@ export function useMarkers(
   refetch: () => void
 ): {
   markers: Marker[]
-  addMarkerAt: (realMs: number) => void
+  /** `color` defaults to `DEFAULT_MARKER_COLOR` — pass the caller's own "current" color to batch-tag a run of markers the same hue before switching to another. */
+  addMarkerAt: (realMs: number, color?: string) => void
   rename: (id: string, label: string) => void
   recolor: (id: string, color: string) => void
   remove: (id: string) => void
@@ -29,11 +28,8 @@ export function useMarkers(
     void api.invoke('recordings:setMarkers', { id: recording.id, markers: next }).then(refetch)
   }
 
-  function addMarkerAt(realMs: number): void {
-    persist([
-      ...markers,
-      { id: crypto.randomUUID(), timeMs: realMs, label: '', color: DEFAULT_COLOR }
-    ])
+  function addMarkerAt(realMs: number, color: string = DEFAULT_MARKER_COLOR): void {
+    persist([...markers, { id: crypto.randomUUID(), timeMs: realMs, label: '', color }])
   }
 
   function rename(id: string, label: string): void {

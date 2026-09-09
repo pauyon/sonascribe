@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { DEFAULT_MARKER_COLOR } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import {
   CaptureError,
@@ -13,6 +14,7 @@ import {
 import { formatDuration } from '../lib/format'
 import Select from '../components/Select'
 import HelpTip from '../components/HelpTip'
+import Icon from '../components/Icon'
 import LiveWaveform, { type LiveWaveformHandle } from '../components/LiveWaveform'
 
 /** Peak level meter for one source. */
@@ -67,6 +69,8 @@ export default function Record(): React.JSX.Element {
   const [recording, setRecording] = useState(false)
   const [paused, setPaused] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(0)
+  /** How many moments have been marked so far this session — the mini window can add one too, so this counts the broadcast rather than only this window's own clicks. */
+  const [markerCount, setMarkerCount] = useState(0)
   const [levels, setLevels] = useState<Record<string, number>>({ mic: 0, system: 0 })
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
@@ -149,6 +153,12 @@ export default function Record(): React.JSX.Element {
     pausedRef.current = payload.paused
   })
 
+  // Counts every marker added this session, regardless of which window (this
+  // one or the mini controls popout) actually called recording:addMarker.
+  useEvent('recording:markerAdded', () => {
+    setMarkerCount((n) => n + 1)
+  })
+
   // Stops sending audio blocks the instant the session is gone in main. This
   // matters when Stop is clicked from the mini controls window rather than
   // here: without it, this window keeps writing to a session that's already
@@ -187,6 +197,7 @@ export default function Record(): React.JSX.Element {
     pausedRef.current = false
     setFinishing(false)
     setElapsedMs(0)
+    setMarkerCount(0)
   })
 
   /** Cancels an in-progress or finished mic test — a device change invalidates whatever it captured. */
@@ -319,10 +330,15 @@ export default function Record(): React.JSX.Element {
   }, [openMonitor, recording])
 
   // Everything open is closed on the way out, recording or not. A monitor left
-  // running would hold the microphone for the rest of the session.
+  // running would hold the microphone for the rest of the session. This is a
+  // safety net, not the primary guard against losing an in-progress
+  // recording — App.tsx locks navigation away from this page for that —
+  // so if it's ever accepting audio on the way out anyway, that take is
+  // saved (recording:stop) rather than destroyed (recording:cancel, which
+  // was this effect's original behavior and deleted the file outright).
   useEffect(() => {
     return () => {
-      if (acceptingRef.current) void api.invoke('recording:cancel')
+      if (acceptingRef.current) void api.invoke('recording:stop')
       const session = sessionRef.current
       sessionRef.current = null
       acceptingRef.current = false
@@ -423,9 +439,15 @@ export default function Record(): React.JSX.Element {
     startedAtRef.current = Date.now()
     pausedMsRef.current = 0
     setElapsedMs(0)
+    setMarkerCount(0)
     setRecording(true)
     setPaused(false)
     pausedRef.current = false
+  }
+
+  /** Flags the current moment for later — the position is exactly this window's own paused-time-excluding elapsed timer, which is also what's on screen. */
+  function mark(): void {
+    void api.invoke('recording:addMarker', { elapsedMs })
   }
 
   function togglePause(): void {
@@ -660,23 +682,37 @@ export default function Record(): React.JSX.Element {
         <div className="recorder__controls">
           {recording ? (
             <>
-              <button className="btn" onClick={togglePause}>
+              <button className="btn btn--ghost btn--icon" onClick={mark} title="Mark this moment, to jump back to it later">
+                <Icon name="flag" />
+                Mark
+              </button>
+              <button className="btn btn--icon" onClick={togglePause}>
+                <Icon name={paused ? 'play' : 'pause'} />
                 {paused ? 'Resume' : 'Pause'}
               </button>
-              <button className="btn btn--primary" onClick={stop}>
+              <button className="btn btn--primary btn--icon" onClick={stop}>
+                <Icon name="stop" />
                 Stop and save
               </button>
-              <button className="btn btn--ghost" onClick={discard}>
+              <button className="btn btn--ghost btn--icon" onClick={discard}>
+                <Icon name="trash" />
                 Discard
               </button>
+              {markerCount > 0 && (
+                <span className="recorder__marker-count">
+                  <Icon name="flag" style={{ color: DEFAULT_MARKER_COLOR }} />
+                  {markerCount} marked
+                </span>
+              )}
             </>
           ) : (
             <button
-              className="btn btn--record"
+              className="btn btn--record btn--icon"
               onClick={start}
               disabled={!captureOpen || finishing}
               title={finishing ? 'Finishing the previous recording — starting again in a moment' : undefined}
             >
+              {!finishing && <Icon name="record" />}
               {finishing ? 'Finishing…' : 'Start recording'}
             </button>
           )}

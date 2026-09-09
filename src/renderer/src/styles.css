@@ -196,6 +196,17 @@ body {
   color: var(--text);
 }
 
+/* Two classes, not one — same reason as .chip__action.chip__action--target
+   elsewhere: a later same-specificity .navlink/.navlink--active rule would
+   otherwise win by source order and this would never actually look locked. */
+.navlink.navlink--locked,
+.navlink.navlink--locked:hover {
+  background: none;
+  color: var(--text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .sidebar__footer {
   margin-top: auto;
   font-size: var(--fs-caption);
@@ -320,6 +331,20 @@ body {
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* An icon paired with a text label, not an icon-only button (those size their
+   svg per surface instead — .mini__icon-btn, .chip__action, etc.). */
+.btn--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.btn--icon svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 .btn--primary {
@@ -640,6 +665,9 @@ body {
 }
 
 .player__play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 34px;
   height: 34px;
   flex-shrink: 0;
@@ -647,9 +675,13 @@ body {
   border: none;
   background: var(--accent);
   color: var(--accent-fg);
-  font-size: var(--fs-caption);
   cursor: pointer;
   line-height: 1;
+}
+
+.player__play svg {
+  width: 15px;
+  height: 15px;
 }
 
 .player__time {
@@ -688,6 +720,51 @@ body {
 .player__rate:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.player__marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.player__marker svg {
+  width: 14px;
+  height: 14px;
+}
+
+.player__marker:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.player__marker-color {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+}
+
+.player__marker-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.player__marker-color::-webkit-color-swatch {
+  border: 1px solid var(--border);
+  border-radius: 50%;
 }
 
 .player__error {
@@ -735,6 +812,11 @@ body {
   padding: 0;
   font-size: 16px;
   line-height: 1;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .icon-btn--active {
@@ -795,10 +877,16 @@ body {
 
 /* ---------- models ---------- */
 
+/* One card, models as divided rows within it — same shape as the General
+   settings card, rather than each model being its own bordered box. No
+   overflow: hidden here either, for the same reason as .settings-card: a
+   popover opening off a row would get clipped by it. Rounding only the
+   first/last row gets the same rounded-card look without needing it. */
 .models {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
   margin-bottom: 28px;
 }
 
@@ -807,14 +895,25 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 14px 16px;
+  padding: 14px 18px;
+}
+
+.model + .model {
+  border-top: 1px solid var(--border);
+}
+
+.model:first-child {
+  border-top-left-radius: var(--r-lg);
+  border-top-right-radius: var(--r-lg);
+}
+
+.model:last-child {
+  border-bottom-left-radius: var(--r-lg);
+  border-bottom-right-radius: var(--r-lg);
 }
 
 .model--selected {
-  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .model__radio {
@@ -827,14 +926,21 @@ body {
 }
 
 .model__trash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 32px;
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 14px;
   cursor: pointer;
+}
+
+.model__trash svg {
+  width: 14px;
+  height: 14px;
 }
 
 .model__trash:hover {
@@ -1181,8 +1287,12 @@ body {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
   line-height: 1;
+}
+
+.markers__remove svg {
+  width: 11px;
+  height: 11px;
 }
 
 .markers__remove:hover {
@@ -1353,6 +1463,17 @@ body {
   vertical-align: baseline;
 }
 
+/* Stays inline with the timestamp's own text flow — the button around it
+   (especially the --inline variant) runs mid-paragraph, so this can't
+   become a flex box without breaking that wrap. */
+.utterance__time-flag {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+
 /* Marks a screenshot taken around this timestamp; opens it full-size on
    click. Sits right after the timestamp it belongs to, whether that's the
    line's own header or one of its inline paragraph timestamps. */
@@ -1381,7 +1502,10 @@ body {
   font-family: inherit;
   font-size: var(--fs-small);
   line-height: 1.65;
-  resize: vertical;
+  /* Grows to fit its content (see TranscriptPanel.tsx's autoResizeTextarea)
+     rather than scrolling or being left to a manual resize handle. */
+  resize: none;
+  overflow: hidden;
 }
 
 .utterance__input:focus {
@@ -1480,28 +1604,50 @@ body {
 .speakers__list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
-  padding: 4px 6px 4px 10px;
+  padding: 3px 4px 3px 8px;
   background: var(--bg-raised);
-  font-size: var(--fs-small);
+  font-size: var(--fs-caption);
 }
 
 .chip--merging {
-  box-shadow: 0 0 0 2px rgba(108, 140, 255, 0.35);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /* Narrowed to one speaker: the ring uses that speaker's own hue rather than
    the merge accent, so the two states never read as the same thing. */
 .chip--filtered {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--speaker, var(--accent)) 55%, transparent);
+}
+
+/* Two classes, not one — same reason as .chip__action.chip__action--target:
+   a later same-specificity .chip rule tints every chip from --speaker, which
+   this one never sets, and would otherwise win by source order and paint it
+   as a plain accent-colored chip rather than the dashed "add" affordance. */
+.chip.chip--add {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chip.chip--add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chip--add svg {
+  width: 11px;
+  height: 11px;
 }
 
 .chip__dot {
@@ -1558,23 +1704,53 @@ body {
 }
 
 .chip__action {
-  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
   border: none;
   border-radius: 50%;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
-  font-size: var(--fs-caption);
+}
+
+.chip__action svg {
+  width: 14px;
+  height: 14px;
 }
 
 .chip__action:hover {
+  background: var(--bg-hover);
   color: var(--text);
 }
 
-.chip__action--target {
+/* Two classes, not one: a later same-specificity .chip__action rule
+   (further down, tinting the action button from the chip's own --speaker
+   hue) would otherwise win this fight by source order alone and the target
+   arrow would fade into each chip's own color instead of standing out. */
+.chip__action.chip__action--target {
   background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.chip__action.chip__action--target:hover {
+  background: var(--accent-hover);
+  color: var(--accent-fg);
+}
+
+/* The isolate-this-speaker toggle, active state — an attribute selector for
+   the same specificity-over-source-order reason as .chip__action--target
+   above. */
+.chip__action[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.chip__action[aria-pressed='true']:hover {
+  background: var(--accent-hover);
   color: var(--accent-fg);
 }
 
@@ -1592,22 +1768,27 @@ body {
 }
 
 .chip__menu .overflow-menu__trigger {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: none;
   border-radius: 50%;
-  background: var(--bg-hover);
+  background: none;
   color: var(--text-muted);
-  font-size: 13px;
+}
+
+.chip__menu .overflow-menu__trigger-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .chip__menu .overflow-menu__trigger:hover {
+  background: var(--bg-hover);
   color: var(--text);
 }
 
 .speakers__swatch {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -1629,6 +1810,91 @@ body {
   margin: 10px 0 0;
   font-size: var(--fs-caption);
   color: var(--text-muted);
+}
+
+.speakers__hint-icon {
+  width: 11px;
+  height: 11px;
+  vertical-align: -1px;
+}
+
+.speakers__hint-cancel {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---------- transcript search ---------- */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+}
+
+.search-bar__icon {
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.search-bar__input {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 6px 0;
+}
+
+.search-bar__input:focus {
+  outline: none;
+}
+
+.search-bar__count {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.search-bar__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.search-bar__close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.search-bar__close:hover {
+  color: var(--text);
+}
+
+.hl {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 /* The confirm step before a merge or a speaker delete commits — both move or
@@ -1938,6 +2204,339 @@ body {
   color: var(--text-muted);
 }
 
+/* ---------- settings: title + card of divided rows ---------- */
+
+.settings-section {
+  margin-bottom: 32px;
+  max-width: 560px;
+}
+
+.settings-section__title {
+  margin: 0 0 10px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+}
+
+.settings-card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  width: 100%;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.settings-card__row + .settings-card__row {
+  border-top: 1px solid var(--border);
+}
+
+/* No overflow: hidden on .settings-card — the Appearance row's dropdown is
+   position: absolute and needs to escape the card, and overflow: hidden
+   clips an absolutely positioned descendant regardless of z-index. Rounding
+   the end rows individually gets the same rounded-card look without it. */
+.settings-card__row:first-child {
+  border-top-left-radius: var(--r-lg);
+  border-top-right-radius: var(--r-lg);
+}
+
+.settings-card__row:last-child {
+  border-bottom-left-radius: var(--r-lg);
+  border-bottom-right-radius: var(--r-lg);
+}
+
+button.settings-card__row--link {
+  cursor: pointer;
+}
+
+button.settings-card__row--link:hover {
+  background: var(--bg-hover);
+}
+
+.settings-card__row-icon {
+  display: flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.settings-card__row-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.settings-card__row-label {
+  flex: 1;
+  font-size: var(--fs-small);
+}
+
+.settings-card__row-value {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.settings-card__row-chevron {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.settings-card__hint {
+  margin: 10px 2px 0;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.settings-card__hint-action {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---------- Knowledge Base settings ---------- */
+
+.kb-field-label {
+  flex: none;
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.settings-card__row-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.kb-dot--on {
+  background: var(--ok);
+}
+
+.kb-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.kb-refresh-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.kb-refresh-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.kb-download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.kb-download-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+.kb-models {
+  margin-top: 16px;
+}
+
+.kb-subtitle {
+  margin-top: 20px;
+}
+
+.kb-recommend-row {
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.kb-recommend-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-recommend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-recommend-blurb {
+  margin: 4px 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.kb-recommend-row .progress {
+  margin-top: 8px;
+}
+
+/* ---------- Ask panel ---------- */
+
+.ask-card {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.ask__form {
+  display: flex;
+  gap: 8px;
+}
+
+.ask__input {
+  flex: 1;
+}
+
+.ask__submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
+  flex: none;
+}
+
+.ask__submit svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ask__loading {
+  margin: 12px 2px 0;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.ask__result {
+  margin-top: 12px;
+}
+
+.ask__answer-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ask__answer {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ask__copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ask__copy svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ask__copy:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ask__sources {
+  margin-top: 12px;
+}
+
+.ask__sources-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ask__citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ask__citation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.ask__citation:hover {
+  background: var(--bg-hover);
+}
+
+.ask__citation-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ask__citation-time {
+  color: var(--text-muted);
+}
+
 /* Live transcript on the Record screen: text arriving while capture runs. */
 .live {
   width: 100%;
@@ -2068,8 +2667,12 @@ body {
 }
 
 .mini__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 20px;
   height: 20px;
+  padding: 0;
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
@@ -2077,6 +2680,11 @@ body {
   cursor: pointer;
   line-height: 1;
   -webkit-app-region: no-drag;
+}
+
+.mini__close svg {
+  width: 12px;
+  height: 12px;
 }
 
 .mini__close:hover {
@@ -2113,9 +2721,31 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   padding: 8px 0;
   font-size: 16px;
   line-height: 1;
+}
+
+.mini__icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mini__mark-count {
+  position: absolute;
+  top: 2px;
+  right: 14px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
 }
 
 /* The two toggles in this row (transcript, display picker) get a pressed
@@ -2236,6 +2866,20 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.recorder__marker-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.recorder__marker-count svg {
+  width: 13px;
+  height: 13px;
 }
 
 .recorder__detail {
@@ -2499,8 +3143,12 @@ body {
   background: color-mix(in srgb, var(--speaker, var(--accent)) 20%, var(--surface));
 }
 
+/* Deliberately not var(--speaker) here, unlike the rest of this component —
+   a ring in the chip's own hue would all but disappear against its own
+   tinted fill. The flat accent stays visible as a distinct "merge in
+   progress" signal regardless of which speaker started it. */
 .chip--merging {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--speaker, var(--accent)) 40%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 /* The count and the menu sit quieter than the name, but still inside the chip's
@@ -2511,7 +3159,6 @@ body {
 }
 
 .chip__action {
-  background: color-mix(in srgb, var(--speaker, var(--accent)) 16%, transparent);
   color: inherit;
 }
 
@@ -2574,6 +3221,16 @@ body {
 .recent__item--active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Two classes, not one — same specificity-over-source-order reason as
+   .navlink.navlink--locked above. */
+.recent__item.recent__item--locked,
+.recent__item.recent__item--locked:hover {
+  background: none;
+  color: var(--text);
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* One line each: the sidebar is a shortcut, not a second library. */
@@ -2901,8 +3558,13 @@ select {
 }
 
 .rec__glyph {
-  font-size: var(--fs-small);
+  display: flex;
   line-height: 1;
+}
+
+.rec__glyph svg {
+  width: 13px;
+  height: 13px;
 }
 
 .rec__time {
@@ -3009,15 +3671,21 @@ select {
 }
 
 .overflow-menu__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 34px;
   height: 34px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 18px;
-  line-height: 1;
   cursor: pointer;
+}
+
+.overflow-menu__trigger-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .overflow-menu__trigger:hover {
@@ -3049,8 +3717,8 @@ select {
 
 .overflow-menu__icon {
   flex: none;
-  width: 1.1em;
-  text-align: center;
+  width: 15px;
+  height: 15px;
 }
 
 .overflow-menu__item {
@@ -3058,6 +3726,9 @@ select {
 }
 
 .overflow-menu__chevron {
+  flex: none;
+  width: 13px;
+  height: 13px;
   margin-left: auto;
   opacity: 0.6;
 }
@@ -3180,6 +3851,40 @@ label.toolbar__toggle {
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 600;
+}
+
+/* The word-boundary picker a "Split" click opens — every word but the first
+   becomes a target; hovering one previews exactly where the cut lands with
+   an insertion-point edge rather than just a background tint. */
+.word--split-target:hover {
+  background: var(--accent-soft);
+  box-shadow: -2px 0 0 var(--accent);
+}
+
+.word--split-disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.word--split-disabled:hover {
+  background: none;
+}
+
+.utterance__split {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--r-md);
+}
+
+.utterance__split-hint {
+  margin: 0 0 8px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+}
+
+.utterance__split .btn {
+  margin-top: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3453,27 +4158,48 @@ label.toolbar__toggle {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
-/* Same hover-reveal shape as .utterance__delete above, for the "edit this
-   line's text" trigger next to it — accent on hover rather than danger,
-   since correcting a line isn't a destructive action. */
-.utterance__edit-btn {
+/* Groups the edit/split triggers into one small pill — the same shape
+   .chip uses elsewhere (border, pill radius, raised fill) — rather than two
+   bare icons floating at the row's end. One shared margin-left: auto pushes
+   the whole pill there; putting it on each button individually split them
+   apart instead, since flexbox distributes free space at every auto margin
+   it finds, not just the first. */
+.utterance__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  font-size: var(--fs-caption);
-  line-height: 1;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--r-sm);
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
   opacity: 0;
   transition: opacity 0.1s;
 }
 
-.utterance:hover .utterance__edit-btn,
-.utterance:focus-within .utterance__edit-btn,
-.utterance__edit-btn:focus {
+.utterance:hover .utterance__actions,
+.utterance:focus-within .utterance__actions,
+.utterance__actions:focus-within {
   opacity: 1;
+}
+
+/* Same hover shape as .utterance__delete above, for the "edit this line's
+   text" trigger inside it — accent on hover rather than danger, since
+   correcting a line isn't a destructive action. */
+.utterance__edit-btn {
+  display: flex;
+  background: none;
+  border: none;
+  padding: 3px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+.utterance__edit-btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 .utterance__edit-btn:hover {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { initLogging } from './log'
@@ -17,7 +17,7 @@ import { sweepOrphanedMedia } from './services/media-cleanup'
 import { sweepOrphanedChunks } from './services/audio-chunks'
 import { cancelAllTranscriptions } from './services/jobs'
 import { cancelAllSpeakerDetections } from './services/speaker-jobs'
-import { isRecording } from './services/recorder'
+import { cancelRecording, isRecording, stopRecording } from './services/recorder'
 import { getAutoPopOutOnMinimize } from './db/settings'
 import { closeMiniRecorderWindow, openMiniRecorderWindow } from './windows/mini-recorder'
 import { setMainWindow } from './windows/main-window'
@@ -98,6 +98,27 @@ if (!app.requestSingleInstanceLock()) {
       // A satellite of the main window — it must not be able to keep the app
       // alive on its own once that window is gone.
       closeMiniRecorderWindow()
+    })
+
+    // In-app navigation is locked while recording (see App.tsx), but closing
+    // the window entirely is a separate escape hatch from that — and one
+    // where hoping a renderer-side async IPC call finishes during teardown
+    // isn't reliable. Handled natively here instead: block the close, ask,
+    // then actually finish the recording (in main, no renderer round trip)
+    // before closing for real.
+    mainWindow.on('close', (event) => {
+      if (!isRecording()) return
+      event.preventDefault()
+      const choice = dialog.showMessageBoxSync(mainWindow!, {
+        type: 'warning',
+        buttons: ['Stop && Save', 'Discard Recording', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        message: 'A recording is in progress',
+        detail: 'Stop and save it, discard it, or cancel and keep recording.'
+      })
+      if (choice === 2) return
+      void (choice === 0 ? stopRecording() : cancelRecording()).then(() => mainWindow?.destroy())
     })
 
     // Opt-in convenience: only while a recording is actually running, and only
