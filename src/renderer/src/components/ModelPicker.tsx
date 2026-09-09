@@ -3,6 +3,7 @@ import { MODELS, type AsrEngine, type ModelDownloadProgress, type ModelStatus } 
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatBytes } from '../lib/format'
 import Select from './Select'
+import Icon from './Icon'
 
 /** Languages Whisper's `-l` flag accepts, in the order the picker shows them. Parakeet ignores this entirely. */
 const LANGUAGES = [
@@ -177,7 +178,7 @@ export default function ModelPicker({
                     aria-label={`Remove ${spec.label}`}
                     title="Remove this model"
                   >
-                    🗑
+                    <Icon name="trash" />
                   </button>
                 ) : downloading ? (
                   <button

@@ -109,6 +109,15 @@ const STROKE = {
       <rect x="3" y="4" width="8" height="16" rx="1" />
       <rect x="13" y="4" width="8" height="16" rx="1" />
     </>
+  ),
+  /** Half-filled circle for the Appearance setting — the left path overrides
+      the parent's fill="none" with its own fill, which SVG allows even
+      though every other icon here is stroke-only. */
+  contrast: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" stroke="none" />
+    </>
   )
 } as const
 

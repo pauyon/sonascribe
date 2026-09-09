@@ -8,16 +8,19 @@ import '@fontsource-variable/inter'
 import './styles.css'
 
 /**
- * Applies the saved theme before React paints.
+ * Applies the saved theme preference before React paints.
  *
- * Read here rather than in a component so the first frame is already the right
- * colour: setting it after mount shows a flash of the wrong theme.
+ * Read here rather than in a component so the first frame is already the
+ * right colour: setting it after mount shows a flash of the wrong theme.
+ * Mirrors `lib/useTheme.ts`'s own resolution logic (including "system"
+ * defaulting when nothing is saved yet) — that hook takes over from here
+ * once React mounts.
  */
 try {
   const saved = localStorage.getItem('sonascribe.theme')
-  if (saved === 'dark' || saved === 'light') {
-    document.documentElement.dataset.theme = saved
-  }
+  const preference = saved === 'dark' || saved === 'light' || saved === 'system' ? saved : 'system'
+  const dark = preference === 'dark' || (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  if (dark) document.documentElement.dataset.theme = 'dark'
 } catch {
   // Private mode or blocked storage: the default light theme is fine.
 }

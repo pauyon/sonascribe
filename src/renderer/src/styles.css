@@ -852,10 +852,16 @@ body {
 
 /* ---------- models ---------- */
 
+/* One card, models as divided rows within it — same shape as the General
+   settings card, rather than each model being its own bordered box. No
+   overflow: hidden here either, for the same reason as .settings-card: a
+   popover opening off a row would get clipped by it. Rounding only the
+   first/last row gets the same rounded-card look without needing it. */
 .models {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
   margin-bottom: 28px;
 }
 
@@ -864,14 +870,25 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 14px 16px;
+  padding: 14px 18px;
+}
+
+.model + .model {
+  border-top: 1px solid var(--border);
+}
+
+.model:first-child {
+  border-top-left-radius: var(--r-lg);
+  border-top-right-radius: var(--r-lg);
+}
+
+.model:last-child {
+  border-bottom-left-radius: var(--r-lg);
+  border-bottom-right-radius: var(--r-lg);
 }
 
 .model--selected {
-  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .model__radio {
@@ -884,14 +901,21 @@ body {
 }
 
 .model__trash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 32px;
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 14px;
   cursor: pointer;
+}
+
+.model__trash svg {
+  width: 14px;
+  height: 14px;
 }
 
 .model__trash:hover {
@@ -2083,6 +2107,116 @@ body {
   font-size: var(--fs-caption);
   line-height: 1.5;
   color: var(--text-muted);
+}
+
+/* ---------- settings: title + card of divided rows ---------- */
+
+.settings-section {
+  margin-bottom: 32px;
+  max-width: 560px;
+}
+
+.settings-section__title {
+  margin: 0 0 10px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+}
+
+.settings-card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  width: 100%;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.settings-card__row + .settings-card__row {
+  border-top: 1px solid var(--border);
+}
+
+/* No overflow: hidden on .settings-card — the Appearance row's dropdown is
+   position: absolute and needs to escape the card, and overflow: hidden
+   clips an absolutely positioned descendant regardless of z-index. Rounding
+   the end rows individually gets the same rounded-card look without it. */
+.settings-card__row:first-child {
+  border-top-left-radius: var(--r-lg);
+  border-top-right-radius: var(--r-lg);
+}
+
+.settings-card__row:last-child {
+  border-bottom-left-radius: var(--r-lg);
+  border-bottom-right-radius: var(--r-lg);
+}
+
+button.settings-card__row--link {
+  cursor: pointer;
+}
+
+button.settings-card__row--link:hover {
+  background: var(--bg-hover);
+}
+
+.settings-card__row-icon {
+  display: flex;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.settings-card__row-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.settings-card__row-label {
+  flex: 1;
+  font-size: var(--fs-small);
+}
+
+.settings-card__row-value {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+}
+
+.settings-card__row-chevron {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.settings-card__hint {
+  margin: 10px 2px 0;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.settings-card__hint-action {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 /* Live transcript on the Record screen: text arriving while capture runs. */

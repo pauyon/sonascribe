@@ -1,4 +1,3 @@
-import { useCallback, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useEvent, useQuery } from './lib/api'
 import { formatDuration } from './lib/format'
@@ -95,35 +94,9 @@ function RecentList(): React.JSX.Element | null {
   )
 }
 
-/**
- * The theme already applied to the document.
- *
- * Read from the element rather than from storage: main.tsx sets it before React
- * mounts so the first frame is the right colour, and this keeps the button in
- * step with whatever it decided.
- */
-function currentTheme(): 'light' | 'dark' {
-  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
-}
-
 export default function App(): React.JSX.Element {
-  const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { data: info } = useQuery('app:info')
   const location = useLocation()
-
-  const toggleTheme = useCallback(() => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    // Light is the default, so it is expressed by the absence of the attribute
-    // rather than by a value — one less state for the stylesheet to handle.
-    if (next === 'dark') document.documentElement.dataset.theme = 'dark'
-    else delete document.documentElement.dataset.theme
-    try {
-      localStorage.setItem('sonascribe.theme', next)
-    } catch {
-      // Blocked storage only costs the preference surviving a restart.
-    }
-    setTheme(next)
-  }, [theme])
 
   // The mini controls window loads this same bundle at a different hash
   // route and has no sidebar of its own — it's a bare, frameless utility
@@ -168,15 +141,6 @@ export default function App(): React.JSX.Element {
         <RecentList />
 
         <div className="sidebar__footer">
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
-          >
-            {theme === 'dark' ? '☀' : '☾'}
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </button>
           <span>Local-only · nothing leaves this device</span>
           {info?.version && <span className="sidebar__version">v{info.version}</span>}
         </div>
