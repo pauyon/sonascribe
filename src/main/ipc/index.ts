@@ -38,6 +38,7 @@ import {
 } from '../db/recordings'
 import { getUtterances, updateUtteranceText } from '../db/transcript'
 import {
+  createSpeaker,
   deleteSpeaker,
   listSpeakers,
   mergeSpeakers,
@@ -336,6 +337,8 @@ const handlers: Handlers = {
   },
 
   'speakers:list': ({ recordingId }) => listSpeakers(recordingId),
+
+  'speakers:create': ({ recordingId }) => createSpeaker(recordingId),
 
   'speakers:rename': ({ id, displayName }) => {
     const trimmed = displayName.trim()

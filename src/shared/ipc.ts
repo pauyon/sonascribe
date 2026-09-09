@@ -318,6 +318,11 @@ export interface ApiSchema {
     request: { recordingId: string }
     response: Speaker[]
   }
+  /** Adds a new, empty speaker — for correcting an undercount (diarization missed someone entirely) rather than a misattribution, which `reassignUtterance` covers. Named/colored the same way detection names/colors one, and lines are reassigned to it by hand afterward. */
+  'speakers:create': {
+    request: { recordingId: string }
+    response: Speaker
+  }
   'speakers:rename': {
     request: { id: string; displayName: string }
     response: Speaker
@@ -492,6 +497,7 @@ export const CHANNELS = [
   'speakers:detect',
   'speakers:cancel',
   'speakers:list',
+  'speakers:create',
   'speakers:rename',
   'speakers:recolor',
   'speakers:merge',

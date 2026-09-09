@@ -1453,7 +1453,10 @@ body {
   font-family: inherit;
   font-size: var(--fs-small);
   line-height: 1.65;
-  resize: vertical;
+  /* Grows to fit its content (see TranscriptPanel.tsx's autoResizeTextarea)
+     rather than scrolling or being left to a manual resize handle. */
+  resize: none;
+  overflow: hidden;
 }
 
 .utterance__input:focus {
@@ -1574,6 +1577,28 @@ body {
    the merge accent, so the two states never read as the same thing. */
 .chip--filtered {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--speaker, var(--accent)) 55%, transparent);
+}
+
+/* Two classes, not one — same reason as .chip__action.chip__action--target:
+   a later same-specificity .chip rule tints every chip from --speaker, which
+   this one never sets, and would otherwise win by source order and paint it
+   as a plain accent-colored chip rather than the dashed "add" affordance. */
+.chip.chip--add {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chip.chip--add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chip--add svg {
+  width: 13px;
+  height: 13px;
 }
 
 .chip__dot {

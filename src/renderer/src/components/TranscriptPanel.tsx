@@ -92,6 +92,13 @@ export default function TranscriptPanel({
     setDraft(u.text)
   }
 
+  /** Grows the edit textarea to fit its content instead of leaving it a fixed size with a scrollbar/manual resize handle. Reset to 'auto' first so shrinking a line (not just growing one) is picked up too. */
+  function autoResizeTextarea(el: HTMLTextAreaElement | null): void {
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }
+
   function commitEdit(u: Utterance): void {
     setEditingId(null)
     const trimmed = draft.trim()
@@ -182,8 +189,12 @@ export default function TranscriptPanel({
                 className="utterance__input"
                 value={draft}
                 autoFocus
-                rows={2}
-                onChange={(e) => setDraft(e.target.value)}
+                rows={1}
+                ref={autoResizeTextarea}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  autoResizeTextarea(e.target)
+                }}
                 onBlur={() => commitEdit(u)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {

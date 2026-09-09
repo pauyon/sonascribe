@@ -137,7 +137,8 @@ export default function SpeakerChips({
   onRename,
   onRecolor,
   onMerge,
-  onRemove
+  onRemove,
+  onCreate
 }: {
   speakers: Speaker[]
   utterances: Utterance[]
@@ -145,6 +146,8 @@ export default function SpeakerChips({
   onRecolor: (id: string, color: string) => void
   onMerge: (fromId: string, intoId: string) => void
   onRemove: (id: string) => void
+  /** Adds a new, empty speaker — for detection undercounting (missed someone entirely) rather than misattributing a line, which reassigning a transcript line already covers. */
+  onCreate: () => void
 }): React.JSX.Element | null {
   const [mergeFrom, setMergeFrom] = useState<string | null>(null)
   const [mergeTarget, setMergeTarget] = useState<string | null>(null)
@@ -184,6 +187,12 @@ export default function SpeakerChips({
             onRemove={() => onRemove(speaker.id)}
           />
         ))}
+        {mergeFrom === null && (
+          <button type="button" className="chip chip--add" onClick={onCreate} title="Add a speaker detection missed">
+            <Icon name="plus" />
+            Add speaker
+          </button>
+        )}
       </div>
 
       {from && !into && (

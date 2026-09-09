@@ -84,6 +84,21 @@ export function ensureSpeaker(recordingId: string, clusterId: number): Speaker {
 }
 
 /**
+ * Adds a new, empty speaker — for when detection undercounts (missed someone
+ * entirely) rather than misattributed a line, which reassigning an utterance
+ * already covers. Picks the next free cluster index above whatever detection
+ * (or an earlier manual add) already used, then names and colors it exactly
+ * like `ensureSpeaker` would for a cluster seen for the first time.
+ */
+export function createSpeaker(recordingId: string): Speaker {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT COALESCE(MAX(cluster_id), -1) AS maxId FROM speakers WHERE recording_id = ?')
+    .get(recordingId) as unknown as { maxId: number }
+  return ensureSpeaker(recordingId, row.maxId + 1)
+}
+
+/**
  * Sets a speaker's color, swapping it with whoever in the recording currently
  * has it.
  *

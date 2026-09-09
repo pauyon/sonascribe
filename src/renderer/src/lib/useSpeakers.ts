@@ -21,6 +21,8 @@ export function useSpeakers(
   detect: () => Promise<void>
   cancel: () => void
   detectError: string | null
+  /** Adds a new, empty speaker — for detection undercounting (missed someone) rather than misattributing a line. */
+  create: () => Promise<void>
   rename: (id: string, displayName: string) => Promise<void>
   recolor: (id: string, color: string) => Promise<void>
   merge: (fromId: string, intoId: string) => Promise<void>
@@ -63,6 +65,12 @@ export function useSpeakers(
     void api.invoke('speakers:cancel', { recordingId })
   }
 
+  async function create(): Promise<void> {
+    await api.invoke('speakers:create', { recordingId })
+    refetch()
+    onChange?.()
+  }
+
   async function rename(id: string, displayName: string): Promise<void> {
     await api.invoke('speakers:rename', { id, displayName })
     refetch()
@@ -101,6 +109,7 @@ export function useSpeakers(
     detect,
     cancel,
     detectError,
+    create,
     rename,
     recolor,
     merge,

@@ -33,6 +33,25 @@ export default function Editor(): React.JSX.Element {
   const [markerColor, setMarkerColor] = useState(DEFAULT_MARKER_COLOR)
 
   /**
+   * Speakers (and their lines) hidden immediately on delete, before the
+   * delete is actually committed — the real IPC call is deferred behind
+   * `speakerDeleteTimers` so a misclick has a few seconds to be undone
+   * before it's unrecoverable. Deleting a speaker also deletes every line
+   * credited to them, so this is the one destructive action here that
+   * genuinely needs a way back.
+   */
+  const [hiddenSpeakerIds, setHiddenSpeakerIds] = useState<Set<string>>(new Set())
+  const [hiddenUtteranceIds, setHiddenUtteranceIds] = useState<Set<string>>(new Set())
+  const [pendingSpeakerDelete, setPendingSpeakerDelete] = useState<{ id: string; label: string } | null>(null)
+  // Deliberately never cleared on unmount: a delete the user didn't undo
+  // should still land even if they navigate away before the timer fires,
+  // rather than silently reverting. Keyed by speaker id (not a single ref)
+  // so deleting a second speaker before the first one's window elapses
+  // doesn't cancel the first one's real deletion — only the visible toast
+  // (a single `pendingSpeakerDelete`) is limited to the most recent.
+  const speakerDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  /**
    * Whether the in-flow player card has scrolled above the top of the window.
    *
    * The player sits at the top of the page, so — unlike a sticky-top bar,
@@ -185,6 +204,57 @@ export default function Editor(): React.JSX.Element {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const SPEAKER_DELETE_UNDO_MS = 6000
+
+  /** Hides a speaker and their lines immediately; the real delete lands after the undo window unless `undoSpeakerDelete` cancels it first. */
+  function removeSpeakerPending(speakerId: string): void {
+    const target = speakers.speakers.find((s) => s.id === speakerId)
+    if (!target) return
+    const lineIds = (transcript.utterances ?? []).filter((u) => u.speaker?.id === speakerId).map((u) => u.id)
+
+    setHiddenSpeakerIds((prev) => new Set(prev).add(speakerId))
+    setHiddenUtteranceIds((prev) => {
+      const next = new Set(prev)
+      for (const lineId of lineIds) next.add(lineId)
+      return next
+    })
+    setPendingSpeakerDelete({
+      id: speakerId,
+      label: `${target.displayName} removed (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
+    })
+
+    const existing = speakerDeleteTimers.current.get(speakerId)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      speakerDeleteTimers.current.delete(speakerId)
+      setPendingSpeakerDelete((current) => (current?.id === speakerId ? null : current))
+      void speakers.remove(speakerId)
+    }, SPEAKER_DELETE_UNDO_MS)
+    speakerDeleteTimers.current.set(speakerId, timer)
+  }
+
+  function undoSpeakerDelete(): void {
+    const pending = pendingSpeakerDelete
+    if (!pending) return
+    const timer = speakerDeleteTimers.current.get(pending.id)
+    if (timer) clearTimeout(timer)
+    speakerDeleteTimers.current.delete(pending.id)
+
+    setPendingSpeakerDelete(null)
+    setHiddenSpeakerIds((prev) => {
+      const next = new Set(prev)
+      next.delete(pending.id)
+      return next
+    })
+    setHiddenUtteranceIds((prev) => {
+      const next = new Set(prev)
+      for (const u of transcript.utterances ?? []) {
+        if (u.speaker?.id === pending.id) next.delete(u.id)
+      }
+      return next
+    })
   }
 
   const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
@@ -455,24 +525,34 @@ export default function Editor(): React.JSX.Element {
             onClearAll={clearAllMarkers}
           />
 
+          {pendingSpeakerDelete && (
+            <div className="toast">
+              <span>{pendingSpeakerDelete.label}</span>
+              <button type="button" className="toast__action" onClick={undoSpeakerDelete}>
+                Undo
+              </button>
+            </div>
+          )}
+
           {transcriptMode === 'speakers' && (
             <SpeakerChips
-              speakers={speakers.speakers}
+              speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
               utterances={transcript.utterances ?? []}
               onRename={speakers.rename}
               onRecolor={speakers.recolor}
               onMerge={speakers.merge}
-              onRemove={speakers.remove}
+              onRemove={removeSpeakerPending}
+              onCreate={speakers.create}
             />
           )}
 
           {recording.transcriptStatus === 'ready' && transcript.utterances && (
             <TranscriptPanel
-              utterances={transcript.utterances}
+              utterances={transcript.utterances.filter((u) => !hiddenUtteranceIds.has(u.id))}
               currentMs={audio.currentMs}
               onSeek={audio.seek}
               mode={transcriptMode}
-              speakers={speakers.speakers}
+              speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
               onReassignSpeaker={speakers.reassignUtterance}
               onEditText={transcript.editText}
               markers={markers}
