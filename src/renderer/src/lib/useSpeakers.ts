@@ -26,7 +26,10 @@ export function useSpeakers(
   rename: (id: string, displayName: string) => Promise<void>
   recolor: (id: string, color: string) => Promise<void>
   merge: (fromId: string, intoId: string) => Promise<void>
+  /** Deletes the speaker and every line credited to them. */
   remove: (id: string) => Promise<void>
+  /** Deletes the speaker but leaves their lines in place, unassigned. */
+  removeKeepLines: (id: string) => Promise<void>
   reassignUtterance: (utteranceId: string, speakerId: string | null) => Promise<void>
 } {
   const { data, loading, error: loadError, refetch } = useQuery('speakers:list', { recordingId })
@@ -95,6 +98,12 @@ export function useSpeakers(
     onChange?.()
   }
 
+  async function removeKeepLines(id: string): Promise<void> {
+    await api.invoke('speakers:deleteKeepingLines', { id })
+    refetch()
+    onChange?.()
+  }
+
   async function reassignUtterance(utteranceId: string, speakerId: string | null): Promise<void> {
     await api.invoke('speakers:reassignUtterance', { utteranceId, speakerId })
     refetch()
@@ -114,6 +123,7 @@ export function useSpeakers(
     recolor,
     merge,
     remove,
+    removeKeepLines,
     reassignUtterance
   }
 }

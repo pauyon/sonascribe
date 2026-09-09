@@ -182,14 +182,37 @@ export function reassignUtterance(utteranceId: string, speakerId: string | null)
  * Removes one speaker and every line attributed to them.
  *
  * For a cluster that turns out to be entirely background noise or a
- * diarization artifact rather than a real person — reassigning individual
- * lines covers a misattribution, this covers "this was never a speaker".
+ * diarization artifact rather than a real person, where the "lines" aren't
+ * real transcript to begin with — `deleteSpeakerKeepingLines` is the other
+ * case, a speaker who was real but shouldn't have been split out (their
+ * lines are still worth keeping, just unlabeled).
  */
 export function deleteSpeaker(id: string): void {
   const db = getDb()
   db.exec('BEGIN')
   try {
     db.prepare('DELETE FROM utterances WHERE speaker_id = ?').run(id)
+    const result = db.prepare('DELETE FROM speakers WHERE id = ?').run(id)
+    if (Number(result.changes) === 0) throw new Error('That speaker no longer exists')
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
+/**
+ * Removes a speaker but leaves their lines in place, unassigned — the
+ * transcript text is kept, just no longer credited to anyone. For a speaker
+ * that shouldn't have been split out (wrong voice, a merge target that's
+ * simpler to remove than rename) rather than a diarization artifact whose
+ * lines were never real content to begin with — `deleteSpeaker` covers that.
+ */
+export function deleteSpeakerKeepingLines(id: string): void {
+  const db = getDb()
+  db.exec('BEGIN')
+  try {
+    db.prepare('UPDATE utterances SET speaker_id = NULL WHERE speaker_id = ?').run(id)
     const result = db.prepare('DELETE FROM speakers WHERE id = ?').run(id)
     if (Number(result.changes) === 0) throw new Error('That speaker no longer exists')
     db.exec('COMMIT')

@@ -347,6 +347,11 @@ export interface ApiSchema {
     request: { id: string }
     response: void
   }
+  /** Removes a speaker but leaves their lines in place, unassigned — for a speaker who shouldn't have been split out, as opposed to a diarization artifact whose lines were never real content. */
+  'speakers:deleteKeepingLines': {
+    request: { id: string }
+    response: void
+  }
   /** Same shape as `transcript:listActive`, for speaker detection jobs. */
   'speakers:listActive': {
     request: void
@@ -503,6 +508,7 @@ export const CHANNELS = [
   'speakers:merge',
   'speakers:reassignUtterance',
   'speakers:delete',
+  'speakers:deleteKeepingLines',
   'speakers:listActive'
 ] as const satisfies readonly Channel[]
 

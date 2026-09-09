@@ -71,7 +71,8 @@ export default function TranscriptPanel({
   speakers,
   onReassignSpeaker,
   onEditText,
-  markers
+  markers,
+  isolatedSpeakerName
 }: {
   utterances: Utterance[]
   currentMs: number
@@ -81,6 +82,8 @@ export default function TranscriptPanel({
   onReassignSpeaker: (utteranceId: string, speakerId: string) => void
   onEditText: (utteranceId: string, text: string) => void
   markers: Marker[]
+  /** Name of the speaker `utterances` has already been narrowed to, if any — distinguishes "this speaker has no lines" from "no transcript yet" in the empty state. */
+  isolatedSpeakerName?: string | null
 }): React.JSX.Element {
   const activeRef = useRef<HTMLDivElement>(null)
   const hasSpeakers = useMemo(() => utterances.some((u) => u.speaker != null), [utterances])
@@ -127,8 +130,12 @@ export default function TranscriptPanel({
   if (utterances.length === 0) {
     return (
       <div className="empty">
-        <h2>No transcript yet</h2>
-        <p>Transcribe this recording to see its text here.</p>
+        <h2>{isolatedSpeakerName ? `No lines from ${isolatedSpeakerName}` : 'No transcript yet'}</h2>
+        <p>
+          {isolatedSpeakerName
+            ? 'Every line here turned out to be someone else — try another speaker, or show everyone again.'
+            : 'Transcribe this recording to see its text here.'}
+        </p>
       </div>
     )
   }

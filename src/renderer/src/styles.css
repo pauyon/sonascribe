@@ -1691,6 +1691,19 @@ body {
   color: var(--accent-fg);
 }
 
+/* The isolate-this-speaker toggle, active state — an attribute selector for
+   the same specificity-over-source-order reason as .chip__action--target
+   above. */
+.chip__action[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.chip__action[aria-pressed='true']:hover {
+  background: var(--accent-hover);
+  color: var(--accent-fg);
+}
+
 /* The ⋯ menu (Merge into… / Delete speaker), anchored to the chip's corner —
    same pattern as the recording card's own ⋯ menu. Delete lives here instead
    of as a standalone icon: a bare trash glyph at 12px read as noise more than

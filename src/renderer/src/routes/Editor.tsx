@@ -31,6 +31,8 @@ export default function Editor(): React.JSX.Element {
   const [transcriptMode, setTranscriptMode] = useState<'speakers' | 'timestamps'>('speakers')
   /** The color the next marker will use — sticky across adds until the user picks a different one, so a run of moments can be tagged the same color in one pass. */
   const [markerColor, setMarkerColor] = useState(DEFAULT_MARKER_COLOR)
+  /** Speaker id the transcript below is narrowed to, or null to show every speaker. */
+  const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
 
   /**
    * Speakers (and their lines) hidden immediately on delete, before the
@@ -42,7 +44,11 @@ export default function Editor(): React.JSX.Element {
    */
   const [hiddenSpeakerIds, setHiddenSpeakerIds] = useState<Set<string>>(new Set())
   const [hiddenUtteranceIds, setHiddenUtteranceIds] = useState<Set<string>>(new Set())
-  const [pendingSpeakerDelete, setPendingSpeakerDelete] = useState<{ id: string; label: string } | null>(null)
+  const [pendingSpeakerDelete, setPendingSpeakerDelete] = useState<{
+    id: string
+    label: string
+    keepLines: boolean
+  } | null>(null)
   // Deliberately never cleared on unmount: a delete the user didn't undo
   // should still land even if they navigate away before the timer fires,
   // rather than silently reverting. Keyed by speaker id (not a single ref)
@@ -208,21 +214,35 @@ export default function Editor(): React.JSX.Element {
 
   const SPEAKER_DELETE_UNDO_MS = 6000
 
-  /** Hides a speaker and their lines immediately; the real delete lands after the undo window unless `undoSpeakerDelete` cancels it first. */
-  function removeSpeakerPending(speakerId: string): void {
+  /**
+   * Hides a speaker (and, unless `keepLines`, their lines) immediately; the
+   * real delete lands after the undo window unless `undoSpeakerDelete`
+   * cancels it first. `keepLines` unassigns rather than removes each line,
+   * so nothing needs hiding on the transcript side for that case — the line
+   * just loses its speaker credit once the real call lands.
+   */
+  function removeSpeakerPending(speakerId: string, keepLines: boolean): void {
     const target = speakers.speakers.find((s) => s.id === speakerId)
     if (!target) return
-    const lineIds = (transcript.utterances ?? []).filter((u) => u.speaker?.id === speakerId).map((u) => u.id)
+    const lineIds = keepLines
+      ? []
+      : (transcript.utterances ?? []).filter((u) => u.speaker?.id === speakerId).map((u) => u.id)
 
+    if (speakerFilter === speakerId) setSpeakerFilter(null)
     setHiddenSpeakerIds((prev) => new Set(prev).add(speakerId))
-    setHiddenUtteranceIds((prev) => {
-      const next = new Set(prev)
-      for (const lineId of lineIds) next.add(lineId)
-      return next
-    })
+    if (!keepLines) {
+      setHiddenUtteranceIds((prev) => {
+        const next = new Set(prev)
+        for (const lineId of lineIds) next.add(lineId)
+        return next
+      })
+    }
     setPendingSpeakerDelete({
       id: speakerId,
-      label: `${target.displayName} removed (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
+      keepLines,
+      label: keepLines
+        ? `${target.displayName} removed — their lines are kept, unassigned.`
+        : `${target.displayName} removed (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
     })
 
     const existing = speakerDeleteTimers.current.get(speakerId)
@@ -230,7 +250,7 @@ export default function Editor(): React.JSX.Element {
     const timer = setTimeout(() => {
       speakerDeleteTimers.current.delete(speakerId)
       setPendingSpeakerDelete((current) => (current?.id === speakerId ? null : current))
-      void speakers.remove(speakerId)
+      void (keepLines ? speakers.removeKeepLines(speakerId) : speakers.remove(speakerId))
     }, SPEAKER_DELETE_UNDO_MS)
     speakerDeleteTimers.current.set(speakerId, timer)
   }
@@ -538,6 +558,8 @@ export default function Editor(): React.JSX.Element {
             <SpeakerChips
               speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
               utterances={transcript.utterances ?? []}
+              filter={speakerFilter}
+              onFilterChange={setSpeakerFilter}
               onRename={speakers.rename}
               onRecolor={speakers.recolor}
               onMerge={speakers.merge}
@@ -548,7 +570,9 @@ export default function Editor(): React.JSX.Element {
 
           {recording.transcriptStatus === 'ready' && transcript.utterances && (
             <TranscriptPanel
-              utterances={transcript.utterances.filter((u) => !hiddenUtteranceIds.has(u.id))}
+              utterances={transcript.utterances.filter(
+                (u) => !hiddenUtteranceIds.has(u.id) && (!speakerFilter || u.speaker?.id === speakerFilter)
+              )}
               currentMs={audio.currentMs}
               onSeek={audio.seek}
               mode={transcriptMode}
@@ -556,6 +580,7 @@ export default function Editor(): React.JSX.Element {
               onReassignSpeaker={speakers.reassignUtterance}
               onEditText={transcript.editText}
               markers={markers}
+              isolatedSpeakerName={speakerFilter ? (speakers.speakers.find((s) => s.id === speakerFilter)?.displayName ?? null) : null}
             />
           )}
         </>

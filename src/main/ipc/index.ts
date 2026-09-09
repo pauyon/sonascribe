@@ -40,6 +40,7 @@ import { getUtterances, updateUtteranceText } from '../db/transcript'
 import {
   createSpeaker,
   deleteSpeaker,
+  deleteSpeakerKeepingLines,
   listSpeakers,
   mergeSpeakers,
   reassignUtterance,
@@ -360,6 +361,10 @@ const handlers: Handlers = {
 
   'speakers:delete': ({ id }) => {
     deleteSpeaker(id)
+  },
+
+  'speakers:deleteKeepingLines': ({ id }) => {
+    deleteSpeakerKeepingLines(id)
   },
 
   'speakers:listActive': () => listActiveSpeakerDetections()

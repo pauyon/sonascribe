@@ -4,13 +4,14 @@ import OverflowMenu, { type OverflowMenuItem } from './OverflowMenu'
 import Icon from './Icon'
 
 /**
- * One chip: color swatch, editable name, line count, and an action area that
- * swaps shape depending on merge state — the "⋯" menu at rest, an "✕" to
- * back out once this chip is the merge source, or a "←" target button on
- * every other chip while a merge is in progress. Direct manipulation (arm a
- * source, click a target) reads faster than a nested "pick from a list of
- * every other speaker" flyout for what the diarizer makes a routine
- * correction — one person split across two clusters by a voice change.
+ * One chip: color swatch, editable name, line count, an isolate toggle, and
+ * an action area that swaps shape depending on merge state — the "⋯" menu at
+ * rest, an "✕" to back out once this chip is the merge source, or a "←"
+ * target button on every other chip while a merge is in progress. Direct
+ * manipulation (arm a source, click a target) reads faster than a nested
+ * "pick from a list of every other speaker" flyout for what the diarizer
+ * makes a routine correction — one person split across two clusters by a
+ * voice change.
  */
 function SpeakerChip({
   speaker,
@@ -18,6 +19,8 @@ function SpeakerChip({
   canMerge,
   mergeMode,
   isMergeSource,
+  isFiltered,
+  onToggleFilter,
   onStartMerge,
   onCancelMerge,
   onPickTarget,
@@ -31,12 +34,16 @@ function SpeakerChip({
   /** True once any chip has become the merge source — every other chip's action area becomes a target button while this holds. */
   mergeMode: boolean
   isMergeSource: boolean
+  /** True when the transcript is currently narrowed to just this speaker. */
+  isFiltered: boolean
+  onToggleFilter: () => void
   onStartMerge: () => void
   onCancelMerge: () => void
   onPickTarget: () => void
   onRename: (name: string) => void
   onRecolor: (color: string) => void
-  onRemove: () => void
+  /** `keepLines`: true removes just the speaker and unassigns their lines; false removes the speaker and every line credited to them. */
+  onRemove: (keepLines: boolean) => void
 }): React.JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(speaker.displayName)
@@ -50,12 +57,15 @@ function SpeakerChip({
 
   const menuGroups: OverflowMenuItem[][] = [
     canMerge ? [{ icon: 'shuffle', label: 'Merge into…', onClick: onStartMerge }] : [],
-    [{ icon: 'trash', label: 'Remove speaker', danger: true, onClick: onRemove }]
+    [
+      { icon: 'trash', label: 'Delete Speaker Only', onClick: () => onRemove(true) },
+      { icon: 'trash', label: 'Delete Speaker & Transcript', danger: true, onClick: () => onRemove(false) }
+    ]
   ]
 
   return (
     <span
-      className={isMergeSource ? 'chip chip--merging' : 'chip'}
+      className={isMergeSource ? 'chip chip--merging' : isFiltered ? 'chip chip--filtered' : 'chip'}
       style={{ '--speaker': speaker.color } as React.CSSProperties}
     >
       <input
@@ -97,6 +107,19 @@ function SpeakerChip({
 
       <span className="chip__count">{count}</span>
 
+      {!mergeMode && (
+        <button
+          type="button"
+          className="chip__action"
+          onClick={onToggleFilter}
+          aria-pressed={isFiltered}
+          aria-label={isFiltered ? `Show every speaker again` : `Show only ${speaker.displayName}`}
+          title={isFiltered ? 'Showing only this speaker — click to show everyone' : `Show only ${speaker.displayName}`}
+        >
+          <Icon name="eye" />
+        </button>
+      )}
+
       {isMergeSource ? (
         <button
           type="button"
@@ -128,12 +151,15 @@ function SpeakerChip({
 
 /**
  * The interaction surface for detected speakers: rename, recolor, merge two
- * clusters that are really the same person, or remove one that turned out to
- * be a diarization artifact rather than a real speaker.
+ * clusters that are really the same person, remove one that turned out to be
+ * a diarization artifact (or just shouldn't have been split out), or narrow
+ * the transcript below to one speaker at a time.
  */
 export default function SpeakerChips({
   speakers,
   utterances,
+  filter,
+  onFilterChange,
   onRename,
   onRecolor,
   onMerge,
@@ -142,10 +168,14 @@ export default function SpeakerChips({
 }: {
   speakers: Speaker[]
   utterances: Utterance[]
+  /** Speaker id the transcript is narrowed to, or null to show everyone. */
+  filter: string | null
+  onFilterChange: (id: string | null) => void
   onRename: (id: string, name: string) => void
   onRecolor: (id: string, color: string) => void
   onMerge: (fromId: string, intoId: string) => void
-  onRemove: (id: string) => void
+  /** `keepLines`: true removes just the speaker and unassigns their lines; false removes the speaker and every line credited to them. */
+  onRemove: (id: string, keepLines: boolean) => void
   /** Adds a new, empty speaker — for detection undercounting (missed someone entirely) rather than misattributing a line, which reassigning a transcript line already covers. */
   onCreate: () => void
 }): React.JSX.Element | null {
@@ -162,6 +192,7 @@ export default function SpeakerChips({
   const from = mergeFrom ? (speakers.find((s) => s.id === mergeFrom) ?? null) : null
   const into = mergeTarget ? (speakers.find((s) => s.id === mergeTarget) ?? null) : null
   const fromCount = from ? (counts.get(from.id) ?? 0) : 0
+  const filtered = filter ? (speakers.find((s) => s.id === filter) ?? null) : null
 
   function cancel(): void {
     setMergeFrom(null)
@@ -179,12 +210,14 @@ export default function SpeakerChips({
             canMerge={speakers.length > 1}
             mergeMode={mergeFrom !== null}
             isMergeSource={speaker.id === mergeFrom}
+            isFiltered={speaker.id === filter}
+            onToggleFilter={() => onFilterChange(filter === speaker.id ? null : speaker.id)}
             onStartMerge={() => setMergeFrom(speaker.id)}
             onCancelMerge={cancel}
             onPickTarget={() => setMergeTarget(speaker.id)}
             onRename={(name) => onRename(speaker.id, name)}
             onRecolor={(color) => onRecolor(speaker.id, color)}
-            onRemove={() => onRemove(speaker.id)}
+            onRemove={(keepLines) => onRemove(speaker.id, keepLines)}
           />
         ))}
         {mergeFrom === null && (
@@ -194,6 +227,16 @@ export default function SpeakerChips({
           </button>
         )}
       </div>
+
+      {filtered && !from && (
+        <p className="speakers__hint">
+          Showing only <strong style={{ color: filtered.color }}>{filtered.displayName}</strong> —{' '}
+          <button type="button" className="speakers__hint-cancel" onClick={() => onFilterChange(null)}>
+            show everyone
+          </button>
+          .
+        </p>
+      )}
 
       {from && !into && (
         <p className="speakers__hint">
