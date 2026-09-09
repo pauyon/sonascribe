@@ -3652,20 +3652,34 @@ label.toolbar__toggle {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
-/* Groups the edit/split triggers so one shared margin-left: auto pushes the
-   whole cluster to the row's end — putting it on each button individually
-   split them apart instead, since flexbox distributes free space at every
-   auto margin it finds, not just the first. */
+/* Groups the edit/split triggers into one small pill — the same shape
+   .chip uses elsewhere (border, pill radius, raised fill) — rather than two
+   bare icons floating at the row's end. One shared margin-left: auto pushes
+   the whole pill there; putting it on each button individually split them
+   apart instead, since flexbox distributes free space at every auto margin
+   it finds, not just the first. */
 .utterance__actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-left: auto;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  opacity: 0;
+  transition: opacity 0.1s;
 }
 
-/* Same hover-reveal shape as .utterance__delete above, for the "edit this
-   line's text" trigger next to it — accent on hover rather than danger,
-   since correcting a line isn't a destructive action. */
+.utterance:hover .utterance__actions,
+.utterance:focus-within .utterance__actions,
+.utterance__actions:focus-within {
+  opacity: 1;
+}
+
+/* Same hover shape as .utterance__delete above, for the "edit this line's
+   text" trigger inside it — accent on hover rather than danger, since
+   correcting a line isn't a destructive action. */
 .utterance__edit-btn {
   display: flex;
   background: none;
@@ -3675,19 +3689,11 @@ label.toolbar__toggle {
   color: var(--text-muted);
   cursor: pointer;
   border-radius: var(--r-sm);
-  opacity: 0;
-  transition: opacity 0.1s;
 }
 
 .utterance__edit-btn svg {
   width: 13px;
   height: 13px;
-}
-
-.utterance:hover .utterance__edit-btn,
-.utterance:focus-within .utterance__edit-btn,
-.utterance__edit-btn:focus {
-  opacity: 1;
 }
 
 .utterance__edit-btn:hover {
