@@ -3652,12 +3652,22 @@ label.toolbar__toggle {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
+/* Groups the edit/split triggers so one shared margin-left: auto pushes the
+   whole cluster to the row's end — putting it on each button individually
+   split them apart instead, since flexbox distributes free space at every
+   auto margin it finds, not just the first. */
+.utterance__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 /* Same hover-reveal shape as .utterance__delete above, for the "edit this
    line's text" trigger next to it — accent on hover rather than danger,
    since correcting a line isn't a destructive action. */
 .utterance__edit-btn {
   display: flex;
-  margin-left: auto;
   background: none;
   border: none;
   padding: 3px;

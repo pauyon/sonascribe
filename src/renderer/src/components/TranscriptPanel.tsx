@@ -197,26 +197,28 @@ export default function TranscriptPanel({
                 {formatDuration(u.startMs)}
               </button>
               {editingId !== u.id && splittingId !== u.id && (
-                <button
-                  type="button"
-                  className="utterance__edit-btn"
-                  onClick={() => startEdit(u)}
-                  aria-label="Edit this line's text"
-                  title="Edit this line's text"
-                >
-                  <Icon name="edit" />
-                </button>
-              )}
-              {editingId !== u.id && splittingId !== u.id && u.words.length > 1 && (
-                <button
-                  type="button"
-                  className="utterance__edit-btn"
-                  onClick={() => startSplit(u)}
-                  aria-label="Split this line into two"
-                  title="Split this line into two — for two speakers run together"
-                >
-                  <Icon name="split" />
-                </button>
+                <div className="utterance__actions">
+                  <button
+                    type="button"
+                    className="utterance__edit-btn"
+                    onClick={() => startEdit(u)}
+                    aria-label="Edit this line's text"
+                    title="Edit this line's text"
+                  >
+                    <Icon name="edit" />
+                  </button>
+                  {u.words.length > 1 && (
+                    <button
+                      type="button"
+                      className="utterance__edit-btn"
+                      onClick={() => startSplit(u)}
+                      aria-label="Split this line into two"
+                      title="Split this line into two — for two speakers run together"
+                    >
+                      <Icon name="split" />
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
