@@ -640,6 +640,9 @@ body {
 }
 
 .player__play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 34px;
   height: 34px;
   flex-shrink: 0;
@@ -647,9 +650,13 @@ body {
   border: none;
   background: var(--accent);
   color: var(--accent-fg);
-  font-size: var(--fs-caption);
   cursor: pointer;
   line-height: 1;
+}
+
+.player__play svg {
+  width: 15px;
+  height: 15px;
 }
 
 .player__time {
@@ -735,6 +742,11 @@ body {
   padding: 0;
   font-size: 16px;
   line-height: 1;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .icon-btn--active {
@@ -1181,8 +1193,12 @@ body {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
   line-height: 1;
+}
+
+.markers__remove svg {
+  width: 11px;
+  height: 11px;
 }
 
 .markers__remove:hover {
@@ -1598,7 +1614,11 @@ body {
   border-radius: 50%;
   background: var(--bg-hover);
   color: var(--text-muted);
-  font-size: 13px;
+}
+
+.chip__menu .overflow-menu__trigger-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .chip__menu .overflow-menu__trigger:hover {
@@ -2901,8 +2921,13 @@ select {
 }
 
 .rec__glyph {
-  font-size: var(--fs-small);
+  display: flex;
   line-height: 1;
+}
+
+.rec__glyph svg {
+  width: 13px;
+  height: 13px;
 }
 
 .rec__time {
@@ -3009,15 +3034,21 @@ select {
 }
 
 .overflow-menu__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 34px;
   height: 34px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 18px;
-  line-height: 1;
   cursor: pointer;
+}
+
+.overflow-menu__trigger-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .overflow-menu__trigger:hover {
@@ -3049,8 +3080,8 @@ select {
 
 .overflow-menu__icon {
   flex: none;
-  width: 1.1em;
-  text-align: center;
+  width: 15px;
+  height: 15px;
 }
 
 .overflow-menu__item {
@@ -3058,6 +3089,9 @@ select {
 }
 
 .overflow-menu__chevron {
+  flex: none;
+  width: 13px;
+  height: 13px;
   margin-left: auto;
   opacity: 0.6;
 }
@@ -3457,17 +3491,22 @@ label.toolbar__toggle {
    line's text" trigger next to it — accent on hover rather than danger,
    since correcting a line isn't a destructive action. */
 .utterance__edit-btn {
+  display: flex;
   margin-left: auto;
   background: none;
   border: none;
-  padding: 2px 4px;
-  font-size: var(--fs-caption);
+  padding: 3px;
   line-height: 1;
   color: var(--text-muted);
   cursor: pointer;
   border-radius: var(--r-sm);
   opacity: 0;
   transition: opacity 0.1s;
+}
+
+.utterance__edit-btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 .utterance:hover .utterance__edit-btn,

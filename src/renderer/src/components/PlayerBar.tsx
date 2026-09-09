@@ -2,6 +2,7 @@ import { PLAYBACK_RATES, type AudioController } from '../lib/useAudio'
 import { formatDuration } from '../lib/format'
 import type { PeakBuckets } from '../lib/cuts'
 import Waveform from './Waveform'
+import Icon from './Icon'
 
 /** Transport controls plus the waveform, driven by a shared AudioController. */
 export default function PlayerBar({
@@ -51,7 +52,7 @@ export default function PlayerBar({
         onClick={audio.toggle}
         aria-label={audio.playing ? 'Pause' : 'Play'}
       >
-        {audio.playing ? '❚❚' : '▶'}
+        <Icon name={audio.playing ? 'pause' : 'play'} />
       </button>
 
       <span className="player__time">{formatDuration(position)}</span>

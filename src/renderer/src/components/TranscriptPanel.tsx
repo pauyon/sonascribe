@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Speaker, TranscriptWord, Utterance } from '@shared/types'
 import { formatDuration } from '../lib/format'
 import Select from './Select'
+import Icon from './Icon'
 
 /**
  * Roughly how many characters a paragraph is allowed to reach before the
@@ -157,7 +158,7 @@ export default function TranscriptPanel({
                   aria-label="Edit this line's text"
                   title="Edit this line's text"
                 >
-                  ✏️
+                  <Icon name="edit" />
                 </button>
               )}
             </div>

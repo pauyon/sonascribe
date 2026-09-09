@@ -17,6 +17,7 @@ import MarkerChips from '../components/MarkerChips'
 import SpeakerChips from '../components/SpeakerChips'
 import TranscriptPanel from '../components/TranscriptPanel'
 import OverflowMenu, { type OverflowMenuItem } from '../components/OverflowMenu'
+import Icon from '../components/Icon'
 
 /** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
 export default function Editor(): React.JSX.Element {
@@ -191,31 +192,31 @@ export default function Editor(): React.JSX.Element {
   const overflowGroups: OverflowMenuItem[][] = [
     // Edit — the one action used almost every time, so it leads.
     recording.sourcePath
-      ? [{ icon: '✏️', label: 'Edit', onClick: () => navigate(`/recordings/${recording.id}/edit`) }]
+      ? [{ icon: 'edit', label: 'Edit', onClick: () => navigate(`/recordings/${recording.id}/edit`) }]
       : [],
     // Processing: (re-)transcribe, then detect speakers off that transcript.
     [
       ...(recording.sourcePath && (recording.transcriptStatus === 'none' || recording.transcriptStatus === 'failed')
-        ? [
+        ? ([
             {
-              icon: '📝',
+              icon: 'transcribe',
               label: recording.transcriptStatus === 'failed' ? 'Retry transcription' : 'Transcribe',
               onClick: () => void transcript.start()
             }
-          ]
+          ] satisfies OverflowMenuItem[])
         : []),
       ...(recording.sourcePath && recording.transcriptStatus === 'ready'
-        ? [{ icon: '📝', label: 'Re-transcribe', onClick: () => void transcript.start() }]
+        ? ([{ icon: 'transcribe', label: 'Re-transcribe', onClick: () => void transcript.start() }] satisfies OverflowMenuItem[])
         : []),
       ...(hasTranscript
-        ? [
+        ? ([
             {
-              icon: '👥',
+              icon: 'speakers',
               label: hasSpeakers ? 'Re-run Speaker Detection' : 'Detect Speakers',
               onClick: () => void speakers.detect(),
               disabled: speakerBusy
             }
-          ]
+          ] satisfies OverflowMenuItem[])
         : [])
     ],
     // Copy: quick clipboard variants of the transcript already in view — collapsed
@@ -223,7 +224,7 @@ export default function Editor(): React.JSX.Element {
     hasTranscript
       ? [
           {
-            icon: '📋',
+            icon: 'copy',
             label: 'Copy Transcript',
             children: [
               { label: 'Copy Text', onClick: () => void copy(copyPlainText(transcript.utterances!)) },
@@ -239,30 +240,30 @@ export default function Editor(): React.JSX.Element {
     // the five transcript formats collapse into one flyout for the same reason.
     [
       ...(recording.sourcePath
-        ? [
+        ? ([
             {
-              icon: '📁',
+              icon: 'folder',
               label: 'Reveal in folder',
               onClick: () => void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
             },
-            { icon: '🔊', label: 'Export Audio', onClick: () => void exportAudio() }
-          ]
+            { icon: 'volume', label: 'Export Audio', onClick: () => void exportAudio() }
+          ] satisfies OverflowMenuItem[])
         : []),
       ...(hasTranscript
-        ? [
+        ? ([
             {
-              icon: '⬇️',
+              icon: 'download',
               label: 'Export Transcript',
               children: EXPORT_FORMATS.map((spec) => ({
                 label: spec.label,
                 onClick: () => void exportTranscript(spec.id)
               }))
             }
-          ]
+          ] satisfies OverflowMenuItem[])
         : [])
     ],
     // Delete — destructive, so it trails on its own.
-    [{ icon: '🗑️', label: 'Delete recording', danger: true, onClick: () => setConfirmingDelete(true) }]
+    [{ icon: 'trash', label: 'Delete recording', danger: true, onClick: () => setConfirmingDelete(true) }]
   ]
 
   return (
@@ -311,7 +312,7 @@ export default function Editor(): React.JSX.Element {
               title={transcriptMode === 'speakers' ? 'Showing speakers & timestamps' : 'Showing timestamps only'}
               onClick={() => setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))}
             >
-              👥
+              <Icon name="speakers" />
             </button>
           )}
           <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
@@ -445,7 +446,7 @@ export default function Editor(): React.JSX.Element {
               aria-label={`Add marker at ${formatDuration(audio.currentMs)}`}
               title={`Add marker at ${formatDuration(audio.currentMs)}`}
             >
-              🚩
+              <Icon name="flag" />
             </button>
           </div>
 

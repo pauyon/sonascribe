@@ -36,13 +36,13 @@ function SpeakerChip({
     otherSpeakers.length > 0
       ? [
           {
-            icon: '🔀',
+            icon: 'shuffle',
             label: 'Merge into…',
             children: otherSpeakers.map((s) => ({ label: s.displayName, onClick: () => onMergeInto(s.id) }))
           }
         ]
       : [],
-    [{ icon: '🗑️', label: 'Remove speaker', danger: true, onClick: onRemove }]
+    [{ icon: 'trash', label: 'Remove speaker', danger: true, onClick: onRemove }]
   ]
 
   return (
