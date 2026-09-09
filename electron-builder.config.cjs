@@ -37,9 +37,15 @@ module.exports = {
   // sidecar staging directory are all excluded by omission.
   files: ['out/**', 'package.json'],
 
-  // ffmpeg lives outside the asar so it stays executable on disk and can be
-  // code-signed individually.
-  extraResources: [{ from: 'resources/bin/${os}', to: 'bin', filter: ['**/*'] }],
+  // ffmpeg/whisper-cli/parakeet-cli/sherpa-onnx live outside the asar so they
+  // stay executable on disk and can be code-signed individually. The
+  // diarization ONNX models are small, bundled data rather than binaries,
+  // but ship the same way for the same reason: services/sidecars.ts resolves
+  // both from process.resourcesPath in a packaged build.
+  extraResources: [
+    { from: 'resources/bin/${os}', to: 'bin', filter: ['**/*'] },
+    { from: 'resources/models', to: 'models', filter: ['**/*'] }
+  ],
 
   /* -------------------------------------------------------------- Windows --- */
 

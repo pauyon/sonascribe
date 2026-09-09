@@ -521,11 +521,6 @@ body {
   margin-bottom: 3px;
 }
 
-.utterance__speaker {
-  font-weight: 650;
-  font-size: var(--fs-small);
-}
-
 .utterance__time {
   font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
   font-size: var(--fs-caption);
@@ -820,6 +815,32 @@ body {
 
 .model--selected {
   border-color: var(--accent);
+}
+
+.model__radio {
+  flex-shrink: 0;
+  margin: 3px 0 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.model__trash {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.model__trash:hover {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
 }
 
 .model__main {
@@ -1568,6 +1589,40 @@ body {
 
 .chip__menu .menu {
   top: 24px;
+}
+
+.chip__menu .overflow-menu__trigger {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chip__menu .overflow-menu__trigger:hover {
+  color: var(--text);
+}
+
+.speakers__swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+}
+
+.speakers__swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.speakers__swatch::-webkit-color-swatch {
+  border: 1px solid var(--border);
+  border-radius: 50%;
 }
 
 .speakers__hint {
@@ -2786,6 +2841,19 @@ select {
   line-height: var(--lh-small);
 }
 
+/* A hint of what the recording is about, from its transcript — muted and
+   clamped so a long opening line doesn't stretch the card past its peers. */
+.rec__preview {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .rec__foot {
   display: flex;
   align-items: center;
@@ -2931,6 +2999,93 @@ select {
 
 .menu button.menu__danger:hover {
   background: color-mix(in srgb, var(--danger) 14%, var(--bg-hover));
+}
+
+/* ---------- overflow menu (OverflowMenu.tsx) ---------- */
+
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.overflow-menu__trigger {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.overflow-menu__trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.overflow-menu__list--start {
+  right: auto;
+  left: 0;
+}
+
+.overflow-menu__group + .overflow-menu__group {
+  margin-top: 4px;
+}
+
+.overflow-menu__divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+.overflow-menu__list button[role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.overflow-menu__icon {
+  flex: none;
+  width: 1.1em;
+  text-align: center;
+}
+
+.overflow-menu__item {
+  position: relative;
+}
+
+.overflow-menu__chevron {
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+/* The default (right-aligned) list hugs the trigger's right edge and grows
+   leftward, so a submenu off one of its rows has room on the left, not the
+   right — opening rightward is what was running it off the window edge. */
+.overflow-menu__submenu {
+  position: absolute;
+  top: -5px;
+  right: 100%;
+}
+
+.overflow-menu__list--start .overflow-menu__submenu {
+  right: auto;
+  left: 100%;
+}
+
+/* Runtime fallback (OverflowMenu.tsx measures and applies this) for the
+   rarer case where even that side is too tight against the viewport edge. */
+.overflow-menu__submenu--flip {
+  right: auto;
+  left: 100%;
+}
+
+.overflow-menu__list--start .overflow-menu__submenu--flip {
+  left: auto;
+  right: 100%;
 }
 
 .menu--colors {
@@ -3296,6 +3451,34 @@ label.toolbar__toggle {
 .utterance__delete:hover {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+/* Same hover-reveal shape as .utterance__delete above, for the "edit this
+   line's text" trigger next to it — accent on hover rather than danger,
+   since correcting a line isn't a destructive action. */
+.utterance__edit-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: var(--fs-caption);
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.utterance:hover .utterance__edit-btn,
+.utterance:focus-within .utterance__edit-btn,
+.utterance__edit-btn:focus {
+  opacity: 1;
+}
+
+.utterance__edit-btn:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 /* ---------- undo toast ---------- */

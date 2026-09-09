@@ -18,3 +18,9 @@ export function formatDuration(ms: number | null): string {
   const s = total % 60
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
 }
+
+/** Model/download sizes: 147 MB, or 1.6 GB past a gigabyte. */
+export function formatBytes(bytes: number): string {
+  const mb = bytes / 1_000_000
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${Math.round(mb)} MB`
+}

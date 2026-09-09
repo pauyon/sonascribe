@@ -23,6 +23,20 @@ export type RecordingSource = 'recorded' | 'imported'
  */
 export type RecordingStatus = 'new' | 'normalizing' | 'ready' | 'failed'
 
+/**
+ * A recording's transcript, independent of `RecordingStatus` — a recording
+ * can be `ready` to play with no transcript at all, one queued or in
+ * progress, or one that failed and can be retried.
+ */
+export type TranscriptStatus = 'none' | 'queued' | 'transcribing' | 'ready' | 'failed'
+
+/**
+ * Speaker detection's own lifecycle, independent of `TranscriptStatus` — it
+ * only ever runs against an existing transcript, on demand, and is
+ * re-runnable.
+ */
+export type SpeakerStatus = 'none' | 'queued' | 'detecting' | 'ready' | 'failed'
+
 /** A non-destructive trim region, in the original file's own time. */
 export interface Cut {
   startMs: number
@@ -55,6 +69,49 @@ export interface Recording {
   cuts: Cut[]
   /** Jump-to points, original-file time, sorted by `timeMs`. */
   markers: Marker[]
+  transcriptStatus: TranscriptStatus
+  transcriptError: string | null
+  /** Id of the model that produced the current transcript, or null if there isn't one. */
+  modelId: string | null
+  /** Language the current transcript was produced in (a Whisper hint, or an engine's own detection). Null until a transcript exists. */
+  language: string | null
+  /** A short snippet of the transcript, for the library card. Null until a transcript exists. */
+  transcriptPreview: string | null
+  speakerStatus: SpeakerStatus
+  speakerError: string | null
+}
+
+/** A word with timings, part of an `Utterance`. */
+export interface TranscriptWord {
+  text: string
+  startMs: number
+  endMs: number
+  /** Model confidence 0..1. 1 for a word persisted before this was tracked. */
+  probability: number
+}
+
+/** A named, colored voice detected in one recording — never shared across recordings. */
+export interface Speaker {
+  id: string
+  recordingId: string
+  /** The diarizer's cluster index — internal, never shown; identity for a re-run to reattach to the same row. */
+  clusterId: number
+  displayName: string
+  color: string
+}
+
+/** One contiguous span of speech in a recording's transcript. */
+export interface Utterance {
+  id: string
+  recordingId: string
+  startMs: number
+  endMs: number
+  text: string
+  words: TranscriptWord[]
+  /** Mean word confidence 0..1, or null when the engine didn't report one. */
+  confidence: number | null
+  /** Who said this, once speaker detection has run. Null beforehand, or if this line couldn't be attributed to anyone. */
+  speaker: { id: string; name: string; color: string } | null
 }
 
 /**

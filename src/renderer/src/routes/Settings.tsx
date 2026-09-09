@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { api, useQuery } from '../lib/api'
 import LogViewer from '../components/LogViewer'
+import ModelPicker from '../components/ModelPicker'
 
-/** Where recordings are stored, and diagnostics. The only settings that don't
- * belong on the Record screen next to what they affect. */
+/** Where recordings are stored, transcription models, and diagnostics. The
+ * only settings that don't belong on the Record screen next to what they
+ * affect. */
 export default function Settings(): React.JSX.Element {
   const { data: storage, error, refetch } = useQuery('storage:get')
+  const { data: appInfo } = useQuery('app:info')
 
   const [moving, setMoving] = useState(false)
   const [moveError, setMoveError] = useState<string | null>(null)
@@ -34,7 +37,9 @@ export default function Settings(): React.JSX.Element {
       <header className="page__header">
         <div>
           <h1>Settings</h1>
-          <p className="page__subtitle">Where your recordings live, and diagnostics</p>
+          <p className="page__subtitle">
+            Where your recordings live, transcription models, and diagnostics
+          </p>
         </div>
       </header>
 
@@ -75,6 +80,15 @@ export default function Settings(): React.JSX.Element {
           Existing recordings are moved to the new folder — this can take a moment for a
           large library. Recording must be stopped first.
         </p>
+      </div>
+
+      <div className="recorder__group">
+        <span className="recorder__group-label">Transcription</span>
+        {appInfo ? (
+          <ModelPicker availableEngines={appInfo.availableEngines} />
+        ) : (
+          <p className="recorder__fine">Loading…</p>
+        )}
       </div>
 
       <div className="recorder__group">

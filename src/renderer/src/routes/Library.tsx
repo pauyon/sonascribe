@@ -9,12 +9,17 @@ export default function Library(): React.JSX.Element {
   const navigate = useNavigate()
   const { data, error, loading, refetch } = useQuery('recordings:list')
   const { data: info } = useQuery('app:info')
+  const { data: activeTranscriptions } = useQuery('transcript:listActive')
 
   const [progress, setProgress] = useState<Record<string, ImportProgress>>({})
+  // Keyed by recording id; a fraction here overrides `activeTranscriptions`'
+  // seeded value once a live event has actually arrived for that recording.
+  const [transcribeProgress, setTranscribeProgress] = useState<Record<string, number | null>>({})
   const [dragging, setDragging] = useState(false)
   /** Which card holds playback: starting one stops whichever was going. */
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [cardActionError, setCardActionError] = useState<string | null>(null)
   // Drag events fire for every child element; a counter avoids the highlight
   // flickering as the pointer moves between them.
   const dragDepth = useRef(0)
@@ -23,12 +28,26 @@ export default function Library(): React.JSX.Element {
     setProgress((prev) => ({ ...prev, [payload.recordingId]: payload }))
   })
 
+  useEvent('transcript:progress', (payload) => {
+    setTranscribeProgress((prev) => ({ ...prev, [payload.recordingId]: payload.fraction }))
+  })
+
   useEvent('recording:updated', (updated) => {
     setProgress((prev) => {
       const next = { ...prev }
       delete next[updated.id]
       return next
     })
+    // Only cleared once the transcript is no longer in flight — a status
+    // update mid-run (e.g. 'queued' -> 'transcribing') must not drop the
+    // fraction already tracked for it.
+    if (updated.transcriptStatus !== 'queued' && updated.transcriptStatus !== 'transcribing') {
+      setTranscribeProgress((prev) => {
+        const next = { ...prev }
+        delete next[updated.id]
+        return next
+      })
+    }
     refetch()
   })
 
@@ -49,6 +68,15 @@ export default function Library(): React.JSX.Element {
   async function pickFiles(): Promise<void> {
     const paths = await api.invoke('dialog:pickMediaFiles')
     await importPaths(paths)
+  }
+
+  async function cardAction(fn: () => Promise<unknown>): Promise<void> {
+    setCardActionError(null)
+    try {
+      await fn()
+    } catch (err) {
+      setCardActionError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   function onDrop(e: React.DragEvent): void {
@@ -103,6 +131,7 @@ export default function Library(): React.JSX.Element {
       )}
       {error && <div className="banner banner--error">{error}</div>}
       {importError && <div className="banner banner--error">{importError}</div>}
+      {cardActionError && <div className="banner banner--error">{cardActionError}</div>}
 
       {!loading && recordings.length === 0 && !error ? (
         <div className="empty empty--drop">
@@ -143,7 +172,22 @@ export default function Library(): React.JSX.Element {
               onDelete={(id) => {
                 void api.invoke('recordings:delete', { id }).then(refetch)
               }}
+              onTranscribe={(id) => void cardAction(() => api.invoke('transcript:start', { recordingId: id }))}
+              onExportTranscript={(id) =>
+                void cardAction(() => api.invoke('transcript:export', { recordingId: id, format: 'txt' }))
+              }
+              onExportAudio={(id) => void cardAction(() => api.invoke('audio:export', { recordingId: id }))}
               job={progress[r.id] ? { fraction: progress[r.id].fraction } : null}
+              transcribing={
+                r.transcriptStatus === 'queued' || r.transcriptStatus === 'transcribing'
+                  ? {
+                      fraction:
+                        r.id in transcribeProgress
+                          ? transcribeProgress[r.id]
+                          : (activeTranscriptions?.find((a) => a.recordingId === r.id)?.fraction ?? null)
+                    }
+                  : null
+              }
             />
           ))}
         </div>

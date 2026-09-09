@@ -7,8 +7,16 @@ import { registerIpcHandlers } from './ipc'
 import { registerMediaProtocolHandler, registerMediaProtocolScheme } from './protocol'
 import { registerDisplayMediaHandler } from './display-media'
 import { migrateLegacyUserData } from './migrate-legacy-data'
-import { repairMediaPaths, resetInterruptedRecordings } from './db/repair-paths'
+import {
+  repairMediaPaths,
+  resetInterruptedRecordings,
+  resetInterruptedSpeakerDetections,
+  resetInterruptedTranscriptions
+} from './db/repair-paths'
 import { sweepOrphanedMedia } from './services/media-cleanup'
+import { sweepOrphanedChunks } from './services/audio-chunks'
+import { cancelAllTranscriptions } from './services/jobs'
+import { cancelAllSpeakerDetections } from './services/speaker-jobs'
 import { isRecording } from './services/recorder'
 import { getAutoPopOutOnMinimize } from './db/settings'
 import { closeMiniRecorderWindow, openMiniRecorderWindow } from './windows/mini-recorder'
@@ -129,9 +137,13 @@ if (!app.requestSingleInstanceLock()) {
     // them, so repoint anything that no longer resolves.
     repairMediaPaths()
     resetInterruptedRecordings()
+    resetInterruptedTranscriptions()
+    resetInterruptedSpeakerDetections()
     // Reclaim audio stranded by earlier versions, or by a crash between deleting
     // a row and deleting its files.
     void sweepOrphanedMedia()
+    // Reclaim scratch chunk WAVs left by a transcription killed mid-run.
+    void sweepOrphanedChunks()
     registerMediaProtocolHandler()
     registerDisplayMediaHandler()
     registerIpcHandlers()
@@ -147,6 +159,8 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('will-quit', () => {
+    cancelAllTranscriptions()
+    cancelAllSpeakerDetections()
     closeDb()
   })
 }

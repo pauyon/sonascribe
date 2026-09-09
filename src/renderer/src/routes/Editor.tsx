@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { sourceMediaUrl } from '@shared/ipc'
+import { EXPORT_FORMATS } from '@shared/export'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
 import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
 import { useMarkers } from '../lib/useMarkers'
+import { useTranscript } from '../lib/useTranscript'
+import { useSpeakers } from '../lib/useSpeakers'
+import { copyPlainText, copyWithSpeakers, copyWithTimestamps } from '../lib/transcriptCopy'
 import { cutAt, realToVirtual } from '../lib/cuts'
 import { formatDuration } from '../lib/format'
 import StatusPill from '../components/StatusPill'
 import PlayerBar from '../components/PlayerBar'
 import MarkerChips from '../components/MarkerChips'
+import SpeakerChips from '../components/SpeakerChips'
+import TranscriptPanel from '../components/TranscriptPanel'
+import OverflowMenu, { type OverflowMenuItem } from '../components/OverflowMenu'
 
 /** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
 export default function Editor(): React.JSX.Element {
@@ -20,6 +27,7 @@ export default function Editor(): React.JSX.Element {
   const [draftTitle, setDraftTitle] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [transcriptMode, setTranscriptMode] = useState<'speakers' | 'timestamps'>('speakers')
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -44,6 +52,8 @@ export default function Editor(): React.JSX.Element {
     remove: removeMarker,
     clearAll: clearAllMarkers
   } = useMarkers(recording, refetch)
+  const transcript = useTranscript(id)
+  const speakers = useSpeakers(id, transcript.refetch)
 
   const durationMs = recording?.durationMs ?? 0
   const cuts = useMemo(() => recording?.cuts ?? [], [recording?.cuts])
@@ -147,6 +157,114 @@ export default function Editor(): React.JSX.Element {
       })
   }
 
+  async function copy(text: string): Promise<void> {
+    setActionError(null)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function exportTranscript(format: (typeof EXPORT_FORMATS)[number]['id']): Promise<void> {
+    setActionError(null)
+    try {
+      await api.invoke('transcript:export', { recordingId: id, format })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function exportAudio(): Promise<void> {
+    setActionError(null)
+    try {
+      await api.invoke('audio:export', { recordingId: id })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
+  const hasSpeakers = speakers.speakers.length > 0
+  const speakerBusy = recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting'
+
+  const overflowGroups: OverflowMenuItem[][] = [
+    // Edit — the one action used almost every time, so it leads.
+    recording.sourcePath
+      ? [{ icon: '✏️', label: 'Edit', onClick: () => navigate(`/recordings/${recording.id}/edit`) }]
+      : [],
+    // Processing: (re-)transcribe, then detect speakers off that transcript.
+    [
+      ...(recording.sourcePath && (recording.transcriptStatus === 'none' || recording.transcriptStatus === 'failed')
+        ? [
+            {
+              icon: '📝',
+              label: recording.transcriptStatus === 'failed' ? 'Retry transcription' : 'Transcribe',
+              onClick: () => void transcript.start()
+            }
+          ]
+        : []),
+      ...(recording.sourcePath && recording.transcriptStatus === 'ready'
+        ? [{ icon: '📝', label: 'Re-transcribe', onClick: () => void transcript.start() }]
+        : []),
+      ...(hasTranscript
+        ? [
+            {
+              icon: '👥',
+              label: hasSpeakers ? 'Re-run Speaker Detection' : 'Detect Speakers',
+              onClick: () => void speakers.detect(),
+              disabled: speakerBusy
+            }
+          ]
+        : [])
+    ],
+    // Copy: quick clipboard variants of the transcript already in view — collapsed
+    // into one flyout so the three variants don't each cost a row of their own.
+    hasTranscript
+      ? [
+          {
+            icon: '📋',
+            label: 'Copy Transcript',
+            children: [
+              { label: 'Copy Text', onClick: () => void copy(copyPlainText(transcript.utterances!)) },
+              { label: 'Copy with Timestamps', onClick: () => void copy(copyWithTimestamps(transcript.utterances!)) },
+              ...(hasSpeakers
+                ? [{ label: 'Copy with Speakers', onClick: () => void copy(copyWithSpeakers(transcript.utterances!)) }]
+                : [])
+            ]
+          }
+        ]
+      : [],
+    // File actions: reveal on disk, export audio and transcript to a file —
+    // the five transcript formats collapse into one flyout for the same reason.
+    [
+      ...(recording.sourcePath
+        ? [
+            {
+              icon: '📁',
+              label: 'Reveal in folder',
+              onClick: () => void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
+            },
+            { icon: '🔊', label: 'Export Audio', onClick: () => void exportAudio() }
+          ]
+        : []),
+      ...(hasTranscript
+        ? [
+            {
+              icon: '⬇️',
+              label: 'Export Transcript',
+              children: EXPORT_FORMATS.map((spec) => ({
+                label: spec.label,
+                onClick: () => void exportTranscript(spec.id)
+              }))
+            }
+          ]
+        : [])
+    ],
+    // Delete — destructive, so it trails on its own.
+    [{ icon: '🗑️', label: 'Delete recording', danger: true, onClick: () => setConfirmingDelete(true) }]
+  ]
+
   return (
     <div className={playbackSrc ? 'page page--has-player' : 'page'}>
       <header className="page__header">
@@ -182,24 +300,21 @@ export default function Editor(): React.JSX.Element {
         </div>
 
         <div className="page__actions">
-          {recording.sourcePath && (
-            <>
-              <Link className="btn btn--primary" to={`/recordings/${recording.id}/edit`}>
-                Edit
-              </Link>
-              <button
-                className="btn"
-                onClick={() =>
-                  void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
-                }
-              >
-                Reveal in folder
-              </button>
-            </>
+          {hasSpeakers && (
+            <button
+              type="button"
+              className={
+                transcriptMode === 'speakers' ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'
+              }
+              aria-pressed={transcriptMode === 'speakers'}
+              aria-label={transcriptMode === 'speakers' ? 'Hide speaker labels' : 'Show speaker labels'}
+              title={transcriptMode === 'speakers' ? 'Showing speakers & timestamps' : 'Showing timestamps only'}
+              onClick={() => setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))}
+            >
+              👥
+            </button>
           )}
-          <button className="btn btn--danger" onClick={() => setConfirmingDelete(true)}>
-            Delete recording
-          </button>
+          <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
         </div>
       </header>
 
@@ -238,6 +353,60 @@ export default function Editor(): React.JSX.Element {
 
       {recording.error && <div className="banner banner--error">{recording.error}</div>}
       {actionError && <div className="banner banner--error">{actionError}</div>}
+      {transcript.startError && <div className="banner banner--error">{transcript.startError}</div>}
+      {recording.transcriptStatus === 'failed' && recording.transcriptError && (
+        <div className="banner banner--error">{recording.transcriptError}</div>
+      )}
+      {speakers.detectError && <div className="banner banner--error">{speakers.detectError}</div>}
+      {recording.speakerStatus === 'failed' && recording.speakerError && (
+        <div className="banner banner--error">{recording.speakerError}</div>
+      )}
+
+      {(recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting') && (
+        <div className="toolbar">
+          <div className="progress progress--wide" style={{ flex: 1 }}>
+            <div
+              className={
+                speakers.progress == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
+              }
+              style={speakers.progress == null ? undefined : { width: `${Math.round(speakers.progress * 100)}%` }}
+            />
+            <span className="progress__label">
+              {recording.speakerStatus === 'queued'
+                ? 'Queued…'
+                : speakers.progress == null
+                  ? 'Detecting speakers…'
+                  : `Detecting speakers… ${Math.round(speakers.progress * 100)}%`}
+            </span>
+          </div>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={speakers.cancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {(recording.transcriptStatus === 'queued' || recording.transcriptStatus === 'transcribing') && (
+        <div className="toolbar">
+          <div className="progress progress--wide" style={{ flex: 1 }}>
+            <div
+              className={
+                transcript.progress == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
+              }
+              style={transcript.progress == null ? undefined : { width: `${Math.round(transcript.progress * 100)}%` }}
+            />
+            <span className="progress__label">
+              {recording.transcriptStatus === 'queued'
+                ? 'Queued…'
+                : transcript.progress == null
+                  ? 'Transcribing…'
+                  : `Transcribing… ${Math.round(transcript.progress * 100)}%`}
+            </span>
+          </div>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={transcript.cancel}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {playbackSrc && (
         <>
@@ -288,6 +457,28 @@ export default function Editor(): React.JSX.Element {
             onRemove={removeMarker}
             onClearAll={clearAllMarkers}
           />
+
+          {transcriptMode === 'speakers' && (
+            <SpeakerChips
+              speakers={speakers.speakers}
+              onRename={speakers.rename}
+              onRecolor={speakers.recolor}
+              onMerge={speakers.merge}
+              onRemove={speakers.remove}
+            />
+          )}
+
+          {recording.transcriptStatus === 'ready' && transcript.utterances && (
+            <TranscriptPanel
+              utterances={transcript.utterances}
+              currentMs={audio.currentMs}
+              onSeek={audio.seek}
+              mode={transcriptMode}
+              speakers={speakers.speakers}
+              onReassignSpeaker={speakers.reassignUtterance}
+              onEditText={transcript.editText}
+            />
+          )}
         </>
       )}
 

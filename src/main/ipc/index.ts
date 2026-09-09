@@ -1,7 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { readFile } from 'node:fs/promises'
-import type { Channel, Request, Response, RecordingSettings } from '@shared/ipc'
+import { copyFile, readFile, writeFile } from 'node:fs/promises'
+import { extname, join } from 'node:path'
+import type { Channel, Request, Response, RecordingSettings, TranscriptionSettings } from '@shared/ipc'
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
+import { ENGINES, DEFAULT_ENGINE, defaultModelForEngine } from '@shared/models'
+import { EXPORT_FORMATS } from '@shared/export'
+import { engineSidecar } from '../services/transcription'
 import { defaultMediaPath, userDataPath } from '../paths'
 import { logFilePath } from '../log'
 import {
@@ -9,12 +13,18 @@ import {
   getCaptureSystemAudio,
   getEchoCancellation,
   getMicDeviceId,
+  getModelIdForEngine,
   getNoiseSuppression,
+  getTranscriptionEngine,
+  getTranscriptionLanguage,
   setAutoPopOutOnMinimize,
   setCaptureSystemAudio,
   setEchoCancellation,
   setMicDeviceId,
-  setNoiseSuppression
+  setModelIdForEngine,
+  setNoiseSuppression,
+  setTranscriptionEngine,
+  setTranscriptionLanguage
 } from '../db/settings'
 import { DEFAULT_BUCKETS, getPeaks } from '../services/peaks'
 import {
@@ -26,6 +36,15 @@ import {
   setRecordingCuts,
   setRecordingMarkers
 } from '../db/recordings'
+import { getUtterances, updateUtteranceText } from '../db/transcript'
+import {
+  deleteSpeaker,
+  listSpeakers,
+  mergeSpeakers,
+  reassignUtterance,
+  renameSpeaker,
+  setSpeakerColor
+} from '../db/speakers'
 import { hasSidecar } from '../services/sidecars'
 import { queueImport } from '../services/importer'
 import { deleteRecordingMedia } from '../services/media-cleanup'
@@ -39,6 +58,14 @@ import {
   stopRecording,
   writeChunk
 } from '../services/recorder'
+import { cancelModelDownload, deleteModel, downloadModel, listModelStatuses } from '../services/models'
+import { cancelTranscription, listActiveTranscriptions, queueTranscription } from '../services/jobs'
+import {
+  cancelSpeakerDetection,
+  listActiveSpeakerDetections,
+  queueSpeakerDetection
+} from '../services/speaker-jobs'
+import { renderTranscript } from '../services/transcript-export'
 import { openMiniRecorderWindow } from '../windows/mini-recorder'
 import { emit } from './events'
 
@@ -130,7 +157,8 @@ const handlers: Handlers = {
     userDataPath: userDataPath(),
     mediaPath: getMediaRoot(),
     logPath: logFilePath(),
-    ffmpegAvailable: hasSidecar('ffmpeg')
+    ffmpegAvailable: hasSidecar('ffmpeg'),
+    availableEngines: ENGINES.map((e) => e.id).filter((id) => hasSidecar(engineSidecar(id)))
   }),
 
   'storage:get': () => ({
@@ -210,7 +238,138 @@ const handlers: Handlers = {
     shell.showItemInFolder(path)
   },
 
-  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => '')
+  'logs:read': () => readFile(logFilePath(), 'utf8').catch(() => ''),
+
+  'models:list': () => listModelStatuses(),
+
+  'models:download': async ({ modelId }) => {
+    await downloadModel(modelId)
+  },
+
+  'models:cancelDownload': ({ modelId }) => {
+    cancelModelDownload(modelId)
+  },
+
+  'models:delete': ({ modelId }) => deleteModel(modelId),
+
+  'transcription:getSettings': () => currentTranscriptionSettings(),
+
+  'transcription:setSettings': (patch) => {
+    if (patch.engine) setTranscriptionEngine(patch.engine)
+    if (patch.modelId) {
+      for (const engine of ENGINES) {
+        const modelId = patch.modelId[engine.id]
+        if (modelId) setModelIdForEngine(engine.id, modelId)
+      }
+    }
+    if (patch.language != null) setTranscriptionLanguage(patch.language)
+    return currentTranscriptionSettings()
+  },
+
+  'transcript:start': ({ recordingId }) => {
+    queueTranscription(recordingId)
+  },
+
+  'transcript:cancel': ({ recordingId }) => {
+    cancelTranscription(recordingId)
+  },
+
+  'transcript:get': ({ recordingId }) => getUtterances(recordingId),
+
+  'transcript:editUtterance': ({ utteranceId, text }) => {
+    updateUtteranceText(utteranceId, text)
+  },
+
+  'transcript:listActive': () => listActiveTranscriptions(),
+
+  'transcript:export': async ({ recordingId, format }) => {
+    const recording = getRecording(recordingId)
+    if (!recording) throw new Error('Recording not found')
+    const utterances = getUtterances(recordingId)
+    if (utterances.length === 0) throw new Error('There is no transcript to export yet')
+
+    const spec = EXPORT_FORMATS.find((f) => f.id === format)
+    if (!spec) throw new Error(`Unknown export format: ${format}`)
+
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export transcript',
+      defaultPath: join(app.getPath('documents'), `${safeFileName(recording.title)}.${spec.extension}`),
+      filters: [{ name: spec.label, extensions: [spec.extension] }]
+    }
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return null
+
+    await writeFile(result.filePath, renderTranscript(recording, utterances, format), 'utf8')
+    return result.filePath
+  },
+
+  'audio:export': async ({ recordingId }) => {
+    const recording = getRecording(recordingId)
+    if (!recording?.sourcePath) throw new Error('This recording has no audio yet')
+
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export audio',
+      defaultPath: join(
+        app.getPath('documents'),
+        `${safeFileName(recording.title)}${extname(recording.sourcePath)}`
+      )
+    }
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return null
+
+    await copyFile(recording.sourcePath, result.filePath)
+    return result.filePath
+  },
+
+  'speakers:detect': ({ recordingId }) => {
+    queueSpeakerDetection(recordingId)
+  },
+
+  'speakers:cancel': ({ recordingId }) => {
+    cancelSpeakerDetection(recordingId)
+  },
+
+  'speakers:list': ({ recordingId }) => listSpeakers(recordingId),
+
+  'speakers:rename': ({ id, displayName }) => {
+    const trimmed = displayName.trim()
+    if (!trimmed) throw new Error('Name cannot be empty')
+    return renameSpeaker(id, trimmed)
+  },
+
+  'speakers:recolor': ({ recordingId, id, color }) => {
+    setSpeakerColor(recordingId, id, color)
+  },
+
+  'speakers:merge': ({ recordingId, fromId, intoId }) => {
+    mergeSpeakers(recordingId, fromId, intoId)
+  },
+
+  'speakers:reassignUtterance': ({ utteranceId, speakerId }) => {
+    reassignUtterance(utteranceId, speakerId)
+  },
+
+  'speakers:delete': ({ id }) => {
+    deleteSpeaker(id)
+  },
+
+  'speakers:listActive': () => listActiveSpeakerDetections()
+}
+
+function safeFileName(title: string): string {
+  return (
+    title
+      .replace(/[<>:"/\\|?*]/g, '_')
+      .replace(/\.+$/, '')
+      .trim()
+      .slice(0, 120) || 'transcript'
+  )
 }
 
 function currentSettings(): RecordingSettings {
@@ -220,6 +379,18 @@ function currentSettings(): RecordingSettings {
     micDeviceId: getMicDeviceId(),
     captureSystemAudio: getCaptureSystemAudio(),
     autoPopOutOnMinimize: getAutoPopOutOnMinimize()
+  }
+}
+
+function currentTranscriptionSettings(): TranscriptionSettings {
+  const engine = getTranscriptionEngine() ?? DEFAULT_ENGINE
+  return {
+    engine,
+    modelId: {
+      whisper: getModelIdForEngine('whisper') ?? defaultModelForEngine('whisper'),
+      parakeet: getModelIdForEngine('parakeet') ?? defaultModelForEngine('parakeet')
+    },
+    language: getTranscriptionLanguage()
   }
 }
 

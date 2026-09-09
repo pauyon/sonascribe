@@ -2,12 +2,13 @@
 
 Local-first audio recorder for Windows and macOS. Record microphone and
 system audio — mixed together into one file — or import an existing file, and
-play it back. Everything runs on device — nothing leaves the machine.
+play it back. Optionally transcribe a recording with a locally-run Whisper or
+Parakeet model. Everything runs on device — nothing leaves the machine.
 
 ## Commands
 
 ```bash
-npm run sidecars   # download ffmpeg into resources/bin/ (run once after clone)
+npm run sidecars   # download ffmpeg + whisper-cli/parakeet-cli into resources/bin/ (run once after clone)
 npm run dev        # dev server with HMR
 npm run build      # typecheck + production build
 npm run typecheck  # both tsconfig projects
@@ -84,14 +85,17 @@ update channel, which is a distribution decision rather than a build one.
 
 ```
 src/
-  main/       Node side: window, SQLite, IPC handlers, the recorder and importer
+  main/       Node side: window, SQLite, IPC handlers, the recorder, importer, transcription
     db/       all SQL lives here — migrations + repositories
     services/ recorder.ts (WAV writer), importer.ts (ffmpeg normalize),
-              peaks.ts, media-cleanup.ts, storage.ts (where recordings live, and relocating them)
+              peaks.ts, media-cleanup.ts, storage.ts (where recordings live, and relocating them),
+              whisper.ts/parakeet.ts (transcription engines), models.ts (ASR model downloads),
+              jobs.ts (transcription queue)
   preload/    the only renderer↔main bridge; allowlists channels
   shared/     types + the IPC contract both processes compile against
-  renderer/   React UI — Library, Record, Settings, the recording detail view
-resources/bin/<platform>/   ffmpeg binary (git-ignored)
+  renderer/   React UI — Library, Record, Settings (incl. transcription models), the
+              recording detail view (playback + transcript), the dedicated trim editor
+resources/bin/<platform>/   ffmpeg/whisper-cli/parakeet-cli binaries (git-ignored)
 ```
 
 See `CLAUDE.md` for a fuller module map and the AI-assisted testing recipe.
@@ -139,13 +143,18 @@ blocks cross-origin fetches to custom schemes outright. Waveform peaks
 therefore get computed in the main process and sent over IPC, which is the
 better design anyway: a two-hour recording is ~230 MB of PCM.
 
-**ffmpeg is the only sidecar left, fetched rather than committed, and used
-only to normalize an imported file to WAV.** A live recording never touches
-it — mixing happens in the browser's own audio graph, straight to disk.
-`npm run sidecars` downloads ffmpeg per platform. Windows and Linux use
-BtbN's LGPL builds; no LGPL macOS build is published, so macOS uses the GPL
-build from ffmpeg-static. ffmpeg is invoked as a separate process and never
-linked, but review that before shipping macOS commercially.
+**Sidecar binaries are fetched, not committed.** `npm run sidecars` downloads
+ffmpeg (normalizing an imported file to WAV; a live recording never touches
+it — mixing happens in the browser's own audio graph, straight to disk) plus
+whisper-cli/parakeet-cli (transcription) per platform. Windows and Linux use
+BtbN's LGPL ffmpeg builds and whisper.cpp's own prebuilt CLI releases (which
+bundle both whisper-cli and parakeet-cli together); no LGPL macOS ffmpeg
+build is published, so macOS uses the GPL build from ffmpeg-static, and
+whisper.cpp publishes no macOS CLI at all — `fetch-sidecars.mjs` prints
+Homebrew/build-from-source instructions there instead, and the sidecar
+resolver's PATH fallback is what actually picks either up. Every sidecar is
+invoked as a separate process and never linked, but review the ffmpeg
+licensing note before shipping macOS commercially.
 
 **Automatic gain control is always on; echo cancellation and noise
 suppression are off by default and each independently toggleable.** All three
@@ -177,16 +186,37 @@ written file before finalizing; system-audio loopback with nothing playing
 produces a full-length file of digital zeroes, which byte count alone would
 not catch.
 
-**Old transcription/diarization/RAG/screenshot tables are still in the
-schema, just unreferenced.** This app used to transcribe, diarize speakers,
-answer questions about a transcript (offline RAG via llama.cpp), and capture
-screenshots during a recording — all of that was stripped down to a plain
-recorder. Rather than a destructive migration, `tracks`, `speakers`,
-`utterances`, `words`, `voice_profiles`, `chunk_embeddings` and `screenshots`
-were simply left in place and orphaned: an existing recording's
-`source_path` already pointed at a playable file, so nothing needed
-migrating for playback to keep working. See `db/migrations.ts` for the full
-history if reviving any of that is ever on the table.
+**Transcription came back, scoped down.** This app used to transcribe,
+diarize speakers, answer questions about a transcript (offline RAG via
+llama.cpp), and capture screenshots during a recording, before all of that
+was stripped down to a plain recorder. Plain transcription (no speakers, no
+diarization, no RAG) was later added back on top of the stripped-down
+recorder, reusing the schema that stripping left behind: `utterances`/`words`
+are active again (`db/transcript.ts`), with `speaker_id`/`track_id` left
+`NULL` since there's no diarization or multi-track recording pointing at
+them. `tracks`, `speakers`, `voice_profiles`, `chunk_embeddings` and
+`screenshots` remain unreferenced. See `db/migrations.ts` for the full
+history.
+
+**Transcription runs two possible engines, both native CLI sidecars —
+whisper.cpp for Whisper models, `parakeet-cli` (same whisper.cpp project) for
+NVIDIA's Parakeet TDT.** No Python anywhere, matching how ffmpeg is the only
+other sidecar. Models are GGML files, 78 MB to 1.6 GB, downloaded on demand
+(never bundled) to `<userData>/models/` with resumable HTTP downloads and a
+magic-byte check against a truncated/corrupt file — `shared/models.ts` is a
+short, curated catalogue rather than the full upstream model zoo, so picking
+one doesn't require already knowing what a quantized GGML file is.
+whisper.cpp handles arbitrarily long audio internally and reports real
+progress; Parakeet's CLI does neither — its memory grows with input length
+(a 2h25m file measured 20.8 GB resident) and it prints no progress at all —
+so `services/audio-chunks.ts` splits long audio into silence-aware windows
+and `parakeet.ts` runs a small worker pool over them, which is also what
+turns "no progress" into a real, incrementally-climbing percentage. A
+transcript is stored as `utterances`/`words`; `TranscriptPanel.tsx` groups a
+long utterance's words into ~500-character paragraphs for display (split
+only at sentence ends) without touching the stored row, so one five-minute
+monologue doesn't render as an unbroken wall of text under a single
+timestamp.
 
 **Logging persists to a file, because a packaged build has no terminal.**
 `src/main/log.ts` calls `electron-log`'s `Object.assign(console, log.functions)`

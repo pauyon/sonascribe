@@ -1,0 +1,221 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Speaker, TranscriptWord, Utterance } from '@shared/types'
+import { formatDuration } from '../lib/format'
+import Select from './Select'
+
+/**
+ * Roughly how many characters a paragraph is allowed to reach before the
+ * next sentence end splits it. Low enough that a paragraph is usually one
+ * or two sentences — a timestamp every 500 characters let four or five
+ * unrelated sentences pile up under one, which read as a single dense block
+ * instead of a spread of moments to jump between.
+ */
+const PARAGRAPH_TARGET_CHARS = 160
+
+/**
+ * Breaks one utterance's words into readable paragraphs, splitting only at
+ * sentence ends.
+ *
+ * A monologue with no 800ms pause stays a single utterance in the data
+ * model (see `groupWordsIntoSegments` in the main process) — one stretch of
+ * speech can run for minutes. Rendered as one block it reads as an unbroken
+ * wall of text under a single timestamp, which makes a paragraph near the
+ * end look like it happened in the same instant as the one at the top.
+ * Splitting is display-only: it never touches the stored utterance.
+ */
+function paragraphize(words: TranscriptWord[]): TranscriptWord[][] {
+  const paragraphs: TranscriptWord[][] = []
+  let current: TranscriptWord[] = []
+  let currentChars = 0
+  for (const word of words) {
+    current.push(word)
+    currentChars += word.text.length + 1
+    if (/[.!?]["')\]]?$/.test(word.text) && currentChars >= PARAGRAPH_TARGET_CHARS) {
+      paragraphs.push(current)
+      current = []
+      currentChars = 0
+    }
+  }
+  if (current.length > 0) paragraphs.push(current)
+  return paragraphs
+}
+
+/**
+ * A recording's transcript: playback-synced, click-to-seek, broken into
+ * paragraphs rather than one wall of text per utterance. `currentMs` and
+ * `onSeek` are both in the recording's real (original-file) time — the same
+ * space `Utterance.startMs`/`endMs` are stored in — matching how markers are
+ * jumped to elsewhere in this app. `mode` is controlled by the caller (a
+ * header toggle next to the "⋯" menu) rather than owned here, since that
+ * toggle needs to live outside this panel's own DOM subtree. A mislabeled
+ * line's speaker is fixed right where it's wrong — the name doubles as a
+ * picker over every known speaker, not just a link to the chips above. A
+ * wrong word an edit-button turns into a plain textarea for the whole
+ * line — editing loses that line's word-level timing/highlighting, since a
+ * hand-typed correction has no ASR timings of its own to offer.
+ */
+export default function TranscriptPanel({
+  utterances,
+  currentMs,
+  onSeek,
+  mode,
+  speakers,
+  onReassignSpeaker,
+  onEditText
+}: {
+  utterances: Utterance[]
+  currentMs: number
+  onSeek: (ms: number) => void
+  mode: 'speakers' | 'timestamps'
+  speakers: Speaker[]
+  onReassignSpeaker: (utteranceId: string, speakerId: string) => void
+  onEditText: (utteranceId: string, text: string) => void
+}): React.JSX.Element {
+  const activeRef = useRef<HTMLDivElement>(null)
+  const hasSpeakers = useMemo(() => utterances.some((u) => u.speaker != null), [utterances])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+
+  function startEdit(u: Utterance): void {
+    setEditingId(u.id)
+    setDraft(u.text)
+  }
+
+  function commitEdit(u: Utterance): void {
+    setEditingId(null)
+    const trimmed = draft.trim()
+    if (trimmed && trimmed !== u.text) onEditText(u.id, trimmed)
+  }
+
+  /**
+   * The utterance covering the playhead, falling back to the last one that
+   * has started so the highlight persists through the silence between
+   * utterances rather than flickering off.
+   */
+  const activeId = useMemo(() => {
+    let candidate: string | null = null
+    for (const u of utterances) {
+      if (u.startMs <= currentMs) candidate = u.id
+      else break
+      if (currentMs <= u.endMs) return u.id
+    }
+    return candidate
+  }, [utterances, currentMs])
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [activeId])
+
+  if (utterances.length === 0) {
+    return (
+      <div className="empty">
+        <h2>No transcript yet</h2>
+        <p>Transcribe this recording to see its text here.</p>
+      </div>
+    )
+  }
+
+  const showSpeakers = hasSpeakers && mode === 'speakers'
+
+  return (
+    <div className="transcript">
+      {utterances.map((u) => {
+        const isActive = u.id === activeId
+        const paragraphs = u.words.length > 0 ? paragraphize(u.words) : null
+
+        return (
+          <div
+            key={u.id}
+            ref={isActive ? activeRef : undefined}
+            className={isActive ? 'utterance utterance--active' : 'utterance'}
+          >
+            <div className="utterance__meta">
+              {showSpeakers && u.speaker && (
+                <Select
+                  variant="bare"
+                  value={u.speaker.id}
+                  options={speakers.map((s) => ({ value: s.id, label: s.displayName, color: s.color }))}
+                  onChange={(speakerId) => onReassignSpeaker(u.id, speakerId)}
+                  ariaLabel={`Reassign this line's speaker (currently ${u.speaker.name})`}
+                  title="Click to reassign this line to a different speaker"
+                  align="start"
+                />
+              )}
+              <button
+                type="button"
+                className="utterance__time"
+                onClick={() => onSeek(u.startMs)}
+                title="Jump to this moment"
+              >
+                {formatDuration(u.startMs)}
+              </button>
+              {editingId !== u.id && (
+                <button
+                  type="button"
+                  className="utterance__edit-btn"
+                  onClick={() => startEdit(u)}
+                  aria-label="Edit this line's text"
+                  title="Edit this line's text"
+                >
+                  ✏️
+                </button>
+              )}
+            </div>
+
+            {editingId === u.id ? (
+              <textarea
+                className="utterance__input"
+                value={draft}
+                autoFocus
+                rows={2}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={() => commitEdit(u)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    commitEdit(u)
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setEditingId(null)
+                  }
+                }}
+              />
+            ) : paragraphs ? (
+              paragraphs.map((paragraph, pi) => (
+                <p key={pi} className="utterance__text">
+                  {pi > 0 && (
+                    <button
+                      type="button"
+                      className="utterance__time utterance__time--inline"
+                      onClick={() => onSeek(paragraph[0].startMs)}
+                      title="Jump to this moment"
+                    >
+                      {formatDuration(paragraph[0].startMs)}
+                    </button>
+                  )}
+                  {paragraph.map((word, i) => {
+                    const spoken = currentMs >= word.startMs
+                    const now = spoken && currentMs < word.endMs
+                    return (
+                      <span
+                        key={i}
+                        className={now ? 'word word--now' : spoken ? 'word word--said' : 'word'}
+                        onClick={() => onSeek(word.startMs)}
+                        title={formatDuration(word.startMs)}
+                      >
+                        {word.text}{' '}
+                      </span>
+                    )
+                  })}
+                </p>
+              ))
+            ) : (
+              <p className="utterance__text">{u.text}</p>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}

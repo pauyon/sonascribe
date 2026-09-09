@@ -80,3 +80,45 @@ export function resetInterruptedRecordings(): number {
   console.log(`[db] resolved ${stranded.length} recording(s) interrupted mid-finalize`)
   return stranded.length
 }
+
+/**
+ * Returns a recording stranded mid-transcription to a state the user can act
+ * on. A recording interrupted while `transcribing` — the app closed, the
+ * machine slept, a crash — comes back claiming to be transcribing forever,
+ * with no job left actually finishing that work. Unlike
+ * `resetInterruptedRecordings` above there's no ambiguity about the outcome:
+ * the transcript is either fully saved or it isn't, so this always reports
+ * failure rather than checking for a file on disk.
+ */
+export function resetInterruptedTranscriptions(): number {
+  const db = getDb()
+  const result = db
+    .prepare(
+      `UPDATE recordings SET transcript_status = 'failed', transcript_error = ?
+       WHERE transcript_status = 'transcribing'`
+    )
+    .run('Interrupted — try again')
+
+  const changes = Number(result.changes)
+  if (changes > 0) {
+    console.log(`[db] resolved ${changes} transcription(s) interrupted mid-run`)
+  }
+  return changes
+}
+
+/** Same repair as `resetInterruptedTranscriptions`, for speaker detection's own status column. */
+export function resetInterruptedSpeakerDetections(): number {
+  const db = getDb()
+  const result = db
+    .prepare(
+      `UPDATE recordings SET speaker_status = 'failed', speaker_error = ?
+       WHERE speaker_status = 'detecting'`
+    )
+    .run('Interrupted — try again')
+
+  const changes = Number(result.changes)
+  if (changes > 0) {
+    console.log(`[db] resolved ${changes} speaker detection(s) interrupted mid-run`)
+  }
+  return changes
+}

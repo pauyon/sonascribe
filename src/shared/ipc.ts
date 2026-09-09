@@ -15,8 +15,12 @@ import type {
   ImportProgress,
   Marker,
   Platform,
-  Recording
+  Recording,
+  Speaker,
+  Utterance
 } from './types'
+import type { AsrEngine, ModelDownloadProgress, ModelStatus } from './models'
+import type { ExportFormat } from './export'
 
 export interface ApiSchema {
   'recordings:list': {
@@ -88,6 +92,8 @@ export interface ApiSchema {
       logPath: string
       /** False when the ffmpeg sidecar is missing, so the UI can explain why importing is disabled. */
       ffmpegAvailable: boolean
+      /** Engines whose sidecar binary actually resolves on this machine/platform — see `services/sidecars.ts`. */
+      availableEngines: AsrEngine[]
     }
   }
 
@@ -211,6 +217,136 @@ export interface ApiSchema {
     request: void
     response: string
   }
+
+  /** Every catalogued model's on-disk/download state, for the Settings picker. */
+  'models:list': {
+    request: void
+    response: ModelStatus[]
+  }
+  /**
+   * Starts (or, if already downloading, no-ops on) a resumable download.
+   * Progress arrives via `model:progress`; this resolves once the file is on
+   * disk and verified.
+   */
+  'models:download': {
+    request: { modelId: string }
+    response: void
+  }
+  'models:cancelDownload': {
+    request: { modelId: string }
+    response: void
+  }
+  'models:delete': {
+    request: { modelId: string }
+    response: void
+  }
+
+  'transcription:getSettings': {
+    request: void
+    response: TranscriptionSettings
+  }
+  'transcription:setSettings': {
+    request: {
+      engine?: AsrEngine
+      /** Only the engine(s) actually changing need to be included. */
+      modelId?: Partial<Record<AsrEngine, string>>
+      language?: string
+    }
+    response: TranscriptionSettings
+  }
+
+  /**
+   * Queues transcription for a recording using the currently selected engine
+   * and model. Throws synchronously for anything the user can fix immediately
+   * (no model chosen, model not installed, already running) rather than
+   * queuing a job that fails a moment later.
+   */
+  'transcript:start': {
+    request: { recordingId: string }
+    response: void
+  }
+  'transcript:cancel': {
+    request: { recordingId: string }
+    response: void
+  }
+  /** A recording's utterances (each with its words), in playback order. Empty until a transcript exists. */
+  'transcript:get': {
+    request: { recordingId: string }
+    response: Utterance[]
+  }
+  /** Corrects one utterance's text by hand — replaces the ASR result outright, so its per-word timings/highlighting are gone from that line afterward. */
+  'transcript:editUtterance': {
+    request: { utteranceId: string; text: string }
+    response: void
+  }
+  /**
+   * Every recording currently queued or transcribing, with its latest known
+   * progress — the source a freshly (re)mounted page reads from, so a
+   * percentage already in flight survives navigating away and back rather
+   * than resetting to unknown.
+   */
+  'transcript:listActive': {
+    request: void
+    response: Array<{ recordingId: string; fraction: number | null }>
+  }
+  /** Writes a transcript to a user-chosen file. Returns the chosen path, or null if the user cancelled. */
+  'transcript:export': {
+    request: { recordingId: string; format: ExportFormat }
+    response: string | null
+  }
+  /** Copies a recording's original audio file to a user-chosen location. Returns the chosen path, or null if the user cancelled. */
+  'audio:export': {
+    request: { recordingId: string }
+    response: string | null
+  }
+
+  /**
+   * Queues speaker detection for a recording — only meaningful once it has
+   * a transcript, and re-runnable afterward. Same synchronous-claim-then-
+   * validate shape as `transcript:start`.
+   */
+  'speakers:detect': {
+    request: { recordingId: string }
+    response: void
+  }
+  'speakers:cancel': {
+    request: { recordingId: string }
+    response: void
+  }
+  /** Every speaker detected in a recording, in cluster order. Empty until detection has run. */
+  'speakers:list': {
+    request: { recordingId: string }
+    response: Speaker[]
+  }
+  'speakers:rename': {
+    request: { id: string; displayName: string }
+    response: Speaker
+  }
+  /** Sets a speaker's color, swapping it with whoever in the recording currently has it — see db/speakers.ts. */
+  'speakers:recolor': {
+    request: { recordingId: string; id: string; color: string }
+    response: void
+  }
+  /** Folds `fromId`'s lines into `intoId` and removes `fromId` — for a voice diarization split across two clusters. */
+  'speakers:merge': {
+    request: { recordingId: string; fromId: string; intoId: string }
+    response: void
+  }
+  /** Moves one utterance to a different speaker, for a single misattributed line. */
+  'speakers:reassignUtterance': {
+    request: { utteranceId: string; speakerId: string | null }
+    response: void
+  }
+  /** Removes a speaker and every line attributed to them — for a cluster that was never a real person. */
+  'speakers:delete': {
+    request: { id: string }
+    response: void
+  }
+  /** Same shape as `transcript:listActive`, for speaker detection jobs. */
+  'speakers:listActive': {
+    request: void
+    response: Array<{ recordingId: string; fraction: number | null }>
+  }
 }
 
 export interface RecordingSettings {
@@ -247,6 +383,18 @@ export interface RecordingSettings {
   autoPopOutOnMinimize: boolean
 }
 
+export interface TranscriptionSettings {
+  engine: AsrEngine
+  /**
+   * Model id per engine, so switching engines remembers each one's own
+   * choice — the last one explicitly picked, or a sensible suggested
+   * default (not necessarily installed yet) if none has been.
+   */
+  modelId: Record<AsrEngine, string>
+  /** Language hint for Whisper. Ignored by Parakeet, which always auto-detects. */
+  language: string
+}
+
 /** Payloads pushed from main to renderer. */
 export interface EventSchema {
   /** A recording row changed: status, duration or title. */
@@ -281,6 +429,13 @@ export interface EventSchema {
   }
   /** A recording was discarded — mirrors `recording:stopped` for the cancel path. */
   'recording:discarded': { recordingId: string }
+
+  /** Byte-level progress for an in-flight model download. */
+  'model:progress': ModelDownloadProgress
+  /** Fractional progress for an in-flight transcription, or null when the engine can't report one. */
+  'transcript:progress': { recordingId: string; fraction: number | null }
+  /** Fractional progress for an in-flight speaker detection, or null when not yet known. */
+  'speaker:progress': { recordingId: string; fraction: number | null }
 }
 
 export type Channel = keyof ApiSchema
@@ -320,7 +475,29 @@ export const CHANNELS = [
   'recording:status',
   'recording:elapsed',
   'shell:showItemInFolder',
-  'logs:read'
+  'logs:read',
+  'models:list',
+  'models:download',
+  'models:cancelDownload',
+  'models:delete',
+  'transcription:getSettings',
+  'transcription:setSettings',
+  'transcript:start',
+  'transcript:cancel',
+  'transcript:get',
+  'transcript:editUtterance',
+  'transcript:listActive',
+  'transcript:export',
+  'audio:export',
+  'speakers:detect',
+  'speakers:cancel',
+  'speakers:list',
+  'speakers:rename',
+  'speakers:recolor',
+  'speakers:merge',
+  'speakers:reassignUtterance',
+  'speakers:delete',
+  'speakers:listActive'
 ] as const satisfies readonly Channel[]
 
 export const EVENTS = [
@@ -330,7 +507,10 @@ export const EVENTS = [
   'recording:elapsedTick',
   'recording:sessionEnded',
   'recording:stopped',
-  'recording:discarded'
+  'recording:discarded',
+  'model:progress',
+  'transcript:progress',
+  'speaker:progress'
 ] as const satisfies readonly EventName[]
 
 /**

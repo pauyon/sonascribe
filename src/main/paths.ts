@@ -10,6 +10,7 @@ import { join, resolve, sep } from 'node:path'
  * Layout:
  *   <userData>/sonascribe.db  SQLite metadata (recordings)
  *   <userData>/media/         one WAV per recording
+ *   <userData>/models/        downloaded ASR models (see services/models.ts)
  *
  * Audio is a file on disk referenced by path, never a SQLite BLOB — a
  * multi-hour recording has no business travelling through the DB layer.
@@ -57,4 +58,9 @@ export function dbPath(): string {
  */
 export function defaultMediaPath(): string {
   return ensure(join(userDataPath(), 'media'))
+}
+
+/** Where downloaded ASR models live — not bundled, since they run 78 MB to 1.6 GB each. */
+export function modelsPath(): string {
+  return ensure(join(userDataPath(), 'models'))
 }

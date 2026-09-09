@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import { resolveSidecar } from './sidecars'
 
 /**
@@ -45,15 +46,26 @@ function parseDurationMs(stderr: string): number | null {
 interface RunOptions {
   onProgress?: (fraction: number | null) => void
   signal?: AbortSignal
+  /**
+   * Resolve with everything ffmpeg printed rather than the empty string. Off
+   * by default: a long transcode prints a great deal that nobody reads, and
+   * holding all of it costs memory for nothing. Filters that report their
+   * findings on stderr — silencedetect — need it.
+   */
+  capture?: boolean
+  /** Directory to create before running, for commands that write into a new one. */
+  ensureDir?: string
 }
 
 /**
- * Runs ffmpeg to completion, translating its output into progress and errors.
+ * Runs ffmpeg to completion, translating its output into progress and
+ * errors. Resolves with whatever was printed when `capture` is set,
+ * otherwise the empty string.
  */
-function runFfmpeg(args: string[], options: RunOptions = {}): Promise<void> {
+function runFfmpeg(args: string[], options: RunOptions = {}): Promise<string> {
   const { onProgress, signal } = options
 
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error('Aborted'))
       return
@@ -61,6 +73,7 @@ function runFfmpeg(args: string[], options: RunOptions = {}): Promise<void> {
 
     let child: ReturnType<typeof spawn>
     try {
+      if (options.ensureDir) mkdirSync(options.ensureDir, { recursive: true })
       child = spawn(resolveSidecar('ffmpeg'), args, { windowsHide: true })
     } catch (err) {
       reject(err)
@@ -70,6 +83,7 @@ function runFfmpeg(args: string[], options: RunOptions = {}): Promise<void> {
     let totalMs: number | null = null
     let stderrTail = ''
     let stdoutBuffer = ''
+    let captured = ''
     let settled = false
 
     const onAbort = (): void => {
@@ -89,6 +103,7 @@ function runFfmpeg(args: string[], options: RunOptions = {}): Promise<void> {
       // Keep only the tail: a failing ffmpeg can emit a great deal, and only the
       // last few lines carry the actual error.
       stderrTail = (stderrTail + text).slice(-4000)
+      if (options.capture) captured += text
       if (totalMs === null) {
         totalMs = parseDurationMs(stderrTail)
       }
@@ -123,7 +138,7 @@ function runFfmpeg(args: string[], options: RunOptions = {}): Promise<void> {
           reject(new Error('Aborted'))
         } else if (code === 0) {
           onProgress?.(1)
-          resolve()
+          resolve(captured)
         } else {
           reject(
             new FfmpegError(
@@ -138,13 +153,26 @@ function runFfmpeg(args: string[], options: RunOptions = {}): Promise<void> {
 }
 
 /** Arguments common to every invocation: quiet banner, no stdin, progress on stdout. */
-function baseArgs(): string[] {
+export function baseArgs(): string[] {
   return [
     '-hide_banner',
     // Without this ffmpeg can block forever waiting on stdin if it decides to
     // prompt (e.g. an overwrite question that -y should have covered).
     '-nostdin'
   ]
+}
+
+/**
+ * Runs ffmpeg and resolves with everything it printed.
+ *
+ * For filters whose whole purpose is what they write to stderr (silence
+ * detection) and one-shot commands nobody is watching progress on.
+ */
+export function runFfmpegCapture(
+  args: string[],
+  options: { signal?: AbortSignal; ensureDir?: string } = {}
+): Promise<string> {
+  return runFfmpeg(args, { ...options, capture: true })
 }
 
 /**
@@ -173,5 +201,37 @@ export async function normalizeToWav(options: NormalizeOptions): Promise<void> {
       options.outputPath
     ],
     { onProgress: options.onProgress, signal: options.signal }
+  )
+}
+
+/** Sample rate whisper.cpp/Parakeet require — unrelated to `TARGET_SAMPLE_RATE` above, which is this app's own playback/recording format. */
+export const ASR_SAMPLE_RATE = 16_000
+export const ASR_CHANNELS = 1
+
+/**
+ * Resamples a recording's own WAV (48 kHz, for playback quality) down to
+ * what the ASR engines require, into a scratch temp file — never the
+ * recording's own file, which stays untouched either way.
+ */
+export async function resampleForAsr(
+  inputPath: string,
+  outputPath: string,
+  signal?: AbortSignal
+): Promise<void> {
+  await runFfmpeg(
+    [
+      ...baseArgs(),
+      '-i',
+      inputPath,
+      '-ac',
+      String(ASR_CHANNELS),
+      '-ar',
+      String(ASR_SAMPLE_RATE),
+      '-c:a',
+      'pcm_s16le',
+      '-y',
+      outputPath
+    ],
+    { signal }
   )
 }

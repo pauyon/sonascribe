@@ -2,10 +2,12 @@
 
 Local-first Electron audio recorder (Windows/macOS). Record microphone and
 system audio — mixed together into one file, in real time — or import an
-existing file, and play it back. Entirely on-device, nothing leaves the
-machine. **`README.md` is the primary architecture reference** ("Decisions
-worth knowing") — read it first. This file adds what a human README wouldn't:
-exact module boundaries, an AI-testing recipe, and a maintenance instruction.
+existing file, and play it back. Optionally transcribe a recording on-device
+with a locally-run Whisper or Parakeet model. Entirely on-device, nothing
+leaves the machine. **`README.md` is the primary architecture reference**
+("Decisions worth knowing") — read it first. This file adds what a human
+README wouldn't: exact module boundaries, an AI-testing recipe, and a
+maintenance instruction.
 
 ## Stack
 
@@ -22,10 +24,20 @@ exact module boundaries, an AI-testing recipe, and a maintenance instruction.
 - **No test framework** (no Jest/Vitest/Playwright). Verification is
   `npm run typecheck`, `npm run smoke` (`scripts/smoke.mjs`, a hand-rolled CDP
   driver — see Testing below), and manual runs.
-- **ffmpeg** is the only spawned CLI sidecar — used solely to normalize an
-  *imported* file to WAV. Fetched by `npm run sidecars` into
-  `resources/bin/<platform>/` (git-ignored). A live recording never touches
-  it; mic and system audio are mixed by the browser's own Web Audio graph.
+- **ffmpeg** normalizes an *imported* file to WAV and resamples a recording's
+  own WAV down to 16 kHz for the ASR engines (`services/ffmpeg.ts`'s
+  `resampleForAsr` — never the recording's own file). A live recording never
+  touches it; mic and system audio are mixed by the browser's own Web Audio
+  graph.
+- **whisper.cpp** (`whisper-cli`) and **Parakeet TDT** (`parakeet-cli`, same
+  whisper.cpp project) are the transcription sidecars — no Python anywhere.
+  Both, plus ffmpeg, are fetched by `npm run sidecars` into
+  `resources/bin/<platform>/` (git-ignored); whisper.cpp publishes no
+  prebuilt macOS binary, so mac falls back to PATH (Homebrew or a source
+  build — see `scripts/fetch-sidecars.mjs`'s mac guidance). ASR *models*
+  (GGML, 78 MB–1.6 GB) are a separate, user-triggered runtime download to
+  `<userData>/models/` — never bundled, see `shared/models.ts` for the
+  catalogue and `services/models.ts` for the resumable downloader.
 - **`electron-log`** — the only logging dependency. `src/main/log.ts` calls
   `Object.assign(console, log.functions)` once at startup, so every existing
   `console.*` call writes to `<userData>/logs/main.log` for free; nothing
@@ -42,34 +54,51 @@ src/
     db/                                      ALL SQL lives here
       index.ts            getDb()/initDb(), WAL mode, migration runner
       migrations.ts        forward-only, numbered — NEVER edit a shipped one, append.
-                            Also the historical record of everything this app used to
-                            do (transcription, diarization, RAG, screenshots) before
-                            being stripped to a plain recorder — see below.
-      recordings.ts         CRUD + status/duration/source-path setters
-      repair-paths.ts       startup repair: repoint stale paths, resolve interrupted recordings
-      settings.ts            typed key/value accessors for the recording-relevant settings
+                            `tracks`/`speakers`/`voice_profiles`/`chunk_embeddings`/
+                            `screenshots` are historical (diarization/RAG, since removed)
+                            and still unreferenced; `utterances`/`words` are back in use
+                            for transcription — see db/transcript.ts.
+      recordings.ts         CRUD + status/duration/source-path/transcript-status setters
+      transcript.ts          utterances/words CRUD — a recording's transcript
+      repair-paths.ts       startup repair: repoint stale paths, resolve interrupted
+                            recordings/transcriptions
+      settings.ts            typed key/value accessors — recording settings + chosen
+                            transcription engine/model/language
     services/                               everything that isn't SQL or IPC wiring
       recorder.ts             owns the in-progress WavWriter; start/chunk/pause/stop/cancel;
                                discards a recording whose peak level never cleared silence
       importer.ts              ffmpeg-normalize an imported file to WAV, serially queued
-      ffmpeg.ts, wav.ts, wav-writer.ts, peaks.ts    audio normalize/extract/waveform
+      ffmpeg.ts, wav.ts, wav-writer.ts, peaks.ts    audio normalize/extract/waveform/ASR-resample
       media-cleanup.ts        deletes a recording's media dir; sweeps orphaned ones at startup
       storage.ts               where recordings' media lives (default or user-chosen) and the
                                 only place allowed to move it — see "Decisions worth knowing"
-      sidecars.ts               resolves the ffmpeg binary (packaged / dev / PATH)
+      sidecars.ts               resolves ffmpeg/whisper-cli/parakeet-cli (packaged / dev / PATH)
+      transcription.ts          engine-neutral ASR types + word→segment grouping
+      whisper.ts, parakeet.ts   one runner per engine, same TranscribeOptions/TranscriptionResult
+                                shape; parakeet.ts alone needs audio-chunks.ts + parakeet-parse.ts
+      audio-chunks.ts           silence-aware splitting for Parakeet's per-file memory ceiling —
+                                also what gives long transcriptions real (not indeterminate) progress
+      parakeet-parse.ts         parses parakeet-cli's `--print-segments` token table
+      models.ts                 resumable ASR model download/inventory (`<userData>/models/`)
+      jobs.ts                   serial transcription queue: one job at a time, AbortController
+                                per recording, in-memory progress for a page opened mid-job
     ipc/index.ts, ipc/events.ts             handler registry (must implement every ApiSchema channel) + event emitter
     windows/                                 BrowserWindow setup (main window, mini recorder)
   preload/            the only renderer↔main bridge; allowlists channels from shared/ipc.ts
   shared/                                    compiled into BOTH main and renderer — keep Electron-free
     ipc.ts       ApiSchema (request/response) + EventSchema (push) — the one IPC contract, see below
-    types.ts     domain types mirroring the SQLite schema — just `Recording` and friends
+    types.ts     domain types mirroring the SQLite schema — `Recording`, `Utterance` and friends
+    models.ts    the ASR model catalogue (curated, not the full upstream zoo) + engine specs
   renderer/src/
-    routes/       Library, Record, Settings (recordings-folder location, logs), Editor (recording
-                  detail), MiniRecorder
-    components/    RecordingCard, PlayerBar, Waveform, StatusPill, Select, HelpTip, LogViewer
+    routes/       Library, Record, Settings (recordings-folder location, transcription models,
+                  logs), Editor (recording detail — playback, transcribe action, transcript),
+                  Trim (dedicated cut/marker editor), MiniRecorder
+    components/    RecordingCard, PlayerBar, Waveform, StatusPill, Select, HelpTip, LogViewer,
+                  ModelPicker (Settings' engine/model download UI), TranscriptPanel
     lib/           api.ts (useQuery/useEvent/api.invoke), capture.ts (Web Audio capture + mixing),
-                   useAudio.ts, format.ts
-resources/bin/<platform>/    ffmpeg binary, git-ignored, fetched by scripts/fetch-sidecars.mjs
+                   useAudio.ts, useTranscript.ts, format.ts
+resources/bin/<platform>/    ffmpeg/whisper-cli/parakeet-cli, git-ignored, fetched by
+                              scripts/fetch-sidecars.mjs
 scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
 ```
 
@@ -102,6 +131,20 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
    peaks are computed in the main process (`services/peaks.ts`) and sent over
    IPC, since the renderer can't `fetch()` a custom scheme and wouldn't want
    to decode hundreds of megabytes of PCM anyway.
+5. **Transcription** (opt-in, `services/jobs.ts`) — a recording's `sourcePath`
+   is resampled to 16 kHz mono (ASR engines' requirement, distinct from this
+   app's own 48 kHz playback format), then handed to whichever engine is
+   selected (`whisper.ts` or `parakeet.ts`, both behind the same
+   `TranscribeOptions`/`TranscriptionResult` shape from `transcription.ts`).
+   Parakeet's memory use scales with file length and it reports no progress
+   of its own, so long files are split into silence-aware windows
+   (`audio-chunks.ts`) and run through a small worker pool — real progress
+   and a speedup on multi-core machines, in one mechanism. Whisper handles
+   arbitrary length internally and reports its own progress, so it skips all
+   of that. Either way the result becomes `utterances`/`words` rows
+   (`db/transcript.ts`); `components/TranscriptPanel.tsx` groups a long
+   utterance's words into paragraphs for display without touching the
+   stored row.
 
 ## Patterns to follow
 
@@ -112,24 +155,28 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
   compiler, don't grep for it.
 - **Migrations are append-only.** Never edit a `MIGRATIONS` entry once it
   might have run anywhere (including your own dev/test databases) — add a new
-  numbered one. Current head: see `src/main/db/migrations.ts`. That file also
-  still carries every table from before this app was stripped down to a plain
-  recorder (`tracks`, `speakers`, `utterances`, `words`, `voice_profiles`,
-  `chunk_embeddings`, `screenshots`) — deliberately not dropped, just
-  unreferenced by any code in `src/`; an existing recording's `source_path`
-  already pointed at a playable file, so nothing needed migrating.
+  numbered one. Current head: see `src/main/db/migrations.ts`. `tracks`,
+  `speakers`, `voice_profiles`, `chunk_embeddings`, `screenshots` remain from
+  before this app was stripped down and are still unreferenced by anything in
+  `src/`; `utterances`/`words` (also from that era) are back in active use —
+  see `db/transcript.ts` — with `speaker_id`/`track_id` left `NULL` since
+  there's no diarization or multi-track recording to point them at.
 - **`db/` does the SQL, `services/` does everything else.** A service that
   needs a row should call into `db/`, not `getDb()` directly.
 - **All audio the app touches is 16-bit PCM WAV** — never assume otherwise
   when adding an ffmpeg step. A live recording is written at the hardware's
-  own sample rate; an imported file is normalized to 48 kHz mono.
+  own sample rate; an imported file is normalized to 48 kHz mono; the copy
+  handed to an ASR engine is a separate 16 kHz resample
+  (`services/ffmpeg.ts`'s `resampleForAsr`) — never conflate this with
+  `TARGET_SAMPLE_RATE`, which is this app's own 48 kHz format.
 - **`shared/` must stay Electron-free** — it's compiled into the renderer too.
-- **Don't reintroduce a spawn-per-call sidecar model.** ffmpeg is the only
-  child process left, and it's genuinely run-to-completion per call — that's
-  fine for a normalize step measured in seconds. If a future feature needs a
-  long-lived local server the way the old RAG feature's `llama-server` did,
-  don't spawn it per call — start it lazily and keep it running (see git
-  history / README for how that pattern looked before it was removed).
+- **Spawn-per-call sidecars stay fine as long as they're run-to-completion.**
+  ffmpeg, whisper-cli and parakeet-cli are all this: one process per
+  normalize/resample/transcribe call, no shared state between calls. If a
+  future feature needs a long-lived local server the way the old RAG
+  feature's `llama-server` did, don't spawn it per call — start it lazily and
+  keep it running (see git history / README for how that pattern looked
+  before it was removed).
 
 ## Testing (no framework — do this instead)
 

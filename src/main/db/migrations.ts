@@ -223,5 +223,50 @@ export const MIGRATIONS: Migration[] = [
       -- sorted by timeMs.
       ALTER TABLE recordings ADD COLUMN markers TEXT;
     `
+  },
+  {
+    version: 11,
+    name: 'transcription',
+    sql: /* sql */ `
+      -- Independent of recordings.status (which is about the audio file, not
+      -- the transcript): 'none' | 'queued' | 'transcribing' | 'ready' | 'failed'.
+      ALTER TABLE recordings ADD COLUMN transcript_status TEXT NOT NULL DEFAULT 'none';
+      ALTER TABLE recordings ADD COLUMN transcript_error TEXT;
+    `
+  },
+  {
+    version: 12,
+    name: 'transcript_preview',
+    sql: /* sql */ `
+      -- A short snippet of the transcript (first ~140 chars, word-boundary
+      -- truncated), so the library list can show what a recording is about
+      -- without a per-card fetch of its full utterances. Set once, when a
+      -- transcription completes; left untouched by a later failed re-run.
+      ALTER TABLE recordings ADD COLUMN transcript_preview TEXT;
+    `
+  },
+  {
+    version: 13,
+    name: 'speaker_detection',
+    sql: /* sql */ `
+      -- Independent of transcript_status — speaker detection only ever runs
+      -- against an existing transcript, on demand: 'none' | 'queued' |
+      -- 'detecting' | 'ready' | 'failed'.
+      ALTER TABLE recordings ADD COLUMN speaker_status TEXT NOT NULL DEFAULT 'none';
+      ALTER TABLE recordings ADD COLUMN speaker_error TEXT;
+    `
+  },
+  {
+    version: 14,
+    name: 'word_probability',
+    sql: /* sql */ `
+      -- Needed to recompute an utterance's confidence after speaker
+      -- detection regroups words by speaker turn instead of by pause —
+      -- without this, a later (re-)run of detection would have no per-word
+      -- confidence to average, only the coarser per-utterance figure the
+      -- old grouping produced. NULL (a word persisted before this existed)
+      -- reads as 1 — see db/transcript.ts.
+      ALTER TABLE words ADD COLUMN probability REAL;
+    `
   }
 ]

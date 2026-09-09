@@ -1,3 +1,4 @@
+import type { AsrEngine } from '@shared/models'
 import { getDb } from './index'
 
 /** Typed accessors over the settings key/value table. */
@@ -8,7 +9,10 @@ const KEYS = {
   micDeviceId: 'recording.micDeviceId',
   captureSystemAudio: 'recording.captureSystemAudio',
   autoPopOutOnMinimize: 'recording.autoPopOutOnMinimize',
-  mediaRoot: 'recording.mediaRoot'
+  mediaRoot: 'recording.mediaRoot',
+  transcriptionEngine: 'transcription.engine',
+  transcriptionLanguage: 'transcription.language',
+  modelIdForEngine: (engine: AsrEngine): string => `transcription.modelId.${engine}`
 } as const
 
 function get(key: string): string | null {
@@ -122,4 +126,31 @@ export function getMediaRoot(): string | null {
 
 export function setMediaRoot(path: string | null): void {
   set(KEYS.mediaRoot, path ?? '')
+}
+
+/** Which ASR engine is currently selected, or null if none has been chosen yet. */
+export function getTranscriptionEngine(): AsrEngine | null {
+  return get(KEYS.transcriptionEngine) as AsrEngine | null
+}
+
+export function setTranscriptionEngine(engine: AsrEngine): void {
+  set(KEYS.transcriptionEngine, engine)
+}
+
+/** Last-picked model id for one engine, so switching engines remembers each one's own choice. */
+export function getModelIdForEngine(engine: AsrEngine): string | null {
+  return get(KEYS.modelIdForEngine(engine))
+}
+
+export function setModelIdForEngine(engine: AsrEngine, modelId: string): void {
+  set(KEYS.modelIdForEngine(engine), modelId)
+}
+
+/** Language hint for Whisper. Defaults to auto-detect. Ignored by Parakeet. */
+export function getTranscriptionLanguage(): string {
+  return get(KEYS.transcriptionLanguage) || 'auto'
+}
+
+export function setTranscriptionLanguage(language: string): void {
+  set(KEYS.transcriptionLanguage, language)
 }

@@ -3,13 +3,12 @@ import type { CreateRecordingInput, Cut, Marker, Recording } from '@shared/types
 import { getDb } from './index'
 
 /**
- * Repository for the `recordings` table — the only table this app's own code
- * writes to. (Older tables from before the rewrite to a single-track,
- * no-transcription recorder — `tracks`, `speakers`, `utterances`, `words`,
- * `voice_profiles`, `chunk_embeddings`, `screenshots` — are left in the
- * schema untouched rather than dropped: nothing here references them, and an
- * existing recording's `source_path` already points at a playable file
- * without needing any of them.)
+ * Repository for the `recordings` table. `db/transcript.ts` owns
+ * `utterances`/`words`, `db/speakers.ts` owns `speakers` — both back in use
+ * for transcription and speaker detection. `tracks`, `voice_profiles`,
+ * `chunk_embeddings`, `screenshots` remain from before this app was
+ * stripped to a single-track recorder, still unreferenced by anything in
+ * `src/`.
  */
 
 interface RecordingRow {
@@ -23,6 +22,13 @@ interface RecordingRow {
   error: string | null
   cuts: string | null
   markers: string | null
+  transcript_status: string
+  transcript_error: string | null
+  model_id: string | null
+  language: string | null
+  transcript_preview: string | null
+  speaker_status: string
+  speaker_error: string | null
 }
 
 function parseJsonArray<T>(json: string | null): T[] {
@@ -46,7 +52,14 @@ function toRecording(row: RecordingRow): Recording {
     status: row.status as Recording['status'],
     error: row.error,
     cuts: parseJsonArray<Cut>(row.cuts),
-    markers: parseJsonArray<Marker>(row.markers)
+    markers: parseJsonArray<Marker>(row.markers),
+    transcriptStatus: row.transcript_status as Recording['transcriptStatus'],
+    transcriptError: row.transcript_error,
+    modelId: row.model_id,
+    language: row.language,
+    transcriptPreview: row.transcript_preview,
+    speakerStatus: row.speaker_status as Recording['speakerStatus'],
+    speakerError: row.speaker_error
   }
 }
 
@@ -75,7 +88,14 @@ export function createRecording(input: CreateRecordingInput): Recording {
     status: 'new',
     error: null,
     cuts: [],
-    markers: []
+    markers: [],
+    transcriptStatus: 'none',
+    transcriptError: null,
+    modelId: null,
+    language: null,
+    transcriptPreview: null,
+    speakerStatus: 'none',
+    speakerError: null
   }
 
   getDb()
@@ -123,6 +143,38 @@ export function setRecordingStatus(
   error: string | null = null
 ): void {
   getDb().prepare('UPDATE recordings SET status = ?, error = ? WHERE id = ?').run(status, error, id)
+}
+
+export function setTranscriptStatus(
+  id: string,
+  status: Recording['transcriptStatus'],
+  error: string | null = null
+): void {
+  getDb()
+    .prepare('UPDATE recordings SET transcript_status = ?, transcript_error = ? WHERE id = ?')
+    .run(status, error, id)
+}
+
+/** Marks a transcription complete and records which model/language produced it, plus a short preview snippet for the library card. */
+export function setTranscriptComplete(
+  id: string,
+  modelId: string,
+  language: string | null,
+  preview: string | null
+): void {
+  getDb()
+    .prepare(
+      `UPDATE recordings
+       SET transcript_status = 'ready', transcript_error = NULL, model_id = ?, language = ?, transcript_preview = ?
+       WHERE id = ?`
+    )
+    .run(modelId, language, preview, id)
+}
+
+export function setSpeakerStatus(id: string, status: Recording['speakerStatus'], error: string | null = null): void {
+  getDb()
+    .prepare('UPDATE recordings SET speaker_status = ?, speaker_error = ? WHERE id = ?')
+    .run(status, error, id)
 }
 
 /**

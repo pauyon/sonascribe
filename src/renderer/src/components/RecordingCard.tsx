@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Recording } from '@shared/types'
 import { sourceMediaUrl } from '@shared/ipc'
 import { useAudio } from '../lib/useAudio'
 import { formatDate, formatDuration } from '../lib/format'
 import StatusPill from './StatusPill'
+import OverflowMenu, { type OverflowMenuItem } from './OverflowMenu'
 
 /** Titles the app generated itself, which only repeat the timestamp below them. */
 const AUTO_TITLE = /^Recording \d{1,2}\/\d{1,2}\/\d{4}/
@@ -15,7 +16,11 @@ export default function RecordingCard({
   onOpen,
   onRename,
   onDelete,
-  job
+  onTranscribe,
+  onExportTranscript,
+  onExportAudio,
+  job,
+  transcribing
 }: {
   recording: Recording
   /** Which card currently holds playback, or null when none does. */
@@ -24,16 +29,19 @@ export default function RecordingCard({
   onOpen: (id: string) => void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => void
+  onTranscribe: (id: string) => void
+  onExportTranscript: (id: string) => void
+  onExportAudio: (id: string) => void
   /** In-flight import progress for this recording, if any. */
   job?: { fraction: number | null } | null
+  /** In-flight transcription progress for this recording, if any — null fraction while queued or indeterminate. */
+  transcribing?: { fraction: number | null } | null
 }): React.JSX.Element {
   // useAudio owns the state; the element's source is the caller's job.
   const mediaSrc = recording.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(mediaSrc)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(recording.title)
-  const cardRef = useRef<HTMLDivElement>(null)
 
   const playable = recording.sourcePath != null && recording.status === 'ready'
   const named = !AUTO_TITLE.test(recording.title)
@@ -48,16 +56,6 @@ export default function RecordingCard({
     }
   }, [playingId, recording.id, audio.playing, audio.ref])
 
-  // A menu that cannot be dismissed by clicking away is a trap.
-  useEffect(() => {
-    if (!menuOpen) return
-    const close = (e: MouseEvent): void => {
-      if (!cardRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [menuOpen])
-
   async function commitRename(): Promise<void> {
     const title = draft.trim()
     setEditing(false)
@@ -68,8 +66,36 @@ export default function RecordingCard({
     await onRename(recording.id, title)
   }
 
+  const menuGroups: OverflowMenuItem[][] = [
+    [
+      { icon: '▶', label: 'Open', onClick: () => onOpen(recording.id) },
+      {
+        icon: '✏️',
+        label: 'Rename',
+        onClick: () => {
+          setDraft(recording.title)
+          setEditing(true)
+        }
+      }
+    ],
+    [
+      ...(recording.transcriptStatus === 'ready'
+        ? [{ icon: '📝', label: 'Re-Transcribe', onClick: () => onTranscribe(recording.id) }]
+        : recording.sourcePath
+          ? [{ icon: '📝', label: 'Transcribe', onClick: () => onTranscribe(recording.id) }]
+          : [])
+    ],
+    [
+      ...(recording.transcriptStatus === 'ready'
+        ? [{ icon: '⬇️', label: 'Export Transcript', onClick: () => onExportTranscript(recording.id) }]
+        : []),
+      ...(recording.sourcePath ? [{ icon: '🔊', label: 'Export Audio', onClick: () => onExportAudio(recording.id) }] : [])
+    ],
+    [{ icon: '🗑️', label: 'Delete', danger: true, onClick: () => onDelete(recording.id) }]
+  ]
+
   return (
-    <div ref={cardRef} className={audio.playing ? 'rec rec--playing' : 'rec'}>
+    <div className={audio.playing ? 'rec rec--playing' : 'rec'}>
       <div className="rec__head">
         <div className="rec__heading">
           {editing ? (
@@ -99,49 +125,18 @@ export default function RecordingCard({
 
         <div className="rec__actions">
           <StatusPill status={recording.status} />
-          <div className="rec__menu">
-            <button
-              type="button"
-              className="rec__menu-btn"
-              aria-label={`Actions for ${recording.title}`}
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              ⋯
-            </button>
-            {menuOpen && (
-              <div className="menu" role="menu">
-                <button role="menuitem" onClick={() => onOpen(recording.id)}>
-                  Open
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setDraft(recording.title)
-                    setEditing(true)
-                    setMenuOpen(false)
-                  }}
-                >
-                  Rename
-                </button>
-                <button
-                  role="menuitem"
-                  className="menu__danger"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onDelete(recording.id)
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            )}
-          </div>
+          <OverflowMenu groups={menuGroups} ariaLabel={`Actions for ${recording.title}`} />
         </div>
       </div>
 
       {recording.status === 'failed' && (
         <p className="rec__note">{recording.error ?? 'Nothing was saved.'}</p>
+      )}
+      {/* A hint of what the recording is about, from its transcript — only
+          worth showing once one exists, and not while a stale one from
+          before a re-transcription might be misleading mid-run. */}
+      {recording.transcriptPreview && recording.transcriptStatus === 'ready' && (
+        <p className="rec__preview">{recording.transcriptPreview}</p>
       )}
 
       <div className="rec__foot">
@@ -182,6 +177,31 @@ export default function RecordingCard({
             <span className="progress__label">
               Preparing
               {job.fraction != null && ` ${Math.round(job.fraction * 100)}%`}
+            </span>
+          </div>
+        </div>
+      )}
+      {transcribing && (
+        <div className="rec__job">
+          <div className="progress" title="Transcribing">
+            <div
+              className={
+                transcribing.fraction == null
+                  ? 'progress__bar progress__bar--indeterminate'
+                  : 'progress__bar'
+              }
+              style={
+                transcribing.fraction == null
+                  ? undefined
+                  : { width: `${Math.round(transcribing.fraction * 100)}%` }
+              }
+            />
+            <span className="progress__label">
+              {recording.transcriptStatus === 'queued'
+                ? 'Queued to transcribe…'
+                : transcribing.fraction == null
+                  ? 'Transcribing…'
+                  : `Transcribing… ${Math.round(transcribing.fraction * 100)}%`}
             </span>
           </div>
         </div>
