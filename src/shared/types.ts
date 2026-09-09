@@ -29,6 +29,14 @@ export interface Cut {
   endMs: number
 }
 
+/** A labeled, colored jump-to point, in the original file's own time. */
+export interface Marker {
+  id: string
+  timeMs: number
+  label: string
+  color: string
+}
+
 export interface Recording {
   id: string
   title: string
@@ -45,6 +53,8 @@ export interface Recording {
    * these become a compressed waveform and playback position.
    */
   cuts: Cut[]
+  /** Jump-to points, original-file time, sorted by `timeMs`. */
+  markers: Marker[]
 }
 
 /**

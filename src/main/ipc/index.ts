@@ -23,7 +23,8 @@ import {
   getRecording,
   listRecordings,
   renameRecording,
-  setRecordingCuts
+  setRecordingCuts,
+  setRecordingMarkers
 } from '../db/recordings'
 import { hasSidecar } from '../services/sidecars'
 import { queueImport } from '../services/importer'
@@ -91,6 +92,13 @@ const handlers: Handlers = {
     if (!recording) throw new Error(`Recording ${id} not found`)
     if (recording.durationMs == null) throw new Error('Recording has no known duration yet')
     return setRecordingCuts(id, cuts, recording.durationMs)
+  },
+
+  'recordings:setMarkers': ({ id, markers }) => {
+    const recording = getRecording(id)
+    if (!recording) throw new Error(`Recording ${id} not found`)
+    if (recording.durationMs == null) throw new Error('Recording has no known duration yet')
+    return setRecordingMarkers(id, markers, recording.durationMs)
   },
 
   'dialog:pickMediaFiles': async () => {

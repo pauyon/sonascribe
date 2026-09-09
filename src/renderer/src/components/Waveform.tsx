@@ -21,6 +21,7 @@ export default function Waveform({
   positionMs,
   onSeek,
   seams,
+  markers,
   editable = false,
   onSelectRange
 }: {
@@ -30,6 +31,8 @@ export default function Waveform({
   onSeek: (ms: number) => void
   /** Virtual-ms positions of a seam between two kept regions — a cut happened here. */
   seams?: number[]
+  /** Colored jump-to pins, same units as `durationMs`. Visual only — jumping happens through a chip list, not by clicking the pin. */
+  markers?: Array<{ positionMs: number; color: string }>
   /** Enables drag-to-select a range (for cutting) instead of click-only seeking. */
   editable?: boolean
   /** Fires on drag-release with the selected range, same units as `durationMs`. */
@@ -84,6 +87,7 @@ export default function Waveform({
   // at, without positionMs needing to be a dependency of that effect.
   const positionRef = useRef(positionMs)
   const seamsRef = useRef<number[]>(seams ?? [])
+  const markersRef = useRef<Array<{ positionMs: number; color: string }>>(markers ?? [])
 
   // Composites the cached layers plus the playhead and any seam markers onto
   // the visible canvas — the only work a playback tick (~4/s, via useAudio's
@@ -135,6 +139,32 @@ export default function Waveform({
       ctx.restore()
     }
 
+    // Marker pins: a colored flag at the top plus a thin full-height line so
+    // it's still findable once the flag itself scrolls out at small sizes.
+    if (duration > 0 && markersRef.current.length > 0) {
+      const FLAG_SIZE = 5
+      for (const marker of markersRef.current) {
+        const x = (marker.positionMs / duration) * width
+        ctx.save()
+        ctx.strokeStyle = marker.color
+        ctx.globalAlpha = 0.45
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, height)
+        ctx.stroke()
+        ctx.restore()
+
+        ctx.fillStyle = marker.color
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x + FLAG_SIZE, FLAG_SIZE)
+        ctx.lineTo(x, FLAG_SIZE * 2)
+        ctx.closePath()
+        ctx.fill()
+      }
+    }
+
     // Playhead.
     if (duration > 0) {
       ctx.fillStyle = colors.text
@@ -145,6 +175,7 @@ export default function Waveform({
   // Rebuilds the bar layers on any change to data, size, theme or seams.
   useEffect(() => {
     seamsRef.current = seams ?? []
+    markersRef.current = markers ?? []
     const canvas = canvasRef.current
     const wrap = wrapRef.current
     if (!canvas || !wrap) return
@@ -206,7 +237,7 @@ export default function Waveform({
     const observer = new ResizeObserver(rebuild)
     observer.observe(wrap)
     return () => observer.disconnect()
-  }, [peaks, durationMs, colorsVersion, seams])
+  }, [peaks, durationMs, colorsVersion, seams, markers])
 
   // The cheap per-tick path: just recomposite at the new position.
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { CreateRecordingInput, Cut, Recording } from '@shared/types'
+import type { CreateRecordingInput, Cut, Marker, Recording } from '@shared/types'
 import { getDb } from './index'
 
 /**
@@ -22,13 +22,14 @@ interface RecordingRow {
   status: string
   error: string | null
   cuts: string | null
+  markers: string | null
 }
 
-function parseCuts(json: string | null): Cut[] {
+function parseJsonArray<T>(json: string | null): T[] {
   if (!json) return []
   try {
     const parsed: unknown = JSON.parse(json)
-    return Array.isArray(parsed) ? (parsed as Cut[]) : []
+    return Array.isArray(parsed) ? (parsed as T[]) : []
   } catch {
     return []
   }
@@ -44,7 +45,8 @@ function toRecording(row: RecordingRow): Recording {
     sourcePath: row.source_path,
     status: row.status as Recording['status'],
     error: row.error,
-    cuts: parseCuts(row.cuts)
+    cuts: parseJsonArray<Cut>(row.cuts),
+    markers: parseJsonArray<Marker>(row.markers)
   }
 }
 
@@ -72,7 +74,8 @@ export function createRecording(input: CreateRecordingInput): Recording {
     sourcePath: input.sourcePath ?? null,
     status: 'new',
     error: null,
-    cuts: []
+    cuts: [],
+    markers: []
   }
 
   getDb()
@@ -155,6 +158,27 @@ export function setRecordingCuts(id: string, cuts: Cut[], durationMs: number): R
   const normalized = normalizeCuts(cuts, durationMs)
   getDb()
     .prepare('UPDATE recordings SET cuts = ? WHERE id = ?')
+    .run(normalized.length > 0 ? JSON.stringify(normalized) : null, id)
+  const updated = getRecording(id)
+  if (!updated) throw new Error(`Recording ${id} not found`)
+  return updated
+}
+
+/**
+ * Clamps every marker's time to the recording's actual length and sorts by
+ * it. Unlike cuts there's nothing to merge — markers are points, not ranges.
+ */
+function normalizeMarkers(markers: Marker[], durationMs: number): Marker[] {
+  return markers
+    .map((marker) => ({ ...marker, timeMs: Math.max(0, Math.min(marker.timeMs, durationMs)) }))
+    .sort((a, b) => a.timeMs - b.timeMs)
+}
+
+/** Replaces a recording's whole marker list — see `normalizeMarkers` for what it enforces. */
+export function setRecordingMarkers(id: string, markers: Marker[], durationMs: number): Recording {
+  const normalized = normalizeMarkers(markers, durationMs)
+  getDb()
+    .prepare('UPDATE recordings SET markers = ? WHERE id = ?')
     .run(normalized.length > 0 ? JSON.stringify(normalized) : null, id)
   const updated = getRecording(id)
   if (!updated) throw new Error(`Recording ${id} not found`)

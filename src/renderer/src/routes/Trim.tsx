@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { Cut } from '@shared/types'
+import type { Cut, Marker } from '@shared/types'
 import { sourceMediaUrl } from '@shared/ipc'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
 import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
-import { sliceCompressed, virtualToReal } from '../lib/cuts'
+import { useMarkers } from '../lib/useMarkers'
+import { cutAt, realToVirtual, sliceCompressed, virtualToReal } from '../lib/cuts'
 import PlayerBar from '../components/PlayerBar'
 import WaveformMinimap from '../components/WaveformMinimap'
 import CutChips from '../components/CutChips'
+import MarkerChips from '../components/MarkerChips'
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 40
@@ -36,12 +38,38 @@ export default function Trim(): React.JSX.Element {
   const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
   const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
+  const { markers, addMarkerAt, rename: renameMarker, recolor: recolorMarker, remove: removeMarker } =
+    useMarkers(recording, refetch)
 
   const durationMs = recording?.durationMs ?? 0
   const cuts = useMemo(() => recording?.cuts ?? [], [recording?.cuts])
 
   const viewportLengthMs = zoom > 0 ? virtualDur / zoom : virtualDur
   const maxViewportStart = Math.max(0, virtualDur - viewportLengthMs)
+
+  // Every marker's virtual position, unwindowed — the minimap always shows
+  // all of them regardless of zoom. Markers a since-added cut has swallowed
+  // are dropped here (nowhere on the compressed timeline for them to sit).
+  const virtualMarkers = useMemo(
+    () =>
+      markers
+        .filter((m) => !cutAt(m.timeMs, cuts))
+        .map((m) => ({ positionMs: realToVirtual(m.timeMs, durationMs, cuts), color: m.color })),
+    [markers, durationMs, cuts]
+  )
+  // The same markers, filtered to the current zoom viewport and rebased to
+  // window-local ms — same treatment `sliceCompressed` gives the bars.
+  const windowedMarkerPins = useMemo(
+    () =>
+      virtualMarkers
+        .filter((m) => m.positionMs >= viewportStartMs && m.positionMs < viewportStartMs + viewportLengthMs)
+        .map((m) => ({ positionMs: m.positionMs - viewportStartMs, color: m.color })),
+    [virtualMarkers, viewportStartMs, viewportLengthMs]
+  )
+  const annotatedMarkers = useMemo(
+    () => markers.map((m) => ({ ...m, jumpable: !cutAt(m.timeMs, cuts) })),
+    [markers, cuts]
+  )
 
   // A cut made or undone elsewhere in this same session can shrink or grow
   // the recording out from under the current viewport — keep it in range.
@@ -121,6 +149,13 @@ export default function Trim(): React.JSX.Element {
     void setCuts([])
   }
 
+  /** Seeks there and recenters the viewport — matching what clicking the minimap already does. */
+  function jumpToMarker(marker: Marker): void {
+    audio.seek(marker.timeMs)
+    const virtualMs = realToVirtual(marker.timeMs, durationMs, cuts)
+    setViewportStartMs(Math.max(0, Math.min(virtualMs - viewportLengthMs / 2, maxViewportStart)))
+  }
+
   const windowed = sliceCompressed(compressed, virtualDur, viewportStartMs, viewportStartMs + viewportLengthMs)
   const windowedPosition = Math.max(0, Math.min(viewportLengthMs, virtualPosition - viewportStartMs))
   const seekWindowed = (windowMs: number): void => seekVirtual(viewportStartMs + windowMs)
@@ -157,9 +192,16 @@ export default function Trim(): React.JSX.Element {
               positionMs={windowedPosition}
               onSeek={seekWindowed}
               seams={windowed.seams}
+              markers={windowedMarkerPins}
               editable
               onSelectRange={addCut}
             />
+          </div>
+
+          <div className="trim__actions">
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => addMarkerAt(audio.currentMs)}>
+              Add marker here
+            </button>
           </div>
 
           <div className="trim__zoom">
@@ -197,6 +239,7 @@ export default function Trim(): React.JSX.Element {
             durationMs={virtualDur}
             positionMs={virtualPosition}
             seams={compressed.seams}
+            markers={virtualMarkers}
             viewportStartMs={viewportStartMs}
             viewportLengthMs={viewportLengthMs}
             onViewportChange={setViewportStartMs}
@@ -204,6 +247,13 @@ export default function Trim(): React.JSX.Element {
           />
 
           <CutChips cuts={cuts} onRemove={removeCut} onRestoreAll={restoreAll} />
+          <MarkerChips
+            markers={annotatedMarkers}
+            onJump={jumpToMarker}
+            onRename={renameMarker}
+            onRecolor={recolorMarker}
+            onRemove={removeMarker}
+          />
         </>
       )}
 

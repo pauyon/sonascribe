@@ -982,6 +982,111 @@ body {
   color: var(--text);
 }
 
+/* ---------- marker chips (jump-to points, both player pages) ---------- */
+
+.page__actions--inline {
+  margin: 4px 0 12px;
+}
+
+.trim__actions {
+  margin: -8px 0 16px;
+}
+
+.markers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.markers__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 6px 4px 6px;
+}
+
+.markers__swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+}
+
+/* Native color inputs paint their own border/padding by default — strip it
+   down to just the swatch itself so it reads as a color dot, not a form field. */
+.markers__swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.markers__swatch::-webkit-color-swatch {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.markers__label,
+.markers__jump {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  padding: 0;
+}
+
+.markers__jump {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.markers__jump:hover,
+.markers__label:hover {
+  color: var(--accent);
+}
+
+.markers__label-input {
+  font-size: var(--fs-caption);
+  padding: 1px 4px;
+  width: 90px;
+}
+
+.markers__orphaned {
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.markers__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.markers__remove:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
 /* ---------- live waveform (Record screen, while recording) ---------- */
 
 .live-waveform {

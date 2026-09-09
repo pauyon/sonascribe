@@ -12,6 +12,7 @@ export default function PlayerBar({
   positionMs,
   onSeek,
   seams,
+  markers,
   editable = false,
   onSelectRange
 }: {
@@ -34,6 +35,7 @@ export default function PlayerBar({
   /** Overrides `audio.seek` — converts a virtual seek target back to a real one before actually seeking. */
   onSeek?: (ms: number) => void
   seams?: number[]
+  markers?: Array<{ positionMs: number; color: string }>
   editable?: boolean
   onSelectRange?: (startMs: number, endMs: number) => void
 }): React.JSX.Element {
@@ -60,6 +62,7 @@ export default function PlayerBar({
           positionMs={position}
           onSeek={seek}
           seams={seams}
+          markers={markers}
           editable={editable}
           onSelectRange={onSelectRange}
         />

@@ -210,5 +210,18 @@ export const MIGRATIONS: Migration[] = [
       -- {"startMs": number, "endMs": number}, sorted and non-overlapping.
       ALTER TABLE recordings ADD COLUMN cuts TEXT;
     `
+  },
+  {
+    version: 10,
+    name: 'recording_markers',
+    sql: /* sql */ `
+      -- Labeled, colored jump-to points, in the original file's own time —
+      -- same anchor cuts use. JSON for the same reason as cuts: a short,
+      -- always-whole list per recording, never queried across recordings.
+      -- NULL means no markers; otherwise a JSON array of
+      -- {"id": string, "timeMs": number, "label": string, "color": string},
+      -- sorted by timeMs.
+      ALTER TABLE recordings ADD COLUMN markers TEXT;
+    `
   }
 ]

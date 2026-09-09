@@ -16,6 +16,7 @@ export default function WaveformMinimap({
   durationMs,
   positionMs,
   seams,
+  markers,
   viewportStartMs,
   viewportLengthMs,
   onViewportChange,
@@ -27,6 +28,8 @@ export default function WaveformMinimap({
   /** Overall playhead position, for the background strip's own progress line. */
   positionMs: number
   seams?: number[]
+  /** Every marker's virtual position, unwindowed — the minimap always shows all of them regardless of zoom. */
+  markers?: Array<{ positionMs: number; color: string }>
   viewportStartMs: number
   viewportLengthMs: number
   /** Fires while dragging the rectangle, or after a background click recenters it. */
@@ -88,6 +91,7 @@ export default function WaveformMinimap({
         positionMs={positionMs}
         onSeek={handleBackgroundSeek}
         seams={seams}
+        markers={markers}
       />
       <div
         className="minimap__viewport"

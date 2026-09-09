@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { sourceMediaUrl } from '@shared/ipc'
 import { api, useEvent, useQuery } from '../lib/api'
 import { useAudio } from '../lib/useAudio'
 import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
+import { useMarkers } from '../lib/useMarkers'
+import { cutAt, realToVirtual } from '../lib/cuts'
 import { formatDuration } from '../lib/format'
 import StatusPill from '../components/StatusPill'
 import PlayerBar from '../components/PlayerBar'
+import MarkerChips from '../components/MarkerChips'
 
 /** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
 export default function Editor(): React.JSX.Element {
@@ -32,6 +35,25 @@ export default function Editor(): React.JSX.Element {
   const playbackSrc = recording?.sourcePath ? sourceMediaUrl(recording.id) : null
   const audio = useAudio(playbackSrc)
   const { compressed, virtualDur, virtualPosition, seekVirtual } = useCutAwarePlayback(recording, audio)
+  const { markers, addMarkerAt, rename: renameMarker, recolor: recolorMarker, remove: removeMarker } =
+    useMarkers(recording, refetch)
+
+  const durationMs = recording?.durationMs ?? 0
+  const cuts = useMemo(() => recording?.cuts ?? [], [recording?.cuts])
+
+  // Pins on the waveform: only the ones a cut hasn't since swallowed, mapped
+  // into the same compressed/virtual space the waveform itself is drawn in.
+  const markerPins = useMemo(
+    () =>
+      markers
+        .filter((m) => !cutAt(m.timeMs, cuts))
+        .map((m) => ({ positionMs: realToVirtual(m.timeMs, durationMs, cuts), color: m.color })),
+    [markers, durationMs, cuts]
+  )
+  const annotatedMarkers = useMemo(
+    () => markers.map((m) => ({ ...m, jumpable: !cutAt(m.timeMs, cuts) })),
+    [markers, cuts]
+  )
 
   useEffect(() => {
     const sentinel = playerSentinelRef.current
@@ -142,6 +164,7 @@ export default function Editor(): React.JSX.Element {
               positionMs={virtualPosition}
               onSeek={seekVirtual}
               seams={compressed.seams}
+              markers={markerPins}
             />
           </div>
           {playerFloating && (
@@ -153,9 +176,24 @@ export default function Editor(): React.JSX.Element {
               positionMs={virtualPosition}
               onSeek={seekVirtual}
               seams={compressed.seams}
+              markers={markerPins}
               floating
             />
           )}
+
+          <div className="page__actions page__actions--inline">
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => addMarkerAt(audio.currentMs)}>
+              Add marker at {formatDuration(audio.currentMs)}
+            </button>
+          </div>
+
+          <MarkerChips
+            markers={annotatedMarkers}
+            onJump={(marker) => audio.seek(marker.timeMs)}
+            onRename={renameMarker}
+            onRecolor={recolorMarker}
+            onRemove={removeMarker}
+          />
         </>
       )}
 

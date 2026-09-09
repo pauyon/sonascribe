@@ -13,6 +13,7 @@ import type {
   CreateRecordingInput,
   Cut,
   ImportProgress,
+  Marker,
   Platform,
   Recording
 } from './types'
@@ -47,6 +48,16 @@ export interface ApiSchema {
    */
   'recordings:setCuts': {
     request: { id: string; cuts: Cut[] }
+    response: Recording
+  }
+  /**
+   * Replaces a recording's whole marker list — labeled, colored jump-to
+   * points in the original file's own time. Same whole-list-replace shape as
+   * `recordings:setCuts`: add/rename/recolor/remove are all "here's the new
+   * list."
+   */
+  'recordings:setMarkers': {
+    request: { id: string; markers: Marker[] }
     response: Recording
   }
   /**
@@ -289,6 +300,7 @@ export const CHANNELS = [
   'recordings:rename',
   'recordings:delete',
   'recordings:setCuts',
+  'recordings:setMarkers',
   'dialog:pickMediaFiles',
   'recordings:import',
   'app:info',
