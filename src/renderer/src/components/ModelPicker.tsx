@@ -1,9 +1,11 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { MODELS, type AsrEngine, type ModelDownloadProgress, type ModelStatus } from '@shared/models'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatBytes } from '../lib/format'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import Select from './Select'
 import Icon from './Icon'
+import ProgressBar from './ProgressBar'
 
 /** Languages Whisper's `-l` flag accepts, in the order the picker shows them. Parakeet ignores this entirely. */
 const LANGUAGES = [
@@ -20,7 +22,7 @@ const LANGUAGES = [
 ]
 
 /** Five dots showing a relative speed/accuracy rating. */
-function Rating({ value, label }: { value: number; label: string }): React.JSX.Element {
+export function Rating({ value, label }: { value: number; label: string }): React.JSX.Element {
   return (
     <span className="rating" title={`${label}: ${value} of 5`}>
       <span className="rating__label">{label}</span>
@@ -46,11 +48,11 @@ export default function ModelPicker({
   const { data: settings, refetch: refetchSettings } = useQuery('transcription:getSettings')
   const { data: statuses, refetch: refetchModels } = useQuery('models:list')
   const [progress, setProgress] = useState<Record<string, ModelDownloadProgress>>({})
-  const [error, setError] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   useEvent('model:progress', (payload) => {
     setProgress((prev) => ({ ...prev, [payload.modelId]: payload }))
-    if (payload.error) setError(`${payload.modelId}: ${payload.error}`)
+    if (payload.error) setDownloadError(`${payload.modelId}: ${payload.error}`)
     if (payload.done || payload.error) {
       setProgress((prev) => {
         const next = { ...prev }
@@ -61,31 +63,9 @@ export default function ModelPicker({
     }
   })
 
-  const actModels = useCallback(
-    async (fn: () => Promise<unknown>): Promise<void> => {
-      setError(null)
-      try {
-        await fn()
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      }
-      refetchModels()
-    },
-    [refetchModels]
-  )
-
-  const actSettings = useCallback(
-    async (fn: () => Promise<unknown>): Promise<void> => {
-      setError(null)
-      try {
-        await fn()
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      }
-      refetchSettings()
-    },
-    [refetchSettings]
-  )
+  const { error: modelsError, run: actModels } = useAsyncAction(refetchModels)
+  const { error: settingsError, run: actSettings } = useAsyncAction(refetchSettings)
+  const error = downloadError ?? modelsError ?? settingsError
 
   if (availableEngines.length === 0) {
     return (
@@ -147,19 +127,14 @@ export default function ModelPicker({
                 </div>
 
                 {downloading && (
-                  <div className="progress progress--wide">
-                    <div
-                      className={
-                        job?.fraction == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
-                      }
-                      style={job?.fraction == null ? undefined : { width: `${Math.round(job.fraction * 100)}%` }}
-                    />
-                    <span className="progress__label">
-                      {job
+                  <ProgressBar
+                    fraction={job?.fraction ?? null}
+                    label={
+                      job
                         ? `${formatBytes(job.receivedBytes)} of ${formatBytes(job.totalBytes ?? spec.sizeBytes)}`
-                        : 'Starting…'}
-                    </span>
-                  </div>
+                        : 'Starting…'
+                    }
+                  />
                 )}
 
                 {partial && !downloading && (

@@ -18,6 +18,7 @@ import { transcribeWithParakeet } from './parakeet'
 import { hasSidecar } from './sidecars'
 import { triggerReindex } from './search'
 import { emit } from '../ipc/events'
+import { createJobQueue } from './job-queue'
 
 /**
  * Serial job queue for transcription.
@@ -28,6 +29,10 @@ import { emit } from '../ipc/events'
  * would make progress reporting meaningless. Cancellation is a kill of the
  * child process, which is the reason the ASR engines are sidecars rather
  * than in-process addons.
+ *
+ * The queue/cancel/progress bookkeeping itself is shared with
+ * `speaker-jobs.ts` via `./job-queue` — only the transcription pipeline
+ * (below) is specific to this file.
  */
 
 export class JobError extends Error {}
@@ -48,35 +53,31 @@ function buildPreview(segments: TranscriptSegment[]): string | null {
   return `${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim()}…`
 }
 
-interface QueuedJob {
-  recordingId: string
-  controller: AbortController
-  run: () => Promise<void>
-}
-
-const queue: QueuedJob[] = []
-const controllers = new Map<string, AbortController>()
-/** Latest progress per in-flight recording, so a page opened mid-job sees where things stand instead of a blank bar. */
-const activeProgress = new Map<string, number | null>()
-let running = false
-
 function publishRecording(recordingId: string): void {
   const updated = getRecording(recordingId)
   if (updated) emit('recording:updated', updated)
 }
 
+const jobQueue = createJobQueue({
+  logLabel: '[transcription]',
+  onDropped: (recordingId) => {
+    setTranscriptStatus(recordingId, 'none')
+    publishRecording(recordingId)
+  }
+})
+
 function progress(recordingId: string, fraction: number | null): void {
-  activeProgress.set(recordingId, fraction)
+  jobQueue.setProgress(recordingId, fraction)
   emit('transcript:progress', { recordingId, fraction })
 }
 
 /** True when a transcription for this recording is queued or in flight. */
 export function isTranscriptionActive(recordingId: string): boolean {
-  return controllers.has(recordingId)
+  return jobQueue.isActive(recordingId)
 }
 
 export function getActiveTranscriptionProgress(recordingId: string): number | null | undefined {
-  return activeProgress.get(recordingId)
+  return jobQueue.getProgress(recordingId)
 }
 
 /**
@@ -86,10 +87,7 @@ export function getActiveTranscriptionProgress(recordingId: string): number | nu
  * away and back, unlike component-local progress state.
  */
 export function listActiveTranscriptions(): Array<{ recordingId: string; fraction: number | null }> {
-  return [...activeProgress.entries()].map(([recordingId, fraction]) => ({
-    recordingId,
-    fraction: fraction ?? null
-  }))
+  return jobQueue.listActive()
 }
 
 /**
@@ -100,49 +98,11 @@ export function listActiveTranscriptions(): Array<{ recordingId: string; fractio
  * whole window's audio in memory until the user finds it in Task Manager.
  */
 export function cancelAllTranscriptions(): number {
-  const ids = [...controllers.keys()]
-  for (const id of ids) cancelTranscription(id)
-  if (ids.length > 0) console.log(`[transcription] cancelled ${ids.length} job(s) on shutdown`)
-  return ids.length
+  return jobQueue.cancelAll()
 }
 
 export function cancelTranscription(recordingId: string): boolean {
-  const controller = controllers.get(recordingId)
-  if (!controller) return false
-  controller.abort()
-
-  // If it has not started yet, drop it from the queue so it never runs —
-  // the job itself won't get a chance to reset the status otherwise.
-  const index = queue.findIndex((j) => j.recordingId === recordingId)
-  if (index !== -1) {
-    queue.splice(index, 1)
-    controllers.delete(recordingId)
-    activeProgress.delete(recordingId)
-    setTranscriptStatus(recordingId, 'none')
-    publishRecording(recordingId)
-  }
-  return true
-}
-
-async function drain(): Promise<void> {
-  if (running) return
-  running = true
-  try {
-    while (queue.length > 0) {
-      const job = queue.shift()
-      if (!job) break
-      try {
-        await job.run()
-      } catch (err) {
-        console.error(`[transcription] ${job.recordingId} failed:`, err)
-      } finally {
-        controllers.delete(job.recordingId)
-        activeProgress.delete(job.recordingId)
-      }
-    }
-  } finally {
-    running = false
-  }
+  return jobQueue.cancel(recordingId)
 }
 
 /**
@@ -151,14 +111,15 @@ async function drain(): Promise<void> {
  *
  * Throws synchronously for conditions the user can fix immediately — no
  * model chosen, model not downloaded, missing sidecar, already running — so
- * the UI can say so rather than showing a job that fails a moment later. The
- * recording is claimed (`controllers.set`) before anything async runs: two
- * starts arriving in the same tick — a double click, a click racing a retry
- * — must not both pass the "already running" check and queue the same
- * recording twice.
+ * the UI can say so rather than showing a job that fails a moment later.
+ * Everything here runs synchronously up to `jobQueue.enqueue`, which is what
+ * actually claims the recording: two starts arriving in the same tick — a
+ * double click, a click racing a retry — must not both pass the "already
+ * running" check and queue the same recording twice, and since nothing here
+ * awaits, no other call can interleave before the claim happens.
  */
 export function queueTranscription(recordingId: string): void {
-  if (controllers.has(recordingId)) {
+  if (jobQueue.isActive(recordingId)) {
     throw new JobError('This recording is already being transcribed')
   }
 
@@ -182,8 +143,6 @@ export function queueTranscription(recordingId: string): void {
   const sourcePath = recording.sourcePath
 
   const controller = new AbortController()
-  controllers.set(recordingId, controller)
-  activeProgress.set(recordingId, null)
   setTranscriptStatus(recordingId, 'queued')
   publishRecording(recordingId)
 
@@ -259,6 +218,5 @@ export function queueTranscription(recordingId: string): void {
     }
   }
 
-  queue.push({ recordingId, controller, run })
-  void drain()
+  jobQueue.enqueue({ recordingId, controller, run })
 }

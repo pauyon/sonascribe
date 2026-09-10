@@ -11,6 +11,7 @@ import { absorbTinySpeakers, mergeWordsWithSpeakers, minSpeakerSpeechFor } from 
 import { hasBundledModel, hasSidecar } from './sidecars'
 import { triggerReindex } from './search'
 import { emit } from '../ipc/events'
+import { createJobQueue } from './job-queue'
 
 /**
  * Serial job queue for speaker detection — deliberately its own module
@@ -19,82 +20,45 @@ import { emit } from '../ipc/events'
  * runs against an *existing* transcript rather than producing one), and this
  * codebase already prefers a purpose-built module per pipeline
  * (`whisper.ts`/`parakeet.ts` are separate runners, not one generic engine)
- * over a shared abstraction two call shapes barely fit.
+ * over a shared abstraction two call shapes barely fit. The queue/cancel/
+ * progress bookkeeping itself has no pipeline-specific meaning though, so
+ * that part is shared with `jobs.ts` via `./job-queue`.
  */
 
 export class SpeakerJobError extends Error {}
-
-interface QueuedJob {
-  recordingId: string
-  controller: AbortController
-  run: () => Promise<void>
-}
-
-const queue: QueuedJob[] = []
-const controllers = new Map<string, AbortController>()
-const activeProgress = new Map<string, number | null>()
-let running = false
 
 function publishRecording(recordingId: string): void {
   const updated = getRecording(recordingId)
   if (updated) emit('recording:updated', updated)
 }
 
+const jobQueue = createJobQueue({
+  logLabel: '[speakers]',
+  onDropped: (recordingId) => {
+    setSpeakerStatus(recordingId, 'none')
+    publishRecording(recordingId)
+  }
+})
+
 function progress(recordingId: string, fraction: number | null): void {
-  activeProgress.set(recordingId, fraction)
+  jobQueue.setProgress(recordingId, fraction)
   emit('speaker:progress', { recordingId, fraction })
 }
 
 export function isSpeakerDetectionActive(recordingId: string): boolean {
-  return controllers.has(recordingId)
+  return jobQueue.isActive(recordingId)
 }
 
 export function listActiveSpeakerDetections(): Array<{ recordingId: string; fraction: number | null }> {
-  return [...activeProgress.entries()].map(([recordingId, fraction]) => ({ recordingId, fraction: fraction ?? null }))
+  return jobQueue.listActive()
 }
 
 export function cancelAllSpeakerDetections(): number {
-  const ids = [...controllers.keys()]
-  for (const id of ids) cancelSpeakerDetection(id)
-  if (ids.length > 0) console.log(`[speakers] cancelled ${ids.length} job(s) on shutdown`)
-  return ids.length
+  return jobQueue.cancelAll()
 }
 
 export function cancelSpeakerDetection(recordingId: string): boolean {
-  const controller = controllers.get(recordingId)
-  if (!controller) return false
-  controller.abort()
-
-  const index = queue.findIndex((j) => j.recordingId === recordingId)
-  if (index !== -1) {
-    queue.splice(index, 1)
-    controllers.delete(recordingId)
-    activeProgress.delete(recordingId)
-    setSpeakerStatus(recordingId, 'none')
-    publishRecording(recordingId)
-  }
-  return true
-}
-
-async function drain(): Promise<void> {
-  if (running) return
-  running = true
-  try {
-    while (queue.length > 0) {
-      const job = queue.shift()
-      if (!job) break
-      try {
-        await job.run()
-      } catch (err) {
-        console.error(`[speakers] ${job.recordingId} failed:`, err)
-      } finally {
-        controllers.delete(job.recordingId)
-        activeProgress.delete(job.recordingId)
-      }
-    }
-  } finally {
-    running = false
-  }
+  return jobQueue.cancel(recordingId)
 }
 
 /**
@@ -106,7 +70,7 @@ async function drain(): Promise<void> {
  * audio and settings.
  */
 export function queueSpeakerDetection(recordingId: string): void {
-  if (controllers.has(recordingId)) {
+  if (jobQueue.isActive(recordingId)) {
     throw new SpeakerJobError('Speaker detection is already running for this recording')
   }
 
@@ -128,8 +92,6 @@ export function queueSpeakerDetection(recordingId: string): void {
   const durationMs = recording.durationMs ?? undefined
 
   const controller = new AbortController()
-  controllers.set(recordingId, controller)
-  activeProgress.set(recordingId, null)
   setSpeakerStatus(recordingId, 'queued')
   publishRecording(recordingId)
 
@@ -196,6 +158,5 @@ export function queueSpeakerDetection(recordingId: string): void {
     }
   }
 
-  queue.push({ recordingId, controller, run })
-  void drain()
+  jobQueue.enqueue({ recordingId, controller, run })
 }

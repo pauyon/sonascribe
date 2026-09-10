@@ -3,6 +3,7 @@ import { DEFAULT_MARKER_COLOR } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatDuration } from '../lib/format'
 import Icon from '../components/Icon'
+import IconButton from '../components/IconButton'
 
 /**
  * The pop-out recording controls: a small always-on-top window with the
@@ -112,6 +113,12 @@ export default function MiniRecorder(): React.JSX.Element {
         <span className="mini__status">
           {finishing ? 'Finishing…' : paused ? 'Paused' : 'Recording'}
         </span>
+        {/* Not an <IconButton>: .mini__close is a complete, bespoke recipe
+            (background/color/hover) predating this refactor, not one of the
+            duplicated small-button patterns IconButton consolidates — and
+            IconButton's `variant="ghost"` pulls in .btn--ghost:hover, which
+            is red (var(--danger)), wrongly implying this closes/discards
+            the recording rather than just hiding this window. */}
         <button
           type="button"
           className="mini__close"
@@ -132,47 +139,53 @@ export default function MiniRecorder(): React.JSX.Element {
           <div className="mini__time">{formatDuration(elapsedMs)}</div>
 
           <div className="mini__toolbar">
-            <button
-              type="button"
-              className="btn btn--ghost mini__icon-btn mini__mark-btn"
-              onClick={mark}
-              disabled={finishing}
-              title="Mark this moment, to jump back to it later"
-              aria-label="Mark this moment"
-            >
-              <Icon name="flag" style={{ color: DEFAULT_MARKER_COLOR }} />
+            <div className="mini__icon-btn mini__mark-btn">
+              <IconButton
+                size="sm"
+                variant="ghost"
+                style={{ width: '100%', height: '100%', padding: 0 }}
+                onClick={mark}
+                disabled={finishing}
+                title="Mark this moment, to jump back to it later"
+                aria-label="Mark this moment"
+                icon="flag"
+                iconStyle={{ color: DEFAULT_MARKER_COLOR }}
+              />
               {markerCount > 0 && <span className="mini__mark-count">{markerCount}</span>}
-            </button>
-            <button
-              type="button"
-              className="btn mini__icon-btn"
+            </div>
+            <IconButton
+              size="sm"
+              variant="plain"
+              className="mini__icon-btn"
+              style={{ height: 'auto' }}
               onClick={() => void api.invoke('recording:pause', { paused: !paused })}
               disabled={finishing}
               title={paused ? 'Resume' : 'Pause'}
               aria-label={paused ? 'Resume' : 'Pause'}
-            >
-              <Icon name={paused ? 'play' : 'pause'} />
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary mini__icon-btn"
+              icon={paused ? 'play' : 'pause'}
+            />
+            <IconButton
+              size="sm"
+              variant="primary"
+              className="mini__icon-btn"
+              style={{ height: 'auto' }}
               onClick={stop}
               disabled={finishing}
               title="Stop & save"
               aria-label="Stop and save"
-            >
-              <Icon name="stop" />
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost mini__icon-btn"
+              icon="stop"
+            />
+            <IconButton
+              size="sm"
+              variant="ghost"
+              className="mini__icon-btn"
+              style={{ height: 'auto' }}
               onClick={discard}
               disabled={finishing}
               title="Discard (delete this recording)"
               aria-label="Discard this recording"
-            >
-              <Icon name="trash" />
-            </button>
+              icon="trash"
+            />
           </div>
         </>
       )}

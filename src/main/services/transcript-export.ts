@@ -1,12 +1,32 @@
+import { app } from 'electron'
+import { copyFile, writeFile } from 'node:fs/promises'
+import { extname, join } from 'node:path'
 import type { Recording, Utterance } from '@shared/types'
-import type { ExportFormat } from '@shared/export'
+import { EXPORT_FORMATS, type ExportFormat } from '@shared/export'
+import { getRecording } from '../db/recordings'
+import { getUtterances } from '../db/transcript'
+import { showSaveDialog } from './dialogs'
 
 /**
- * Transcript serialization.
+ * Transcript serialization, plus the export flows (transcript and raw audio)
+ * built on top of it.
  *
- * Pure functions over a recording + its utterances — no filesystem, no
- * Electron — so each format can be reasoned about on its own.
+ * The `to*` renderers below are pure functions over a recording + its
+ * utterances — no filesystem, no Electron — so each format can be reasoned
+ * about on its own. `exportTranscript`/`exportAudio` are the IPC-reachable
+ * flows: validate, prompt for a destination, then write — the business logic
+ * `ipc/index.ts` used to hold inline.
  */
+
+function safeFileName(title: string): string {
+  return (
+    title
+      .replace(/[<>:"/\\|?*]/g, '_')
+      .replace(/\.+$/, '')
+      .trim()
+      .slice(0, 120) || 'transcript'
+  )
+}
 
 function pad(n: number, width = 2): string {
   return String(n).padStart(width, '0')
@@ -135,4 +155,49 @@ export function renderTranscript(recording: Recording, utterances: Utterance[], 
     case 'json':
       return toJson(recording, utterances)
   }
+}
+
+/**
+ * Prompts for a destination and writes a recording's transcript in the given
+ * format. Returns the written path, or null if the user cancelled the dialog.
+ */
+export async function exportTranscript(recordingId: string, format: ExportFormat): Promise<string | null> {
+  const recording = getRecording(recordingId)
+  if (!recording) throw new Error('Recording not found')
+  const utterances = getUtterances(recordingId)
+  if (utterances.length === 0) throw new Error('There is no transcript to export yet')
+
+  const spec = EXPORT_FORMATS.find((f) => f.id === format)
+  if (!spec) throw new Error(`Unknown export format: ${format}`)
+
+  const result = await showSaveDialog({
+    title: 'Export transcript',
+    defaultPath: join(app.getPath('documents'), `${safeFileName(recording.title)}.${spec.extension}`),
+    filters: [{ name: spec.label, extensions: [spec.extension] }]
+  })
+  if (result.canceled || !result.filePath) return null
+
+  await writeFile(result.filePath, renderTranscript(recording, utterances, format), 'utf8')
+  return result.filePath
+}
+
+/**
+ * Prompts for a destination and copies a recording's audio file there.
+ * Returns the written path, or null if the user cancelled the dialog.
+ */
+export async function exportAudio(recordingId: string): Promise<string | null> {
+  const recording = getRecording(recordingId)
+  if (!recording?.sourcePath) throw new Error('This recording has no audio yet')
+
+  const result = await showSaveDialog({
+    title: 'Export audio',
+    defaultPath: join(
+      app.getPath('documents'),
+      `${safeFileName(recording.title)}${extname(recording.sourcePath)}`
+    )
+  })
+  if (result.canceled || !result.filePath) return null
+
+  await copyFile(recording.sourcePath, result.filePath)
+  return result.filePath
 }

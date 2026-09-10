@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { getDb } from '../db'
+import { listRecordingIds } from '../db/recordings'
 import { getMediaRoot, recordingMediaDir } from './storage'
 
 /**
@@ -56,11 +56,7 @@ export async function sweepOrphanedMedia(): Promise<number> {
     return 0
   }
 
-  const live = new Set(
-    (getDb().prepare('SELECT id FROM recordings').all() as unknown as Array<{ id: string }>).map(
-      (r) => r.id
-    )
-  )
+  const live = new Set(listRecordingIds())
 
   let removed = 0
   for (const entry of entries) {
