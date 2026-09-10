@@ -329,11 +329,14 @@ export default function Editor(): React.JSX.Element {
       ...(recording.sourcePath && recording.transcriptStatus === 'ready'
         ? ([{ icon: 'transcribe', label: 'Re-transcribe', onClick: () => void transcript.start() }] satisfies OverflowMenuItem[])
         : []),
-      ...(hasTranscript
+      // First-time detection now lives in the always-visible header button
+      // (see .page__actions) — this stays for re-running it after the fact,
+      // once there's something to re-run.
+      ...(hasTranscript && hasSpeakers
         ? ([
             {
               icon: 'speakers',
-              label: hasSpeakers ? 'Re-run Speaker Detection' : 'Detect Speakers',
+              label: 'Re-run Speaker Detection',
               onClick: () => void speakers.detect(),
               disabled: speakerBusy
             }
@@ -451,16 +454,37 @@ export default function Editor(): React.JSX.Element {
               <Icon name="chat" />
             </button>
           )}
-          {hasSpeakers && (
+          {hasTranscript && (
             <button
               type="button"
               className={
-                transcriptMode === 'speakers' ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'
+                hasSpeakers && transcriptMode === 'speakers'
+                  ? 'btn btn--ghost icon-btn icon-btn--active'
+                  : 'btn btn--ghost icon-btn'
               }
-              aria-pressed={transcriptMode === 'speakers'}
-              aria-label={transcriptMode === 'speakers' ? 'Hide speaker labels' : 'Show speaker labels'}
-              title={transcriptMode === 'speakers' ? 'Showing speakers & timestamps' : 'Showing timestamps only'}
-              onClick={() => setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))}
+              disabled={speakerBusy}
+              aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
+              aria-label={
+                !hasSpeakers
+                  ? 'Detect speakers'
+                  : transcriptMode === 'speakers'
+                    ? 'Hide speaker labels'
+                    : 'Show speaker labels'
+              }
+              title={
+                speakerBusy
+                  ? 'Detecting speakers…'
+                  : !hasSpeakers
+                    ? 'Detect speakers'
+                    : transcriptMode === 'speakers'
+                      ? 'Showing speakers & timestamps'
+                      : 'Showing timestamps only'
+              }
+              onClick={() =>
+                hasSpeakers
+                  ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
+                  : void speakers.detect()
+              }
             >
               <Icon name="speakers" />
             </button>
