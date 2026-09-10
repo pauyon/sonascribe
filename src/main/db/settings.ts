@@ -1,5 +1,6 @@
-import type { AsrEngine } from '@shared/models'
-import { DEFAULT_OLLAMA_SERVER_URL } from '@shared/ollama'
+import { type AsrEngine, DEFAULT_ENGINE, defaultModelForEngine } from '@shared/models'
+import { DEFAULT_OLLAMA_SERVER_URL, type RagSettings } from '@shared/ollama'
+import type { TranscriptionSettings } from '@shared/ipc'
 import { getDb } from './index'
 
 /** Typed accessors over the settings key/value table. */
@@ -184,4 +185,26 @@ export function getRagServerUrl(): string {
 
 export function setRagServerUrl(url: string): void {
   set(KEYS.ragServerUrl, url)
+}
+
+/** Effective transcription settings, applying defaults for anything not yet chosen. */
+export function getTranscriptionSettings(): TranscriptionSettings {
+  const engine = getTranscriptionEngine() ?? DEFAULT_ENGINE
+  return {
+    engine,
+    modelId: {
+      whisper: getModelIdForEngine('whisper') ?? defaultModelForEngine('whisper'),
+      parakeet: getModelIdForEngine('parakeet') ?? defaultModelForEngine('parakeet')
+    },
+    language: getTranscriptionLanguage()
+  }
+}
+
+/** Effective RAG settings, applying the default server URL when none is set. */
+export function getRagSettings(): RagSettings {
+  return {
+    embeddingModel: getRagEmbeddingModel(),
+    chatModel: getRagChatModel(),
+    serverUrl: getRagServerUrl() || DEFAULT_OLLAMA_SERVER_URL
+  }
 }

@@ -1,9 +1,12 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { RECOMMENDED_OLLAMA_MODELS, type OllamaPullProgress } from '@shared/ollama'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatBytes } from '../lib/format'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import Select from './Select'
 import Icon from './Icon'
+import IconButton from './IconButton'
+import ProgressBar from './ProgressBar'
 
 /**
  * "Knowledge Base" Settings card: Ollama status, its installed models, a
@@ -22,11 +25,11 @@ export default function KnowledgeBaseSettings(): React.JSX.Element {
   const [pulls, setPulls] = useState<Record<string, OllamaPullProgress>>({})
   const [reindexing, setReindexing] = useState(false)
   const [serverUrlDraft, setServerUrlDraft] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [pullError, setPullError] = useState<string | null>(null)
 
   useEvent('ollama:pullProgress', (payload) => {
     setPulls((prev) => ({ ...prev, [payload.modelName]: payload }))
-    if (payload.error) setError(`${payload.modelName}: ${payload.error}`)
+    if (payload.error) setPullError(`${payload.modelName}: ${payload.error}`)
     if (payload.done) {
       setPulls((prev) => {
         const next = { ...prev }
@@ -44,14 +47,8 @@ export default function KnowledgeBaseSettings(): React.JSX.Element {
     }
   })
 
-  const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
-    setError(null)
-    try {
-      await fn()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }, [])
+  const { error: actError, run: act } = useAsyncAction()
+  const error = pullError ?? actError
 
   const serverUrl = serverUrlDraft ?? settings?.serverUrl ?? ''
 
@@ -106,15 +103,13 @@ export default function KnowledgeBaseSettings(): React.JSX.Element {
               Download Ollama
             </a>
           )}
-          <button
-            type="button"
-            className="kb-refresh-btn"
+          <IconButton
+            icon="refresh"
+            size="sm"
             onClick={() => refetchStatus()}
             aria-label="Refresh"
             title="Refresh"
-          >
-            <Icon name="refresh" />
-          </button>
+          />
         </div>
 
         <div className="settings-card__row">
@@ -183,19 +178,14 @@ export default function KnowledgeBaseSettings(): React.JSX.Element {
                     </div>
                     <p className="kb-recommend-blurb">{rec.blurb}</p>
                     {pull && (
-                      <div className="progress progress--wide">
-                        <div
-                          className={
-                            pull.fraction == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
-                          }
-                          style={pull.fraction == null ? undefined : { width: `${Math.round(pull.fraction * 100)}%` }}
-                        />
-                        <span className="progress__label">
-                          {pull.totalBytes
+                      <ProgressBar
+                        fraction={pull.fraction ?? null}
+                        label={
+                          pull.totalBytes
                             ? `${formatBytes(pull.receivedBytes)} of ${formatBytes(pull.totalBytes)}`
-                            : 'Starting…'}
-                        </span>
-                      </div>
+                            : 'Starting…'
+                        }
+                      />
                     )}
                   </div>
                   {installed ? (

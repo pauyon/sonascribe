@@ -824,6 +824,24 @@ body {
   color: var(--accent);
 }
 
+/* The small counterpart to .icon-btn — see components/IconButton.tsx.
+   Consolidates what were separately declared as .search-bar__close,
+   .kb-refresh-btn and .ask__copy at 26-28px each. */
+.icon-btn-sm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.icon-btn-sm svg {
+  width: 14px;
+  height: 14px;
+}
+
 .trim__zoom-level {
   font-size: var(--fs-caption);
   color: var(--text-muted);

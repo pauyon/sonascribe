@@ -8,6 +8,7 @@
  */
 
 import type { AsrEngine } from '@shared/models'
+import { SidecarProcessError } from './process'
 
 /** A word with timings, assembled from whichever sub-word units the engine emits. */
 export interface TranscriptWord {
@@ -49,16 +50,13 @@ export interface TranscribeOptions {
   signal?: AbortSignal
 }
 
-/** Thrown by any engine runner; carries the tail of the child's stderr. */
-export class TranscriptionError extends Error {
-  constructor(
-    message: string,
-    readonly stderrTail: string
-  ) {
-    super(message)
-    this.name = 'TranscriptionError'
-  }
-}
+/**
+ * Thrown by any engine runner; carries the tail of the child's stderr.
+ *
+ * Alias of the shared `SidecarProcessError` (see `process.ts`) — kept under
+ * this name because `jobs.ts` does `err instanceof TranscriptionError`.
+ */
+export { SidecarProcessError as TranscriptionError }
 
 /**
  * Groups engine words into segments on pauses.

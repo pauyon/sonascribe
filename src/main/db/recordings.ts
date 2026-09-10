@@ -70,6 +70,12 @@ export function listRecordings(): Recording[] {
   return rows.map(toRecording)
 }
 
+/** Every recording id currently in the database — used by media-cleanup's orphan sweep. */
+export function listRecordingIds(): string[] {
+  const rows = getDb().prepare('SELECT id FROM recordings').all() as unknown as Array<{ id: string }>
+  return rows.map((r) => r.id)
+}
+
 export function getRecording(id: string): Recording | null {
   const row = getDb()
     .prepare('SELECT * FROM recordings WHERE id = ?')

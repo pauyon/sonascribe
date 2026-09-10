@@ -9,6 +9,8 @@ import { useCutAwarePlayback } from '../lib/useCutAwarePlayback'
 import { useMarkers } from '../lib/useMarkers'
 import { useTranscript } from '../lib/useTranscript'
 import { useSpeakers } from '../lib/useSpeakers'
+import { useSpeakerDeleteUndo } from '../lib/useSpeakerDeleteUndo'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { copyPlainText, copyWithSpeakers, copyWithTimestamps } from '../lib/transcriptCopy'
 import { cutAt, realToVirtual } from '../lib/cuts'
 import { formatDuration } from '../lib/format'
@@ -19,6 +21,9 @@ import SpeakerChips from '../components/SpeakerChips'
 import TranscriptPanel from '../components/TranscriptPanel'
 import AskPanel from '../components/AskPanel'
 import OverflowMenu, { type OverflowMenuItem } from '../components/OverflowMenu'
+import ProgressBar from '../components/ProgressBar'
+import ConfirmDialog from '../components/ConfirmDialog'
+import IconButton from '../components/IconButton'
 import Icon from '../components/Icon'
 
 /** A single recording: playback (respecting any cuts), rename, delete, reveal-in-folder. */
@@ -39,29 +44,8 @@ export default function Editor(): React.JSX.Element {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [askOpen, setAskOpen] = useState(false)
-
-  /**
-   * Speakers (and their lines) hidden immediately on delete, before the
-   * delete is actually committed — the real IPC call is deferred behind
-   * `speakerDeleteTimers` so a misclick has a few seconds to be undone
-   * before it's unrecoverable. Deleting a speaker also deletes every line
-   * credited to them, so this is the one destructive action here that
-   * genuinely needs a way back.
-   */
-  const [hiddenSpeakerIds, setHiddenSpeakerIds] = useState<Set<string>>(new Set())
-  const [hiddenUtteranceIds, setHiddenUtteranceIds] = useState<Set<string>>(new Set())
-  const [pendingSpeakerDelete, setPendingSpeakerDelete] = useState<{
-    id: string
-    label: string
-    keepLines: boolean
-  } | null>(null)
-  // Deliberately never cleared on unmount: a delete the user didn't undo
-  // should still land even if they navigate away before the timer fires,
-  // rather than silently reverting. Keyed by speaker id (not a single ref)
-  // so deleting a second speaker before the first one's window elapses
-  // doesn't cancel the first one's real deletion — only the visible toast
-  // (a single `pendingSpeakerDelete`) is limited to the most recent.
-  const speakerDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  /** Shared error surface for the clipboard-copy/export actions below. */
+  const { error: actionAsyncError, run: runAction } = useAsyncAction()
 
   /**
    * Whether the in-flow player card has scrolled above the top of the window.
@@ -104,6 +88,14 @@ export default function Editor(): React.JSX.Element {
   } = useMarkers(recording, refetch)
   const transcript = useTranscript(id)
   const speakers = useSpeakers(id, transcript.refetch)
+  const speakerDeleteUndo = useSpeakerDeleteUndo({
+    speakers: speakers.speakers,
+    utterances: transcript.utterances,
+    speakerFilter,
+    setSpeakerFilter,
+    remove: speakers.remove,
+    removeKeepLines: speakers.removeKeepLines
+  })
 
   const durationMs = recording?.durationMs ?? 0
   const cuts = useMemo(() => recording?.cuts ?? [], [recording?.cuts])
@@ -208,95 +200,15 @@ export default function Editor(): React.JSX.Element {
   }
 
   async function copy(text: string): Promise<void> {
-    setActionError(null)
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    }
+    await runAction(() => navigator.clipboard.writeText(text))
   }
 
   async function exportTranscript(format: (typeof EXPORT_FORMATS)[number]['id']): Promise<void> {
-    setActionError(null)
-    try {
-      await api.invoke('transcript:export', { recordingId: id, format })
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    }
+    await runAction(() => api.invoke('transcript:export', { recordingId: id, format }))
   }
 
   async function exportAudio(): Promise<void> {
-    setActionError(null)
-    try {
-      await api.invoke('audio:export', { recordingId: id })
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const SPEAKER_DELETE_UNDO_MS = 6000
-
-  /**
-   * Hides a speaker (and, unless `keepLines`, their lines) immediately; the
-   * real delete lands after the undo window unless `undoSpeakerDelete`
-   * cancels it first. `keepLines` unassigns rather than removes each line,
-   * so nothing needs hiding on the transcript side for that case — the line
-   * just loses its speaker credit once the real call lands.
-   */
-  function removeSpeakerPending(speakerId: string, keepLines: boolean): void {
-    const target = speakers.speakers.find((s) => s.id === speakerId)
-    if (!target) return
-    const lineIds = keepLines
-      ? []
-      : (transcript.utterances ?? []).filter((u) => u.speaker?.id === speakerId).map((u) => u.id)
-
-    if (speakerFilter === speakerId) setSpeakerFilter(null)
-    setHiddenSpeakerIds((prev) => new Set(prev).add(speakerId))
-    if (!keepLines) {
-      setHiddenUtteranceIds((prev) => {
-        const next = new Set(prev)
-        for (const lineId of lineIds) next.add(lineId)
-        return next
-      })
-    }
-    setPendingSpeakerDelete({
-      id: speakerId,
-      keepLines,
-      label: keepLines
-        ? `${target.displayName} removed — their lines are kept, unassigned.`
-        : `${target.displayName} removed (${lineIds.length} line${lineIds.length === 1 ? '' : 's'}).`
-    })
-
-    const existing = speakerDeleteTimers.current.get(speakerId)
-    if (existing) clearTimeout(existing)
-    const timer = setTimeout(() => {
-      speakerDeleteTimers.current.delete(speakerId)
-      setPendingSpeakerDelete((current) => (current?.id === speakerId ? null : current))
-      void (keepLines ? speakers.removeKeepLines(speakerId) : speakers.remove(speakerId))
-    }, SPEAKER_DELETE_UNDO_MS)
-    speakerDeleteTimers.current.set(speakerId, timer)
-  }
-
-  function undoSpeakerDelete(): void {
-    const pending = pendingSpeakerDelete
-    if (!pending) return
-    const timer = speakerDeleteTimers.current.get(pending.id)
-    if (timer) clearTimeout(timer)
-    speakerDeleteTimers.current.delete(pending.id)
-
-    setPendingSpeakerDelete(null)
-    setHiddenSpeakerIds((prev) => {
-      const next = new Set(prev)
-      next.delete(pending.id)
-      return next
-    })
-    setHiddenUtteranceIds((prev) => {
-      const next = new Set(prev)
-      for (const u of transcript.utterances ?? []) {
-        if (u.speaker?.id === pending.id) next.delete(u.id)
-      }
-      return next
-    })
+    await runAction(() => api.invoke('audio:export', { recordingId: id }))
   }
 
   const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
@@ -304,7 +216,7 @@ export default function Editor(): React.JSX.Element {
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const visibleUtterances = (transcript.utterances ?? []).filter(
     (u) =>
-      !hiddenUtteranceIds.has(u.id) &&
+      !speakerDeleteUndo.hiddenUtteranceIds.has(u.id) &&
       (!speakerFilter || u.speaker?.id === speakerFilter) &&
       (!normalizedSearch || u.text.toLowerCase().includes(normalizedSearch))
   )
@@ -390,6 +302,22 @@ export default function Editor(): React.JSX.Element {
     [{ icon: 'trash', label: 'Delete recording', danger: true, onClick: () => setConfirmingDelete(true) }]
   ]
 
+  // Shared props between the in-flow and floating `PlayerBar` — they differ
+  // only in the `floating` flag applied at each call site.
+  const playerProps = {
+    audio,
+    peaks: compressed,
+    durationMs: recording.durationMs ?? 0,
+    virtualDurationMs: virtualDur,
+    positionMs: virtualPosition,
+    onSeek: seekVirtual,
+    seams: compressed.seams,
+    markers: markerPins,
+    onAddMarker: () => addMarkerAt(audio.currentMs, markerColor),
+    markerColor,
+    onMarkerColorChange: setMarkerColor
+  }
+
   return (
     <div className={playbackSrc ? 'page page--has-player' : 'page'}>
       <header className="page__header">
@@ -426,9 +354,9 @@ export default function Editor(): React.JSX.Element {
 
         <div className="page__actions">
           {hasTranscript && (
-            <button
-              type="button"
-              className={searchOpen ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'}
+            <IconButton
+              icon="search"
+              active={searchOpen}
               aria-pressed={searchOpen}
               aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
               title="Search transcript"
@@ -438,30 +366,22 @@ export default function Editor(): React.JSX.Element {
                   return !open
                 })
               }
-            >
-              <Icon name="search" />
-            </button>
+            />
           )}
           {hasTranscript && (
-            <button
-              type="button"
-              className={askOpen ? 'btn btn--ghost icon-btn icon-btn--active' : 'btn btn--ghost icon-btn'}
+            <IconButton
+              icon="chat"
+              active={askOpen}
               aria-pressed={askOpen}
               aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
               title="Ask about this recording"
               onClick={() => setAskOpen((open) => !open)}
-            >
-              <Icon name="chat" />
-            </button>
+            />
           )}
           {hasTranscript && (
-            <button
-              type="button"
-              className={
-                hasSpeakers && transcriptMode === 'speakers'
-                  ? 'btn btn--ghost icon-btn icon-btn--active'
-                  : 'btn btn--ghost icon-btn'
-              }
+            <IconButton
+              icon="speakers"
+              active={hasSpeakers && transcriptMode === 'speakers'}
               disabled={speakerBusy}
               aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
               aria-label={
@@ -485,49 +405,30 @@ export default function Editor(): React.JSX.Element {
                   ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
                   : void speakers.detect()
               }
-            >
-              <Icon name="speakers" />
-            </button>
+            />
           )}
           <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
         </div>
       </header>
 
       {confirmingDelete && (
-        <div className="modal-overlay" onClick={() => setConfirmingDelete(false)}>
-          <div
-            className="modal modal--confirm"
-            onClick={(e) => e.stopPropagation()}
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-confirm-title"
-          >
-            <div className="modal__header">
-              <h2 id="delete-confirm-title">Delete recording?</h2>
-            </div>
-            <p>
+        <ConfirmDialog
+          title="Delete recording?"
+          message={
+            <>
               This can&rsquo;t be undone — the audio file, and any cuts or markers on it, will
               be permanently removed.
-            </p>
-            <div className="modal__footer">
-              <button
-                type="button"
-                className="btn btn--ghost"
-                autoFocus
-                onClick={() => setConfirmingDelete(false)}
-              >
-                Cancel
-              </button>
-              <button type="button" className="btn btn--danger" onClick={deleteRecording}>
-                Delete permanently
-              </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          confirmLabel="Delete permanently"
+          onConfirm={deleteRecording}
+          onCancel={() => setConfirmingDelete(false)}
+        />
       )}
 
       {recording.error && <div className="banner banner--error">{recording.error}</div>}
       {actionError && <div className="banner banner--error">{actionError}</div>}
+      {actionAsyncError && <div className="banner banner--error">{actionAsyncError}</div>}
       {transcript.startError && <div className="banner banner--error">{transcript.startError}</div>}
       {recording.transcriptStatus === 'failed' && recording.transcriptError && (
         <div className="banner banner--error">{recording.transcriptError}</div>
@@ -539,20 +440,17 @@ export default function Editor(): React.JSX.Element {
 
       {(recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting') && (
         <div className="toolbar">
-          <div className="progress progress--wide" style={{ flex: 1 }}>
-            <div
-              className={
-                speakers.progress == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
+          <div style={{ flex: 1 }}>
+            <ProgressBar
+              fraction={speakers.progress}
+              label={
+                recording.speakerStatus === 'queued'
+                  ? 'Queued…'
+                  : speakers.progress == null
+                    ? 'Detecting speakers…'
+                    : `Detecting speakers… ${Math.round(speakers.progress * 100)}%`
               }
-              style={speakers.progress == null ? undefined : { width: `${Math.round(speakers.progress * 100)}%` }}
             />
-            <span className="progress__label">
-              {recording.speakerStatus === 'queued'
-                ? 'Queued…'
-                : speakers.progress == null
-                  ? 'Detecting speakers…'
-                  : `Detecting speakers… ${Math.round(speakers.progress * 100)}%`}
-            </span>
           </div>
           <button type="button" className="btn btn--ghost btn--sm" onClick={speakers.cancel}>
             Cancel
@@ -562,20 +460,17 @@ export default function Editor(): React.JSX.Element {
 
       {(recording.transcriptStatus === 'queued' || recording.transcriptStatus === 'transcribing') && (
         <div className="toolbar">
-          <div className="progress progress--wide" style={{ flex: 1 }}>
-            <div
-              className={
-                transcript.progress == null ? 'progress__bar progress__bar--indeterminate' : 'progress__bar'
+          <div style={{ flex: 1 }}>
+            <ProgressBar
+              fraction={transcript.progress}
+              label={
+                recording.transcriptStatus === 'queued'
+                  ? 'Queued…'
+                  : transcript.progress == null
+                    ? 'Transcribing…'
+                    : `Transcribing… ${Math.round(transcript.progress * 100)}%`
               }
-              style={transcript.progress == null ? undefined : { width: `${Math.round(transcript.progress * 100)}%` }}
             />
-            <span className="progress__label">
-              {recording.transcriptStatus === 'queued'
-                ? 'Queued…'
-                : transcript.progress == null
-                  ? 'Transcribing…'
-                  : `Transcribing… ${Math.round(transcript.progress * 100)}%`}
-            </span>
           </div>
           <button type="button" className="btn btn--ghost btn--sm" onClick={transcript.cancel}>
             Cancel
@@ -587,36 +482,9 @@ export default function Editor(): React.JSX.Element {
         <>
           <audio ref={audio.ref} src={playbackSrc} preload="metadata" {...audio.bind} />
           <div ref={playerSentinelRef}>
-            <PlayerBar
-              audio={audio}
-              peaks={compressed}
-              durationMs={recording.durationMs ?? 0}
-              virtualDurationMs={virtualDur}
-              positionMs={virtualPosition}
-              onSeek={seekVirtual}
-              seams={compressed.seams}
-              markers={markerPins}
-              onAddMarker={() => addMarkerAt(audio.currentMs, markerColor)}
-              markerColor={markerColor}
-              onMarkerColorChange={setMarkerColor}
-            />
+            <PlayerBar {...playerProps} />
           </div>
-          {playerFloating && (
-            <PlayerBar
-              audio={audio}
-              peaks={compressed}
-              durationMs={recording.durationMs ?? 0}
-              virtualDurationMs={virtualDur}
-              positionMs={virtualPosition}
-              onSeek={seekVirtual}
-              seams={compressed.seams}
-              markers={markerPins}
-              onAddMarker={() => addMarkerAt(audio.currentMs, markerColor)}
-              markerColor={markerColor}
-              onMarkerColorChange={setMarkerColor}
-              floating
-            />
-          )}
+          {playerFloating && <PlayerBar {...playerProps} floating />}
 
           <MarkerChips
             markers={annotatedMarkers}
@@ -627,10 +495,10 @@ export default function Editor(): React.JSX.Element {
             onClearAll={clearAllMarkers}
           />
 
-          {pendingSpeakerDelete && (
+          {speakerDeleteUndo.pendingDelete && (
             <div className="toast">
-              <span>{pendingSpeakerDelete.label}</span>
-              <button type="button" className="toast__action" onClick={undoSpeakerDelete}>
+              <span>{speakerDeleteUndo.pendingDelete.label}</span>
+              <button type="button" className="toast__action" onClick={speakerDeleteUndo.undo}>
                 Undo
               </button>
             </div>
@@ -688,14 +556,14 @@ export default function Editor(): React.JSX.Element {
 
           {transcriptMode === 'speakers' && (
             <SpeakerChips
-              speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
+              speakers={speakers.speakers.filter((s) => !speakerDeleteUndo.hiddenSpeakerIds.has(s.id))}
               utterances={transcript.utterances ?? []}
               filter={speakerFilter}
               onFilterChange={setSpeakerFilter}
               onRename={speakers.rename}
               onRecolor={speakers.recolor}
               onMerge={speakers.merge}
-              onRemove={removeSpeakerPending}
+              onRemove={speakerDeleteUndo.removePending}
               onCreate={speakers.create}
             />
           )}
@@ -706,7 +574,7 @@ export default function Editor(): React.JSX.Element {
               currentMs={audio.currentMs}
               onSeek={audio.seek}
               mode={transcriptMode}
-              speakers={speakers.speakers.filter((s) => !hiddenSpeakerIds.has(s.id))}
+              speakers={speakers.speakers.filter((s) => !speakerDeleteUndo.hiddenSpeakerIds.has(s.id))}
               onReassignSpeaker={speakers.reassignUtterance}
               onEditText={transcript.editText}
               onSplitUtterance={transcript.splitUtterance}

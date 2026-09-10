@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Icon, { type IconName } from './Icon'
+import { useClickOutside } from '../lib/useClickOutside'
 
 export interface OverflowMenuItem {
   label: string
@@ -68,21 +69,7 @@ export default function OverflowMenu({
     setSubmenuFlip(listExtendsLeft ? rect.left < 0 : rect.right > window.innerWidth)
   }
 
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent): void => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const onEscape = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', onEscape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', onEscape)
-    }
-  }, [open])
+  useClickOutside(rootRef, () => setOpen(false), { active: open, escape: true })
 
   useEffect(() => {
     if (!open) {

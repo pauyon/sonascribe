@@ -1,7 +1,6 @@
-import { spawn } from 'node:child_process'
-import { cpus } from 'node:os'
 import { dirname } from 'node:path'
 import { resolveBundledModel, resolveSidecar } from './sidecars'
+import { runManagedProcess, defaultThreads, SidecarProcessError } from './process'
 
 /**
  * Runs sherpa-onnx's offline speaker diarization CLI.
@@ -19,15 +18,11 @@ export interface SpeakerSegment {
   speaker: number
 }
 
-export class DiarizationError extends Error {
-  constructor(
-    message: string,
-    readonly stderrTail: string
-  ) {
-    super(message)
-    this.name = 'DiarizationError'
-  }
-}
+/**
+ * Alias of the shared `SidecarProcessError` (see `process.ts`) — kept under
+ * this name because `speaker-jobs.ts` does `err instanceof DiarizationError`.
+ */
+export { SidecarProcessError as DiarizationError }
 
 /** How eagerly to split voices into separate speakers when the count isn't known. */
 export type SpeakerSplitting = 'merge' | 'balanced' | 'split'
@@ -112,17 +107,12 @@ export function minDurationOnFor(preset: number, durationMs?: number): number {
 /** Fastest shift that still gets both reference recordings right. See windowShiftRatio. */
 const DEFAULT_WINDOW_SHIFT_RATIO = 0.25
 
-/** Leave a couple of cores for the rest of the machine; this is not the only thing running. */
-function defaultThreads(): number {
-  return Math.max(1, Math.min(8, cpus().length - 2))
-}
-
 /** `progress 42.86%` */
 const PROGRESS_RE = /progress\s+([\d.]+)%/
 /** `1.583 -- 3.406 speaker_00` — times are seconds. */
 const SEGMENT_RE = /^\s*([\d.]+)\s*--\s*([\d.]+)\s+speaker_(\d+)\s*$/
 
-export function diarize(options: DiarizeOptions): Promise<SpeakerSegment[]> {
+export async function diarize(options: DiarizeOptions): Promise<SpeakerSegment[]> {
   const {
     wavPath,
     numSpeakers,
@@ -134,121 +124,76 @@ export function diarize(options: DiarizeOptions): Promise<SpeakerSegment[]> {
     signal
   } = options
 
-  return new Promise<SpeakerSegment[]>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error('Aborted'))
-      return
-    }
+  if (signal?.aborted) {
+    throw new Error('Aborted')
+  }
 
-    let exe: string
-    let segmentationModel: string
-    let embeddingModel: string
-    try {
-      exe = resolveSidecar('sherpa-onnx-offline-speaker-diarization')
-      segmentationModel = resolveBundledModel('segmentation.onnx')
-      embeddingModel = resolveBundledModel('speaker-embedding.onnx')
-    } catch (err) {
-      reject(err)
-      return
-    }
+  const exe = resolveSidecar('sherpa-onnx-offline-speaker-diarization')
+  const segmentationModel = resolveBundledModel('segmentation.onnx')
+  const embeddingModel = resolveBundledModel('speaker-embedding.onnx')
 
-    const args = [
-      `--segmentation.pyannote-model=${segmentationModel}`,
-      `--embedding.model=${embeddingModel}`,
-      // num-clusters and cluster-threshold are mutually exclusive: passing a
-      // positive cluster count makes the threshold irrelevant.
-      ...(numSpeakers && numSpeakers > 0
-        ? [`--clustering.num-clusters=${numSpeakers}`]
-        : [`--clustering.cluster-threshold=${threshold}`]),
-      `--min-duration-on=${minDurationOn}`,
-      `--segmentation.num-threads=${threads}`,
-      `--embedding.num-threads=${threads}`,
-      `--segmentation.pyannote-window-shift-ratio=${windowShiftRatio}`,
-      wavPath
-    ]
+  const args = [
+    `--segmentation.pyannote-model=${segmentationModel}`,
+    `--embedding.model=${embeddingModel}`,
+    // num-clusters and cluster-threshold are mutually exclusive: passing a
+    // positive cluster count makes the threshold irrelevant.
+    ...(numSpeakers && numSpeakers > 0
+      ? [`--clustering.num-clusters=${numSpeakers}`]
+      : [`--clustering.cluster-threshold=${threshold}`]),
+    `--min-duration-on=${minDurationOn}`,
+    `--segmentation.num-threads=${threads}`,
+    `--embedding.num-threads=${threads}`,
+    `--segmentation.pyannote-window-shift-ratio=${windowShiftRatio}`,
+    wavPath
+  ]
 
-    let child: ReturnType<typeof spawn>
-    try {
-      child = spawn(exe, args, {
-        windowsHide: true,
-        // The executable loads its shared libraries from its own directory;
-        // starting it elsewhere can leave the loader unable to find them.
-        cwd: dirname(exe)
-      })
-    } catch (err) {
-      reject(err)
-      return
-    }
+  const segments: SpeakerSegment[] = []
+  let buffer = ''
 
-    const segments: SpeakerSegment[] = []
-    let stderrTail = ''
-    let buffer = ''
-    let settled = false
+  // Progress and results both arrive on stdout/stderr depending on build, so
+  // both streams go through the same line parser.
+  const consume = (text: string): void => {
+    buffer += text
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
 
-    const onAbort = (): void => {
-      child.kill()
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-
-    const finish = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      signal?.removeEventListener('abort', onAbort)
-      fn()
-    }
-
-    // Progress and results both arrive on stdout/stderr depending on build,
-    // so both streams go through the same line parser.
-    const consume = (chunk: Buffer): void => {
-      const text = chunk.toString()
-      stderrTail = (stderrTail + text).slice(-6000)
-
-      buffer += text
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-
-      for (const line of lines) {
-        const progress = PROGRESS_RE.exec(line)
-        if (progress) {
-          onProgress?.(Math.min(1, Number(progress[1]) / 100))
-          continue
-        }
-        const segment = SEGMENT_RE.exec(line)
-        if (segment) {
-          segments.push({
-            startMs: Math.round(Number(segment[1]) * 1000),
-            endMs: Math.round(Number(segment[2]) * 1000),
-            speaker: Number(segment[3])
-          })
-        }
+    for (const line of lines) {
+      const progress = PROGRESS_RE.exec(line)
+      if (progress) {
+        onProgress?.(Math.min(1, Number(progress[1]) / 100))
+        continue
+      }
+      const segment = SEGMENT_RE.exec(line)
+      if (segment) {
+        segments.push({
+          startMs: Math.round(Number(segment[1]) * 1000),
+          endMs: Math.round(Number(segment[2]) * 1000),
+          speaker: Number(segment[3])
+        })
       }
     }
+  }
 
-    child.stdout?.on('data', consume)
-    child.stderr?.on('data', consume)
-
-    child.on('error', (err) => finish(() => reject(err)))
-
-    child.on('close', (code, signalName) => {
-      finish(() => {
-        if (signal?.aborted) {
-          reject(new Error('Aborted'))
-          return
-        }
-        if (code !== 0) {
-          reject(
-            new DiarizationError(
-              `diarization exited with ${signalName ? `signal ${signalName}` : `code ${code}`}`,
-              stderrTail.trim().split('\n').slice(-8).join('\n')
-            )
-          )
-          return
-        }
-        if (buffer.trim()) consume(Buffer.from('\n'))
-        onProgress?.(1)
-        segments.sort((a, b) => a.startMs - b.startMs)
-        resolve(segments)
-      })
-    })
+  const { code, signalName, stderrTail } = await runManagedProcess({
+    exe,
+    args,
+    // The executable loads its shared libraries from its own directory;
+    // starting it elsewhere can leave the loader unable to find them.
+    cwd: dirname(exe),
+    signal,
+    combinedTail: true,
+    onStdout: consume,
+    onStderr: consume
   })
+
+  if (code !== 0) {
+    throw new SidecarProcessError(
+      `diarization exited with ${signalName ? `signal ${signalName}` : `code ${code}`}`,
+      stderrTail.trim().split('\n').slice(-8).join('\n')
+    )
+  }
+  if (buffer.trim()) consume('\n')
+  onProgress?.(1)
+  segments.sort((a, b) => a.startMs - b.startMs)
+  return segments
 }

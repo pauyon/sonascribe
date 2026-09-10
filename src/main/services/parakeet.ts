@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { mkdir, rm } from 'node:fs/promises'
 import { cpus, freemem, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,13 +8,13 @@ import { measureLevels, SILENCE_PEAK_THRESHOLD } from './peaks'
 import { readWavInfo } from './wav'
 import {
   groupWordsIntoSegments,
-  TranscriptionError,
   type TranscribeOptions,
   type TranscriptionResult,
   type TranscriptWord
 } from './transcription'
 import { parseTokenTable } from './parakeet-parse'
 import { discardChunks, splitAudio } from './audio-chunks'
+import { runManagedProcess, defaultThreads, SidecarProcessError } from './process'
 
 /**
  * Runs NVIDIA Parakeet (TDT) via whisper.cpp's parakeet-cli.
@@ -40,10 +39,6 @@ function usefulStderr(stderr: string): string {
     .filter((line) => line.trim() !== '')
     .slice(-6)
     .join('\n')
-}
-
-function defaultThreads(): number {
-  return Math.max(1, Math.min(8, cpus().length - 2))
 }
 
 /**
@@ -314,86 +309,42 @@ export async function sweepTail(
   return { language: result.language, segments: groupWordsIntoSegments(words) }
 }
 
-function transcribeOneFile(options: TranscribeOptions): Promise<TranscriptionResult> {
+async function transcribeOneFile(options: TranscribeOptions): Promise<TranscriptionResult> {
   const { wavPath, modelPath, onProgress, signal } = options
   const threads = options.threads ?? defaultThreads()
 
-  return new Promise<TranscriptionResult>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error('Aborted'))
-      return
-    }
+  let output = ''
 
-    let child: ReturnType<typeof spawn>
-    try {
-      child = spawn(
-        resolveSidecar('parakeet-cli'),
-        ['-m', modelPath, '-f', wavPath, '-t', String(threads), '-ps'],
-        { windowsHide: true }
-      )
-    } catch (err) {
-      reject(err)
-      return
-    }
-
+  const { code, signalName, stderrTail } = await runManagedProcess({
+    exe: resolveSidecar('parakeet-cli'),
+    args: ['-m', modelPath, '-f', wavPath, '-t', String(threads), '-ps'],
+    signal,
     // No progress is reported, so signal indeterminate work rather than
     // leaving the UI showing nothing at all.
-    onProgress?.(null)
-
-    let output = ''
-    let stderrTail = ''
-    let settled = false
-
-    const onAbort = (): void => {
-      child.kill()
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-
-    const finish = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      signal?.removeEventListener('abort', onAbort)
-      fn()
-    }
-
+    onStart: () => onProgress?.(null),
     // The table goes to stdout on some builds and stderr on others; collect
     // both and let the line parser pick out what it recognises.
-    child.stdout?.on('data', (chunk: Buffer) => {
-      output += chunk.toString()
-    })
-    child.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
+    onStdout: (text) => {
       output += text
-      stderrTail = (stderrTail + text).slice(-6000)
-    })
-
-    child.on('error', (err) => finish(() => reject(err)))
-
-    child.on('close', (code, signalName) => {
-      finish(() => {
-        if (signal?.aborted) {
-          reject(new Error('Aborted'))
-          return
-        }
-        if (code !== 0) {
-          reject(
-            new TranscriptionError(
-              `parakeet-cli exited with ${signalName ? `signal ${signalName}` : `code ${code}`}`,
-              usefulStderr(stderrTail)
-            )
-          )
-          return
-        }
-
-        const words = parseTokenTable(output)
-
-        onProgress?.(1)
-        resolve({
-          // Parakeet auto-detects and does not report which language it chose.
-          language: null,
-          segments: groupWordsIntoSegments(words)
-        })
-      })
-    })
+    },
+    onStderr: (text) => {
+      output += text
+    }
   })
+
+  if (code !== 0) {
+    throw new SidecarProcessError(
+      `parakeet-cli exited with ${signalName ? `signal ${signalName}` : `code ${code}`}`,
+      usefulStderr(stderrTail)
+    )
+  }
+
+  const words = parseTokenTable(output)
+
+  onProgress?.(1)
+  return {
+    // Parakeet auto-detects and does not report which language it chose.
+    language: null,
+    segments: groupWordsIntoSegments(words)
+  }
 }

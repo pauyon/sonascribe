@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
+import { useCopyToClipboard } from '../lib/useCopyToClipboard'
 
 /**
  * Read-only view of the current log file, with a one-click copy.
@@ -11,8 +12,7 @@ import { api } from '../lib/api'
  */
 export default function LogViewer({ onClose }: { onClose: () => void }): React.JSX.Element {
   const [content, setContent] = useState<string | null>(null)
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { copyState, copy } = useCopyToClipboard()
 
   useEffect(() => {
     let cancelled = false
@@ -24,15 +24,6 @@ export default function LogViewer({ onClose }: { onClose: () => void }): React.J
     }
   }, [])
 
-  // The copy button's "Copied!"/"failed" label reverts after 2s; without
-  // clearing this on unmount, closing the modal within that window still
-  // fires the timeout and calls setState on an unmounted component.
-  useEffect(() => {
-    return () => {
-      if (copyResetRef.current) clearTimeout(copyResetRef.current)
-    }
-  }, [])
-
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
@@ -40,17 +31,6 @@ export default function LogViewer({ onClose }: { onClose: () => void }): React.J
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClose])
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(content ?? '')
-      setCopyState('copied')
-    } catch {
-      setCopyState('failed')
-    }
-    if (copyResetRef.current) clearTimeout(copyResetRef.current)
-    copyResetRef.current = setTimeout(() => setCopyState('idle'), 2000)
-  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -70,7 +50,7 @@ export default function LogViewer({ onClose }: { onClose: () => void }): React.J
         />
 
         <div className="modal__footer">
-          <button type="button" className="btn btn--primary" onClick={() => void copy()} disabled={!content}>
+          <button type="button" className="btn btn--primary" onClick={() => void copy(content ?? '')} disabled={!content}>
             {copyState === 'copied' ? 'Copied!' : copyState === 'failed' ? 'Copy failed — select and press Ctrl+C' : 'Copy to clipboard'}
           </button>
         </div>

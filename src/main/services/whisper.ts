@@ -1,16 +1,15 @@
-import { spawn } from 'node:child_process'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { cpus, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { mkdtemp } from 'node:fs/promises'
 import { resolveSidecar } from './sidecars'
 import {
-  TranscriptionError,
   type TranscribeOptions,
   type TranscriptionResult,
   type TranscriptSegment,
   type TranscriptWord
 } from './transcription'
+import { runManagedProcess, defaultThreads, SidecarProcessError } from './process'
 
 /**
  * Runs the whisper.cpp CLI and returns its structured output.
@@ -135,18 +134,7 @@ export async function transcribeWithWhisper(
   }
 }
 
-/**
- * Leave a couple of cores free.
- *
- * whisper saturates every thread it is given; handing it all of them makes
- * the UI stutter and the machine unusable for the length of a long
- * transcription.
- */
-function defaultThreads(): number {
-  return Math.max(1, Math.min(8, cpus().length - 2))
-}
-
-function runCli(opts: {
+async function runCli(opts: {
   wavPath: string
   modelPath: string
   language: string
@@ -155,90 +143,54 @@ function runCli(opts: {
   onProgress?: (fraction: number | null) => void
   signal?: AbortSignal
 }): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (opts.signal?.aborted) {
-      reject(new Error('Aborted'))
-      return
-    }
+  const args = [
+    '-m', opts.modelPath,
+    '-f', opts.wavPath,
+    '-l', opts.language,
+    '-t', String(opts.threads),
+    // Full JSON carries per-token offsets and probabilities, which segment
+    // level output does not — and word timings are what paragraph
+    // splitting and click-to-seek both need.
+    '-ojf',
+    '-of', opts.outputBase,
+    '-pp',
+    // Split segments at word boundaries so a segment never ends mid-word.
+    '-sow'
+  ]
 
-    const args = [
-      '-m', opts.modelPath,
-      '-f', opts.wavPath,
-      '-l', opts.language,
-      '-t', String(opts.threads),
-      // Full JSON carries per-token offsets and probabilities, which segment
-      // level output does not — and word timings are what paragraph
-      // splitting and click-to-seek both need.
-      '-ojf',
-      '-of', opts.outputBase,
-      '-pp',
-      // Split segments at word boundaries so a segment never ends mid-word.
-      '-sow'
-    ]
+  let lastPercent = -1
 
-    let child: ReturnType<typeof spawn>
-    try {
-      child = spawn(resolveSidecar('whisper-cli'), args, { windowsHide: true })
-    } catch (err) {
-      reject(err)
-      return
-    }
-
-    let stderrTail = ''
-    let settled = false
-    let lastPercent = -1
-
-    const onAbort = (): void => {
-      child.kill()
-    }
-    opts.signal?.addEventListener('abort', onAbort, { once: true })
-
-    const finish = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      opts.signal?.removeEventListener('abort', onAbort)
-      fn()
-    }
-
-    const readStream = (chunk: Buffer): void => {
-      const text = chunk.toString()
-      stderrTail = (stderrTail + text).slice(-6000)
-
-      const match = PROGRESS_RE.exec(text)
-      if (match) {
-        const percent = Number(match[1])
-        // The CLI repeats the same percentage many times; only forward changes.
-        if (percent !== lastPercent) {
-          lastPercent = percent
-          opts.onProgress?.(Math.min(1, percent / 100))
-        }
+  const readStream = (text: string): void => {
+    const match = PROGRESS_RE.exec(text)
+    if (match) {
+      const percent = Number(match[1])
+      // The CLI repeats the same percentage many times; only forward changes.
+      if (percent !== lastPercent) {
+        lastPercent = percent
+        opts.onProgress?.(Math.min(1, percent / 100))
       }
     }
+  }
 
+  const { code, signalName, stderrTail } = await runManagedProcess({
+    exe: resolveSidecar('whisper-cli'),
+    args,
+    signal: opts.signal,
+    combinedTail: true,
     // Progress goes to stderr, but the transcript preview goes to stdout;
     // watch both so a build that routes them differently still reports
     // progress.
-    child.stderr?.on('data', readStream)
-    child.stdout?.on('data', readStream)
-
-    child.on('error', (err) => finish(() => reject(err)))
-
-    child.on('close', (code, signalName) => {
-      finish(() => {
-        if (opts.signal?.aborted) {
-          reject(new Error('Aborted'))
-        } else if (code === 0) {
-          opts.onProgress?.(1)
-          resolve()
-        } else {
-          reject(
-            new TranscriptionError(
-              `whisper-cli exited with ${signalName ? `signal ${signalName}` : `code ${code}`}`,
-              stderrTail.trim().split('\n').slice(-8).join('\n')
-            )
-          )
-        }
-      })
-    })
+    onStderr: readStream,
+    onStdout: readStream
   })
+
+  if (code === 0) {
+    opts.onProgress?.(1)
+    return
+  }
+
+  throw new SidecarProcessError(
+    `whisper-cli exited with ${signalName ? `signal ${signalName}` : `code ${code}`}`,
+    stderrTail.trim().split('\n').slice(-8).join('\n')
+  )
 }

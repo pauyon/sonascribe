@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { AskCitation, AskResult } from '@shared/ollama'
 import { api } from '../lib/api'
 import { formatDuration } from '../lib/format'
+import { useCopyToClipboard } from '../lib/useCopyToClipboard'
 import Icon from './Icon'
+import IconButton from './IconButton'
 
 /**
  * Question + answer, grounded in retrieved transcript chunks. Mounted two
@@ -26,25 +28,14 @@ export default function AskPanel({
   const [result, setResult] = useState<AskResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // The copy button's "Copied"/"failed" state reverts after 2s; without
-  // clearing this on unmount, asking another question or closing the panel
-  // within that window still fires the timeout and calls setState after
-  // this component is gone.
-  useEffect(() => {
-    return () => {
-      if (copyResetRef.current) clearTimeout(copyResetRef.current)
-    }
-  }, [])
+  const { copyState, copy, reset } = useCopyToClipboard()
 
   async function ask(): Promise<void> {
     const trimmed = question.trim()
     if (!trimmed || loading) return
     setLoading(true)
     setError(null)
-    setCopyState('idle')
+    reset()
     try {
       const response = await api.invoke('ask:ask', { question: trimmed, recordingId })
       setResult(response)
@@ -54,17 +45,6 @@ export default function AskPanel({
     } finally {
       setLoading(false)
     }
-  }
-
-  async function copyAnswer(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(result?.answer ?? '')
-      setCopyState('copied')
-    } catch {
-      setCopyState('failed')
-    }
-    if (copyResetRef.current) clearTimeout(copyResetRef.current)
-    copyResetRef.current = setTimeout(() => setCopyState('idle'), 2000)
   }
 
   function jump(citation: AskCitation): void {
@@ -108,15 +88,13 @@ export default function AskPanel({
         <div className="ask__result">
           <div className="ask__answer-row">
             <p className="ask__answer">{result.answer}</p>
-            <button
-              type="button"
-              className="ask__copy"
-              onClick={() => void copyAnswer()}
+            <IconButton
+              size="sm"
+              icon={copyState === 'copied' ? 'check' : 'copy'}
+              onClick={() => void copy(result?.answer ?? '')}
               aria-label={copyState === 'copied' ? 'Copied' : 'Copy answer'}
               title={copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy answer'}
-            >
-              <Icon name={copyState === 'copied' ? 'check' : 'copy'} />
-            </button>
+            />
           </div>
           {result.citations.length > 0 && (
             <div className="ask__sources">

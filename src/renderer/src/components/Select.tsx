@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useClickOutside } from '../lib/useClickOutside'
 
 /**
  * The app's dropdown.
@@ -58,14 +59,7 @@ export default function Select({
   const label = selected?.label ?? placeholder ?? ''
 
   // Clicking away closes it — the same rule the card menus follow.
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent): void => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
+  useClickOutside(rootRef, () => setOpen(false), { active: open })
 
   /**
    * Flip the list above the trigger when there is no room below.

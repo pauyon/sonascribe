@@ -1,11 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { copyFile, readFile, writeFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
-import type { Channel, Request, Response, RecordingSettings, TranscriptionSettings } from '@shared/ipc'
+import { readFile } from 'node:fs/promises'
+import type { Channel, Request, Response, RecordingSettings } from '@shared/ipc'
 import { SUPPORTED_MEDIA_EXTENSIONS, type Platform } from '@shared/types'
-import { ENGINES, DEFAULT_ENGINE, defaultModelForEngine } from '@shared/models'
-import { EXPORT_FORMATS } from '@shared/export'
-import { DEFAULT_OLLAMA_SERVER_URL, type RagSettings } from '@shared/ollama'
+import { ENGINES } from '@shared/models'
 import { engineSidecar } from '../services/transcription'
 import { defaultMediaPath, userDataPath } from '../paths'
 import { logFilePath } from '../log'
@@ -14,10 +11,9 @@ import {
   getCaptureSystemAudio,
   getEchoCancellation,
   getMicDeviceId,
-  getModelIdForEngine,
   getNoiseSuppression,
-  getTranscriptionEngine,
-  getTranscriptionLanguage,
+  getRagSettings,
+  getTranscriptionSettings,
   setAutoPopOutOnMinimize,
   setCaptureSystemAudio,
   setEchoCancellation,
@@ -26,9 +22,6 @@ import {
   setNoiseSuppression,
   setTranscriptionEngine,
   setTranscriptionLanguage,
-  getRagEmbeddingModel,
-  getRagChatModel,
-  getRagServerUrl,
   setRagEmbeddingModel,
   setRagChatModel,
   setRagServerUrl
@@ -75,7 +68,8 @@ import {
   listActiveSpeakerDetections,
   queueSpeakerDetection
 } from '../services/speaker-jobs'
-import { renderTranscript } from '../services/transcript-export'
+import { exportAudio, exportTranscript } from '../services/transcript-export'
+import { showOpenDialog } from '../services/dialogs'
 import { openMiniRecorderWindow } from '../windows/mini-recorder'
 import * as ollama from '../services/ollama'
 import { getRagIndexStatus, reindexAllRecordings, triggerReindex } from '../services/search'
@@ -123,6 +117,13 @@ const handlers: Handlers = {
   },
 
   'recordings:delete': async ({ id }) => {
+    // A transcription/speaker-detection job left running against a deleted
+    // recording doesn't error out — it just keeps occupying the serial
+    // queue's one job slot until the sidecar naturally finishes, so the
+    // next queued transcription sits at "Queued…" for however long that
+    // takes instead of starting right away. Cancel first.
+    cancelTranscription(id)
+    cancelSpeakerDetection(id)
     deleteRecording(id)
     await deleteRecordingMedia(id)
   },
@@ -142,18 +143,14 @@ const handlers: Handlers = {
   },
 
   'dialog:pickMediaFiles': async () => {
-    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options: Electron.OpenDialogOptions = {
+    const result = await showOpenDialog({
       title: 'Import audio or video',
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Audio and video', extensions: [...SUPPORTED_MEDIA_EXTENSIONS] },
         { name: 'All files', extensions: ['*'] }
       ]
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
+    })
     return result.canceled ? [] : result.filePaths
   },
 
@@ -267,7 +264,7 @@ const handlers: Handlers = {
 
   'models:delete': ({ modelId }) => deleteModel(modelId),
 
-  'transcription:getSettings': () => currentTranscriptionSettings(),
+  'transcription:getSettings': () => getTranscriptionSettings(),
 
   'transcription:setSettings': (patch) => {
     if (patch.engine) setTranscriptionEngine(patch.engine)
@@ -278,7 +275,7 @@ const handlers: Handlers = {
       }
     }
     if (patch.language != null) setTranscriptionLanguage(patch.language)
-    return currentTranscriptionSettings()
+    return getTranscriptionSettings()
   },
 
   'transcript:start': ({ recordingId }) => {
@@ -301,50 +298,9 @@ const handlers: Handlers = {
 
   'transcript:listActive': () => listActiveTranscriptions(),
 
-  'transcript:export': async ({ recordingId, format }) => {
-    const recording = getRecording(recordingId)
-    if (!recording) throw new Error('Recording not found')
-    const utterances = getUtterances(recordingId)
-    if (utterances.length === 0) throw new Error('There is no transcript to export yet')
+  'transcript:export': ({ recordingId, format }) => exportTranscript(recordingId, format),
 
-    const spec = EXPORT_FORMATS.find((f) => f.id === format)
-    if (!spec) throw new Error(`Unknown export format: ${format}`)
-
-    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options: Electron.SaveDialogOptions = {
-      title: 'Export transcript',
-      defaultPath: join(app.getPath('documents'), `${safeFileName(recording.title)}.${spec.extension}`),
-      filters: [{ name: spec.label, extensions: [spec.extension] }]
-    }
-    const result = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return null
-
-    await writeFile(result.filePath, renderTranscript(recording, utterances, format), 'utf8')
-    return result.filePath
-  },
-
-  'audio:export': async ({ recordingId }) => {
-    const recording = getRecording(recordingId)
-    if (!recording?.sourcePath) throw new Error('This recording has no audio yet')
-
-    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options: Electron.SaveDialogOptions = {
-      title: 'Export audio',
-      defaultPath: join(
-        app.getPath('documents'),
-        `${safeFileName(recording.title)}${extname(recording.sourcePath)}`
-      )
-    }
-    const result = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return null
-
-    await copyFile(recording.sourcePath, result.filePath)
-    return result.filePath
-  },
+  'audio:export': ({ recordingId }) => exportAudio(recordingId),
 
   'speakers:detect': ({ recordingId }) => {
     queueSpeakerDetection(recordingId)
@@ -396,13 +352,13 @@ const handlers: Handlers = {
 
   'ollama:deleteModel': ({ modelName }) => ollama.deleteModel(modelName),
 
-  'rag:getSettings': () => currentRagSettings(),
+  'rag:getSettings': () => getRagSettings(),
 
   'rag:setSettings': (patch) => {
     if (patch.embeddingModel != null) setRagEmbeddingModel(patch.embeddingModel)
     if (patch.chatModel != null) setRagChatModel(patch.chatModel)
     if (patch.serverUrl != null) setRagServerUrl(patch.serverUrl)
-    return currentRagSettings()
+    return getRagSettings()
   },
 
   'rag:getIndexStatus': () => getRagIndexStatus(),
@@ -412,16 +368,6 @@ const handlers: Handlers = {
   'ask:ask': ({ question, recordingId }) => answerQuestion(question, recordingId)
 }
 
-function safeFileName(title: string): string {
-  return (
-    title
-      .replace(/[<>:"/\\|?*]/g, '_')
-      .replace(/\.+$/, '')
-      .trim()
-      .slice(0, 120) || 'transcript'
-  )
-}
-
 function currentSettings(): RecordingSettings {
   return {
     noiseSuppression: getNoiseSuppression(),
@@ -429,26 +375,6 @@ function currentSettings(): RecordingSettings {
     micDeviceId: getMicDeviceId(),
     captureSystemAudio: getCaptureSystemAudio(),
     autoPopOutOnMinimize: getAutoPopOutOnMinimize()
-  }
-}
-
-function currentTranscriptionSettings(): TranscriptionSettings {
-  const engine = getTranscriptionEngine() ?? DEFAULT_ENGINE
-  return {
-    engine,
-    modelId: {
-      whisper: getModelIdForEngine('whisper') ?? defaultModelForEngine('whisper'),
-      parakeet: getModelIdForEngine('parakeet') ?? defaultModelForEngine('parakeet')
-    },
-    language: getTranscriptionLanguage()
-  }
-}
-
-function currentRagSettings(): RagSettings {
-  return {
-    embeddingModel: getRagEmbeddingModel(),
-    chatModel: getRagChatModel(),
-    serverUrl: getRagServerUrl() || DEFAULT_OLLAMA_SERVER_URL
   }
 }
 
