@@ -66,6 +66,17 @@
   --r-lg: 16px;
   --r-pill: 999px;
 
+  /* Layout: the sidebar's own width, driving `.app`'s grid track plus the
+     two other rules that have to line up past it (`.player--floating`,
+     `.dropzone`) — one number instead of three copies of `220px`. */
+  --sidebar-w: 220px;
+  /* The Editor page's own right rail — 0 everywhere else, so
+     `.player--floating`'s `right` offset (below) is unaffected on every
+     other route. `.editor-shell` overrides this inline once the rail is
+     open, since that state is per-page React state, not a global
+     preference the way the sidebar's collapse is. */
+  --rail-w: 0px;
+
   /** The recorder clock, the one number big enough to read across a room. */
   --fs-display: 40px;
 
@@ -145,8 +156,12 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
   height: 100%;
+}
+
+.app[data-sidebar-collapsed] {
+  --sidebar-w: 52px;
 }
 
 /* ---------- sidebar ---------- */
@@ -215,6 +230,41 @@ body {
   padding: 0 8px;
 }
 
+/* Same spot whether the sidebar is collapsed or not, so there's one
+   predictable click target for both directions. */
+.sidebar__toggle {
+  display: flex;
+  padding: 4px 8px 8px;
+}
+
+/* Collapsed: match how .navlink centers its own icon within the same
+   28px content width (52px rail minus .sidebar's 12px side padding) —
+   the un-collapsed padding above left only 12px for a 26px button,
+   which doesn't center it, it overflows the padding box. */
+.app[data-sidebar-collapsed] .sidebar__toggle {
+  padding: 4px 0 8px;
+  justify-content: center;
+}
+
+/* Collapsed: an icon-only rail. Labels hide via one shared class rather than
+   a rule per element — brand text, nav labels and the footer are all just
+   text riding alongside an icon (or, for the footer, no icon at all). The
+   brand mark itself hides too, not just its label — at 28px with a filled
+   tile background it was designed to sit inline next to the wordmark, not
+   stand alone as a rail icon next to 18px line-stroke nav buttons; the
+   toggle button above it already anchors the top of the rail. */
+.app[data-sidebar-collapsed] .sidebar__label {
+  display: none;
+}
+
+.app[data-sidebar-collapsed] .sidebar__brand {
+  display: none;
+}
+
+.app[data-sidebar-collapsed] .navlink {
+  justify-content: center;
+}
+
 /* ---------- page ---------- */
 
 .content {
@@ -224,6 +274,16 @@ body {
 .page {
   padding: 38px 32px 48px;
   max-width: 1000px;
+  /* Only takes effect where .page is actually a flex item — Editor.tsx's
+     .editor-shell. Elsewhere (every other route) a lone div ignores both
+     properties entirely. Without them, .page (full of long transcript
+     text) refused to shrink below its own content's natural width once
+     the rail's fixed 300px was also competing for room, forcing the whole
+     window to scroll horizontally instead of the transcript column
+     shrinking to fit — the exact same min-width:auto trap the rail's
+     chips just went through, one flex level up. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* Room for the floating player at the bottom of the window, so the last few
@@ -231,6 +291,65 @@ body {
    all the way down. */
 .page--has-player {
   padding-bottom: 130px;
+}
+
+/* ---------- editor shell + rail ---------- */
+
+/* Editor.tsx only: wraps .page and its sibling .editor-rail in a row so
+   the rail sits beside the transcript rather than above it. .page keeps
+   its own max-width and everything about it unchanged — the header and
+   transcript stay scoped to that column, not stretched across the rail. */
+.editor-shell {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+/* Sticks against `.content`'s own scroll area, same mechanism `.recent`
+   already uses to scroll independently inside the sidebar's fixed-height
+   column. A fixed `height` (not `max-height`) rather than scrolling as one
+   unit — .markers and .speakers below split this height evenly and each
+   scrolls its own list internally, so a long marker list doesn't shove a
+   short speaker list out of view (or vice versa) the way one shared
+   scroll region would. */
+.editor-rail {
+  flex: none;
+  width: 300px;
+  /* Without this, an unshrinkable child (a long speaker name with nothing
+     to truncate it, before the .chip__name fix below) forces this column
+     wider than 300px regardless of the explicit width above — box-sizing
+     fixes the box's own size, not its content's minimum. */
+  min-width: 0;
+  position: sticky;
+  top: 20px;
+  height: calc(100vh - 40px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 4px 8px;
+}
+
+.editor-rail--collapsed {
+  width: 48px;
+}
+
+.editor-rail__toggle {
+  align-self: flex-start;
+}
+
+.editor-rail__toggle svg {
+  transition: transform 120ms ease;
+}
+
+/* Points right (the chevron's default orientation) while expanded — "click
+   to collapse toward the edge" — and flips to point left once collapsed,
+   toward the transcript it would expand back into. Mirrors the sidebar's
+   toggle in spirit, not literally: that one uses a static icon since it
+   sits on the left edge, where "point toward where it opens" would always
+   just mean pointing right regardless of state. */
+.editor-rail__toggle[aria-pressed='true'] svg {
+  transform: rotate(180deg);
 }
 
 .page__header {
@@ -565,7 +684,7 @@ body {
 
 .dropzone {
   position: fixed;
-  inset: 0 0 0 220px;
+  inset: 0 0 0 var(--sidebar-w);
   display: grid;
   place-items: center;
   background: rgba(18, 19, 26, 0.82);
@@ -657,8 +776,11 @@ body {
    padding, so it lines up with the transcript column above it. */
 .player--floating {
   position: fixed;
-  left: 220px;
-  right: 0;
+  left: var(--sidebar-w);
+  /* --rail-w is 0 everywhere except inside Editor's .editor-shell, which
+     sets it inline while its right rail is open — otherwise this would
+     run the floating player underneath the rail. */
+  right: var(--rail-w);
   bottom: 20px;
   margin: 0 32px;
   z-index: 15;
@@ -1219,6 +1341,29 @@ body {
   margin: 4px 0 12px;
 }
 
+/* Shared by MarkerChips and SpeakerChips, both now rendered inside
+   `.editor-rail` — a small uppercase label (the `.recent__label` recipe
+   from the sidebar) so the two lists read as two named sections instead
+   of running together, plus wherever a section needs its own trailing
+   action (Markers' "Clear all") at the opposite end of the same row. A
+   flex *row*, unlike .markers/.speakers below it — deliberately, so a
+   button inside it sizes to its content instead of stretching to the
+   full width the way it would as a column child. */
+.chip-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chip-section__label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 /* A vertical stack of rows, one per marker — a note that's open needs a
    full-width line under its row, not competing for space with its
    neighbors. Each row itself (.markers__row) packs swatch/time/label/note
@@ -1228,34 +1373,51 @@ body {
 .markers {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 12px 0 20px;
+  gap: 6px;
+  min-width: 0;
+  /* flex/min-height only matter where .markers is actually a flex item —
+     inside .editor-rail. Trim.tsx renders this same component in plain
+     block flow, where both are no-ops. */
+  flex: 1;
+  min-height: 0;
 }
 
 /* Capped and scrollable rather than growing the whole page indefinitely —
    same reasoning as .recorder__markers's own cap, just taller since this
    page has more room to spare than the Record screen's fixed-size card.
-   "Clear all markers" sits outside this, in .markers itself, so it's always
-   reachable without scrolling down through a long list to find it. */
+   `.editor-rail .markers__list` below lifts the cap in the rail, where
+   flex sizing (not a fixed pixel cap) is what should govern its height. */
 .markers__list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  flex: 1;
+  min-height: 0;
   max-height: 320px;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+/* In the rail, .markers itself already gets an even, height-bound share of
+   .editor-rail via flex:1 above — the 320px cap would otherwise stop the
+   list from using that whole share on a tall window. */
+.editor-rail .markers__list {
+  max-height: none;
 }
 
 .markers__item {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .markers__row {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   font-size: var(--fs-caption);
   color: var(--text-muted);
   border-radius: var(--r-sm);
@@ -1673,20 +1835,41 @@ body {
 
 /* ---------- speaker chips ---------- */
 
+/* SpeakerChips only ever renders inside .editor-rail (see MarkerChips for
+   the contrast — that one's also used in Trim.tsx's plain block flow, so
+   its own flex:1 stays a no-op there rather than needing a scoped
+   override). flex:1 here gives .speakers an even share of the rail's
+   height alongside .markers. */
 .speakers {
-  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  min-height: 0;
 }
 
+/* Scrollable and, unlike before, sized by that even share (flex:1) rather
+   than a fixed pixel cap — the cap used to cut the list off at 160px
+   regardless of how much taller the rail actually had room for. */
 .speakers__list {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
   gap: 6px;
+  min-width: 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   padding: 3px 4px 3px 8px;
@@ -1740,6 +1923,10 @@ body {
   transform: scale(1.3);
 }
 
+/* Truncates instead of forcing the whole chip (and everything above it in
+   `.editor-rail`'s flex column) wider than the rail — a long or heavily-
+   decorated chip (name + count + eye toggle + menu) used to have nothing
+   giving way, so it just overflowed the 300px rail and got clipped. */
 .chip__name {
   background: none;
   border: none;
@@ -1748,6 +1935,11 @@ body {
   font-weight: 600;
   cursor: pointer;
   padding: 0;
+  max-width: 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chip__name:hover {
@@ -1762,6 +1954,8 @@ body {
   font: inherit;
   font-weight: 600;
   padding: 1px 5px;
+  max-width: 140px;
+  min-width: 0;
 }
 
 .chip__input:focus {

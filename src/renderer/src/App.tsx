@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useEvent, useQuery } from './lib/api'
 import { formatDuration } from './lib/format'
+import { usePersistedBoolean } from './lib/usePersistedBoolean'
 import Library from './routes/Library'
 import Record from './routes/Record'
 import Editor from './routes/Editor'
@@ -9,6 +10,7 @@ import Trim from './routes/Trim'
 import Ask from './routes/Ask'
 import Settings from './routes/Settings'
 import MiniRecorder from './routes/MiniRecorder'
+import IconButton from './components/IconButton'
 
 /**
  * Nav icons, inline rather than from an icon package.
@@ -116,6 +118,7 @@ function RecentList({ locked }: { locked: boolean }): React.JSX.Element | null {
 export default function App(): React.JSX.Element {
   const { data: info } = useQuery('app:info')
   const location = useLocation()
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedBoolean('sonascribe.sidebarCollapsed', false)
 
   /**
    * Whether a recording is currently in progress, anywhere — locks every
@@ -151,10 +154,20 @@ export default function App(): React.JSX.Element {
 
   return (
 
-    <div className="app">
+    <div className="app" data-sidebar-collapsed={sidebarCollapsed || undefined}>
       <aside className="sidebar">
         {/* Drag region so the frameless macOS title bar can still move the window. */}
         <div className="sidebar__drag" />
+        <div className="sidebar__toggle">
+          <IconButton
+            icon="sidebarToggle"
+            size="sm"
+            aria-pressed={sidebarCollapsed}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          />
+        </div>
         <div className="sidebar__brand">
           {/* The logo mark, drawn from four bars rather than shipped as an asset:
               it has to recolour with the theme, and an SVG file would not. */}
@@ -164,7 +177,7 @@ export default function App(): React.JSX.Element {
             <i />
             <i />
           </span>
-          <span>SonaScribe</span>
+          <span className="sidebar__label">SonaScribe</span>
         </div>
         <nav className="sidebar__nav">
           {NAV.map((item) => {
@@ -189,18 +202,18 @@ export default function App(): React.JSX.Element {
                   if (locked) e.preventDefault()
                 }}
                 aria-disabled={locked}
-                title={locked ? 'Finish or discard the current recording first' : undefined}
+                title={locked ? 'Finish or discard the current recording first' : item.label}
               >
                 <NavIcon name={item.icon} />
-                {item.label}
+                <span className="sidebar__label">{item.label}</span>
               </NavLink>
             )
           })}
         </nav>
 
-        <RecentList locked={recordingActive} />
+        {!sidebarCollapsed && <RecentList locked={recordingActive} />}
 
-        <div className="sidebar__footer">
+        <div className="sidebar__footer sidebar__label">
           <span>Local-only · nothing leaves this device</span>
           {info?.version && <span className="sidebar__version">v{info.version}</span>}
         </div>
