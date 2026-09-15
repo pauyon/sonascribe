@@ -222,6 +222,17 @@ export interface ApiSchema {
     request: { elapsedMs: number }
     response: Marker
   }
+  /**
+   * Relays a mic/system capture warning or recovery from the renderer's own
+   * supervisor (track lost, device reconnected, …) out to every window via
+   * `recording:captureWarning` — mirrors `recording:elapsed`'s reasoning: the
+   * mini controls window can't reach getUserMedia itself, so it has no other
+   * way to learn this.
+   */
+  'recording:reportCaptureState': {
+    request: { kind: 'mic' | 'system'; state: 'lost' | 'recovered'; message: string }
+    response: void
+  }
 
   /** Reveals a file in the OS file manager, selected. */
   'shell:showItemInFolder': {
@@ -512,6 +523,18 @@ export interface EventSchema {
   }
   /** A recording was discarded — mirrors `recording:stopped` for the cancel path. */
   'recording:discarded': { recordingId: string }
+  /**
+   * The capture graph lost or regained a source mid-recording — from main's
+   * own chunk-stall watchdog (`kind: 'graph'`) or relayed from the renderer's
+   * capture supervisor (`kind: 'mic' | 'system'`) via `recording:reportCaptureState`,
+   * so a popped-out mini controls window (which can't reach getUserMedia
+   * itself) still sees it.
+   */
+  'recording:captureWarning': {
+    kind: 'mic' | 'system' | 'graph'
+    state: 'lost' | 'recovered'
+    message: string
+  }
 
   /** Byte-level progress for an in-flight model download. */
   'model:progress': ModelDownloadProgress
@@ -563,6 +586,7 @@ export const CHANNELS = [
   'recording:status',
   'recording:elapsed',
   'recording:addMarker',
+  'recording:reportCaptureState',
   'shell:showItemInFolder',
   'logs:read',
   'models:list',
@@ -611,6 +635,7 @@ export const EVENTS = [
   'recording:sessionEnded',
   'recording:stopped',
   'recording:discarded',
+  'recording:captureWarning',
   'model:progress',
   'transcript:progress',
   'speaker:progress',

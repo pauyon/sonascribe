@@ -2806,6 +2806,10 @@ button.settings-card__row--link:hover {
   text-align: center;
 }
 
+.mini__notice--warn {
+  color: var(--warn-text);
+}
+
 .mini__transcript {
   margin-top: 10px;
   min-height: 0;

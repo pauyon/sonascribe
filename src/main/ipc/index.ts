@@ -246,6 +246,10 @@ const handlers: Handlers = {
 
   'recording:addMarker': ({ elapsedMs }) => addMarker(elapsedMs),
 
+  'recording:reportCaptureState': ({ kind, state, message }) => {
+    emit('recording:captureWarning', { kind, state, message })
+  },
+
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)
   },

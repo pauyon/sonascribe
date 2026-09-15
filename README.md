@@ -158,15 +158,64 @@ resolver's PATH fallback is what actually picks either up. Every sidecar is
 invoked as a separate process and never linked, but review the ffmpeg
 licensing note before shipping macOS commercially.
 
-**Automatic gain control is always on; echo cancellation and noise
-suppression are off by default and each independently toggleable.** All three
-route the microphone through Chromium's WebRTC audio processing module, and
-it's echo cancellation specifically that gives a recording its "on a call"
-character — worth enabling only for a laptop mic with sound coming from its
-own speakers, where it stops the far end being recorded twice. AGC has no
-such downside and no off switch: a quiet input device with nothing
-compensating can lose a recording's audio outright, which costs far more
-than the fidelity AGC trades away.
+**Automatic gain control is always on for the primary mic request; echo
+cancellation and noise suppression are off by default and each independently
+toggleable.** All three route the microphone through Chromium's WebRTC audio
+processing module, and it's echo cancellation specifically that gives a
+recording its "on a call" character — worth enabling only for a laptop mic
+with sound coming from its own speakers, where it stops the far end being
+recorded twice. AGC has no such downside on its own and no off switch there:
+a quiet input device with nothing compensating can lose a recording's audio
+outright, which costs far more than the fidelity AGC trades away. But the APM
+pipeline AGC pulls in is also the more fragile path when a device is shared
+with a conferencing app — see the fallback ladder below.
+
+**A rejected mic request gets three tries, not one — but a *resolved* stream
+is never second-guessed.** `lib/capture.ts`'s `requestMicStream` is a ladder:
+the requested device with normal processing, then the same device with
+everything (including AGC) stripped, then the system default device likewise
+stripped — advanced only by a **thrown** error (`OverconstrainedError` from a
+saved device id that's gone, `NotReadableError` from a device another app
+holds exclusively). `track.muted` on a stream that *did* resolve is
+deliberately not treated as failure, even though a conferencing app (Teams,
+Zoom, …) already holding the device is the classic way to end up with a
+resolved-but-silent track — an earlier version of this ladder rejected on
+`track.muted` too, and it was a real regression: that flag can read `true`
+for longer than expected on a device that's actually capturing fine (shared
+with another app or not), so gating acceptance on it threw away working
+streams — on the last rung, silently switching to the system default
+device, a different piece of physical hardware than the user was speaking
+into. **Never gate mic acceptance on `track.muted` at acquisition time.** A
+track that resolves live but is genuinely silent is instead caught from real
+measured audio over real time — see the next paragraph — evidence, not a
+flag. Each acquisition attempt is still logged (`console.info`, so it lands
+in `logs:read`) with the track's `readyState`/`muted`/`getSettings()`, since
+that's what actually confirms which failure mode a real call hit.
+
+**The capture graph is supervised for as long as it's open, not just opened
+once.** Previously `lib/capture.ts` wired sources into the combined
+`AudioWorkletNode` exactly once at mount and never looked at them again — a
+device that disappeared mid-recording (an interface being unplugged, most
+concretely) killed the take silently, with no code path able to notice or
+recover before Stop. `CaptureSession` now exposes `replaceSource`, and
+`routes/Record.tsx` runs a supervisor for the life of the session: a
+source's track firing `ended`/`mute`, or staying silent through its full
+grace period, re-acquires just that source in place. Separately, a stalled
+`AudioContext` — the signature of its bound output device disappearing,
+since an audio interface usually supplies both input and output — is caught
+by polling the combined node's own block cadence (the one heartbeat that
+reflects the graph's audio thread actually running) rather than
+`context.state`, which doesn't reliably reflect a stalled render thread.
+`context.resume()` is tried first; if that doesn't restore the heartbeat,
+the whole graph is rebuilt and pinned to the original context's sample rate
+(`new AudioContext({ sampleRate })`), since the WAV header was already
+written at that rate and an unpinned rebuild falling back to a different
+output device could shift playback speed for everything recorded after the
+gap. `services/recorder.ts::writeChunk` pads a late-arriving chunk with
+silence first, so a recovery's gap moves nothing after it out of position —
+without that, a dropout would silently desync every marker and transcript
+timestamp past it, the same way `stopRecording`'s already-derives-duration-
+from-bytes-written would otherwise mask it.
 
 **Where recordings' media lives is user-configurable, but the database never
 moves.** `db/settings.ts` stores just a pointer (a folder path, or null for

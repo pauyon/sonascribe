@@ -54,6 +54,36 @@ function Meter({
 /** Above this a source is considered to be hearing something. */
 const SIGNAL_FLOOR = 0.01
 
+/**
+ * Watches one source's live audio track for the two signals that mean it has
+ * gone dead under us — the device disappearing (`ended`) or another
+ * application taking it over (`mute`) — and reports it through `onLost`
+ * rather than reacting itself, so the same wiring serves the initial open, a
+ * single-source recovery, and a full graph rebuild alike.
+ *
+ * Guarded by identity: a track this function is no longer watching (because
+ * its source was deliberately replaced) can still fire a queued `ended` event
+ * from `track.stop()`'s own cleanup — the `activeTrack` map is checked at
+ * fire time, not closed over, so a stale event for an already-replaced track
+ * is silently ignored instead of triggering a redundant recovery.
+ */
+function wireTrackWatchers(
+  kind: CaptureSourceKind,
+  stream: MediaStream,
+  activeTrack: Record<CaptureSourceKind, MediaStreamTrack | null>,
+  onLost: (kind: CaptureSourceKind, reason: string) => void
+): void {
+  const track = stream.getAudioTracks()[0] ?? null
+  activeTrack[kind] = track
+  if (!track) return
+  track.addEventListener('ended', () => {
+    if (activeTrack[kind] === track) onLost(kind, `${kind} track ended`)
+  })
+  track.addEventListener('mute', () => {
+    if (activeTrack[kind] === track) onLost(kind, `${kind} track muted`)
+  })
+}
+
 export default function Record(): React.JSX.Element {
   const navigate = useNavigate()
   const { data: info } = useQuery('app:info')
@@ -87,12 +117,43 @@ export default function Record(): React.JSX.Element {
   const [openKinds, setOpenKinds] = useState<CaptureSourceKind[]>([])
   /** Why system audio is not being monitored, when it was asked for. */
   const [systemNote, setSystemNote] = useState<string | null>(null)
+  /** Which rung of the mic fallback ladder is active, when it isn't the plain requested one. */
+  const [micNote, setMicNote] = useState<string | null>(null)
+  /**
+   * A transient report from the capture supervisor (see the recovery effects
+   * below) — a source going quiet or a device coming back. `tone: 'warn'`
+   * persists until the next notice; `'ok'` clears itself.
+   */
+  const [captureNotice, setCaptureNotice] = useState<{ tone: 'warn' | 'ok'; message: string } | null>(
+    null
+  )
+  const captureNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Highest level seen since monitoring began, to tell silent from untested. */
   const [everHeard, setEverHeard] = useState<Record<string, boolean>>({})
   /** A source that's stayed silent long enough to be worth flagging — see the effect below. */
   const [silentTooLong, setSilentTooLong] = useState({ mic: false, system: false })
-  /** When the current capture graph started listening, for the silence timer above. Not reset between monitoring and recording — it's the same graph the whole time (see sessionRef's doc comment). */
-  const captureOpenedAtRef = useRef(0)
+  /**
+   * When each source started listening, for the silence timer above — tracked
+   * per source rather than once for the whole graph, so recovering just the
+   * mic (say) gives the mic a fresh grace period without resetting system
+   * audio's, and vice versa.
+   */
+  const sourceOpenedAtRef = useRef<Record<CaptureSourceKind, number>>({ mic: 0, system: 0 })
+  /** The live track backing each source right now — see `wireTrackWatchers`. */
+  const activeTrackRef = useRef<Record<CaptureSourceKind, MediaStreamTrack | null>>({
+    mic: null,
+    system: null
+  })
+  /** Guards a source against a second recovery attempt piling on top of one already in flight. */
+  const recoveringRef = useRef<Record<CaptureSourceKind, boolean>>({ mic: false, system: false })
+  /** Rate-limits recovery attempts for a source that keeps immediately failing again. */
+  const lastRecoveryAttemptAtRef = useRef<Record<CaptureSourceKind, number>>({ mic: 0, system: 0 })
+  /** Runs once per silent stretch rather than once per second the warning stays up. */
+  const silentRecoveryAttemptedRef = useRef({ mic: false, system: false })
+  /** Timestamp of the most recent combined (post-mix) block — the capture graph's heartbeat. */
+  const lastBlockAtRef = useRef(0)
+  const rebuildingGraphRef = useRef(false)
+  const lastRebuildAttemptAtRef = useRef(0)
 
   /**
    * "Test your mic": records a few seconds from the already-open monitoring
@@ -179,6 +240,7 @@ export default function Record(): React.JSX.Element {
     setPaused(false)
     pausedRef.current = false
     setFinishing(false)
+    setCaptureNotice(null)
     if (summary.silent) {
       setError(
         'No audio was captured, so nothing was saved. Check the input device and that its level meter moved.'
@@ -198,6 +260,7 @@ export default function Record(): React.JSX.Element {
     setFinishing(false)
     setElapsedMs(0)
     setMarkerCount(0)
+    setCaptureNotice(null)
   })
 
   /** Cancels an in-progress or finished mic test — a device change invalidates whatever it captured. */
@@ -218,9 +281,143 @@ export default function Record(): React.JSX.Element {
     const session = sessionRef.current
     sessionRef.current = null
     acceptingRef.current = false
+    activeTrackRef.current = { mic: null, system: null }
     setOpenKinds([])
+    setCaptureNotice(null)
     if (session) await session.stop()
   }, [resetMicTest])
+
+  const showCaptureNotice = useCallback(
+    (tone: 'warn' | 'ok', message: string, autoDismissMs?: number) => {
+      if (captureNoticeTimerRef.current) {
+        clearTimeout(captureNoticeTimerRef.current)
+        captureNoticeTimerRef.current = null
+      }
+      setCaptureNotice({ tone, message })
+      if (autoDismissMs) {
+        captureNoticeTimerRef.current = setTimeout(() => setCaptureNotice(null), autoDismissMs)
+      }
+    },
+    []
+  )
+
+  /**
+   * Opens the microphone, falling back through `requestMicStream`'s ladder as
+   * needed, and records which rung won as a fine-print note — the user should
+   * be able to tell that a call app forced unprocessed audio settings, not
+   * just that the mic quietly started working differently.
+   */
+  const acquireMic = useCallback(async (): Promise<MediaStream> => {
+    // Independent on purpose: noise suppression alone does not carry the
+    // "on a call" character that echo cancellation does, so a user after
+    // less-noisy audio need not accept the phone-call sound to get it.
+    const processing = {
+      ...CLEAN_MIC,
+      noiseSuppression: settings?.noiseSuppression ?? false,
+      echoCancellation: settings?.echoCancellation ?? false
+    }
+    const acquisition = await requestMicStream(deviceId || undefined, processing)
+    setMicNote(
+      acquisition.attempt === 'requested'
+        ? null
+        : acquisition.attempt === 'requested-raw'
+          ? 'Your microphone needed unprocessed audio settings to stay usable — noise suppression, echo cancellation and automatic gain are off for this recording, likely because another app has the device.'
+          : 'Your saved microphone was unavailable, so the system default device is being used instead, with unprocessed audio settings.'
+    )
+    return acquisition.stream
+  }, [deviceId, settings?.noiseSuppression, settings?.echoCancellation])
+
+  const handleLevel = useCallback(
+    (kind: CaptureSourceKind, samples: Int16Array, peak: number) => {
+      setLevels((prev) => ({ ...prev, [kind]: Math.max(prev[kind] ?? 0, peak) }))
+      if (peak > SIGNAL_FLOOR) {
+        setEverHeard((prev) => (prev[kind] ? prev : { ...prev, [kind]: true }))
+      }
+      // Copied rather than kept as a view: the worklet reuses its buffers
+      // block to block, so holding the view itself would see later blocks'
+      // data overwrite what was meant to be a snapshot of this one.
+      if (kind === 'mic' && micTestActiveRef.current) micTestChunksRef.current.push(samples.slice())
+    },
+    []
+  )
+
+  const handleBlock = useCallback((samples: Int16Array, peak: number) => {
+    // The combined node keeps processing as long as any source is attached to
+    // it, even one producing nothing, so this fires on a steady cadence
+    // whenever the capture graph's audio thread is actually alive — the
+    // heartbeat the stall watchdog below is built on.
+    lastBlockAtRef.current = Date.now()
+    if (!acceptingRef.current) return
+    // Gated the same way the chunk itself is, plus paused: the strip
+    // should stop advancing exactly when "no audio is being written"
+    // is true, not keep tracing the monitored signal underneath it.
+    if (!pausedRef.current) liveWaveformRef.current?.push(peak)
+    // A Uint8Array view keeps the structured clone to the exact bytes
+    // rather than the whole backing buffer.
+    void api.invoke('recording:chunk', {
+      samples: new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
+    })
+  }, [])
+
+  /**
+   * Re-acquires one source in place — a mic gone quiet because another app
+   * grabbed the device, an interface reappearing after being unplugged, or a
+   * source whose track just reported `ended`/`muted`. Swaps into the same
+   * combined node via `replaceSource`, so this never touches the recording
+   * that's already in progress beyond the gap while the new stream opens.
+   */
+  const recoverSource = useCallback(
+    async (kind: CaptureSourceKind, reason: string): Promise<boolean> => {
+      const session = sessionRef.current
+      if (!session || recoveringRef.current[kind]) return false
+      if (Date.now() - lastRecoveryAttemptAtRef.current[kind] < 3000) return false
+      lastRecoveryAttemptAtRef.current[kind] = Date.now()
+      recoveringRef.current[kind] = true
+      const what = kind === 'mic' ? 'Microphone' : 'System audio'
+      console.info(`[record] recovering ${kind}: ${reason}`)
+      showCaptureNotice('warn', `${what} was lost — reconnecting…`)
+      // Relayed to main so a popped-out mini controls window — which can't
+      // reach getUserMedia itself — sees the same state. Best-effort: no mini
+      // window being open just means nothing is listening on the other end.
+      const relay = (state: 'lost' | 'recovered', message: string): void => {
+        void api.invoke('recording:reportCaptureState', { kind, state, message }).catch(() => undefined)
+      }
+      relay('lost', `${what} was lost — reconnecting…`)
+
+      try {
+        const stream = kind === 'mic' ? await acquireMic() : await requestSystemStream()
+        wireTrackWatchers(kind, stream, activeTrackRef.current, (k, r) => recoverSourceRef.current(k, r))
+        session.replaceSource(kind, stream)
+        setOpenKinds((prev) => (prev.includes(kind) ? prev : [...prev, kind]))
+        setEverHeard((prev) => ({ ...prev, [kind]: false }))
+        sourceOpenedAtRef.current[kind] = Date.now()
+        showCaptureNotice('ok', `${what} reconnected.`, 4000)
+        relay('recovered', `${what} reconnected.`)
+        return true
+      } catch (err) {
+        console.error(`[record] failed to recover ${kind}:`, err)
+        const message = `Couldn't reconnect ${kind === 'mic' ? 'the microphone' : 'system audio'}${
+          err instanceof CaptureError ? ` — ${err.message}` : ''
+        }`
+        showCaptureNotice('warn', message)
+        relay('lost', message)
+        return false
+      } finally {
+        recoveringRef.current[kind] = false
+      }
+    },
+    [acquireMic, showCaptureNotice]
+  )
+
+  // Track-`ended`/`mute` listeners (wired via `wireTrackWatchers`) are attached
+  // once per source and outlive any single render, so they call through this
+  // ref rather than closing over `recoverSource` directly — otherwise a
+  // listener attached before a settings change would keep recovering with
+  // stale mic-processing preferences.
+  const recoverSourceRef = useRef<(kind: CaptureSourceKind, reason: string) => void>(() => {})
+  useEffect(() => {
+    recoverSourceRef.current = (kind, reason) => void recoverSource(kind, reason)
+  }, [recoverSource])
 
   /**
    * Opens the microphone (and system audio, if wanted) and starts metering.
@@ -238,21 +435,9 @@ export default function Record(): React.JSX.Element {
     try {
       await closeSession()
 
-      // Independent on purpose: noise suppression alone does not carry the
-      // "on a call" character that echo cancellation does, so a user after
-      // less-noisy audio need not accept the phone-call sound to get it.
-      const processing = {
-        ...CLEAN_MIC,
-        noiseSuppression: settings?.noiseSuppression ?? false,
-        echoCancellation: settings?.echoCancellation ?? false
-      }
-
       const streams: Array<{ kind: CaptureSourceKind; stream: MediaStream }> = []
       try {
-        streams.push({
-          kind: 'mic',
-          stream: await requestMicStream(deviceId || undefined, processing)
-        })
+        streams.push({ kind: 'mic', stream: await acquireMic() })
       } catch (err) {
         setError(err instanceof CaptureError ? err.message : String(err))
         return
@@ -269,42 +454,24 @@ export default function Record(): React.JSX.Element {
         }
       }
 
-      const session = await startCapture(
-        streams,
-        (kind, samples, peak) => {
-          setLevels((prev) => ({ ...prev, [kind]: Math.max(prev[kind] ?? 0, peak) }))
-          if (peak > SIGNAL_FLOOR) {
-            setEverHeard((prev) => (prev[kind] ? prev : { ...prev, [kind]: true }))
-          }
-          // Copied rather than kept as a view: the worklet reuses its buffers
-          // block to block, so holding the view itself would see later blocks'
-          // data overwrite what was meant to be a snapshot of this one.
-          if (kind === 'mic' && micTestActiveRef.current) micTestChunksRef.current.push(samples.slice())
-        },
-        (samples, peak) => {
-          if (!acceptingRef.current) return
-          // Gated the same way the chunk itself is, plus paused: the strip
-          // should stop advancing exactly when "no audio is being written"
-          // is true, not keep tracing the monitored signal underneath it.
-          if (!pausedRef.current) liveWaveformRef.current?.push(peak)
-          // A Uint8Array view keeps the structured clone to the exact bytes
-          // rather than the whole backing buffer.
-          void api.invoke('recording:chunk', {
-            samples: new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
-          })
-        }
-      )
+      const session = await startCapture(streams, handleLevel, handleBlock)
+
+      for (const { kind, stream } of streams) {
+        wireTrackWatchers(kind, stream, activeTrackRef.current, (k, r) => recoverSourceRef.current(k, r))
+      }
 
       sessionRef.current = session
       setOpenKinds(streams.map((s) => s.kind))
       setSampleRate(Math.round(session.sampleRate))
       setEverHeard({})
-      captureOpenedAtRef.current = Date.now()
+      const now = Date.now()
+      sourceOpenedAtRef.current = { mic: now, system: now }
+      lastBlockAtRef.current = now
       void loadDevices()
     } finally {
       openingRef.current = false
     }
-  }, [closeSession, deviceId, loadDevices, recording, settings?.noiseSuppression, settings?.echoCancellation, wantSystem])
+  }, [acquireMic, closeSession, handleBlock, handleLevel, loadDevices, recording, wantSystem])
 
   useEffect(() => {
     void loadDevices()
@@ -401,10 +568,11 @@ export default function Record(): React.JSX.Element {
     const MIC_GRACE_MS = monitoringSystem && everHeard.system ? 12_000 : 30_000
     const SYSTEM_GRACE_MS = 30_000
     const check = (): void => {
-      const elapsed = Date.now() - captureOpenedAtRef.current
+      const micElapsed = Date.now() - sourceOpenedAtRef.current.mic
+      const systemElapsed = Date.now() - sourceOpenedAtRef.current.system
       setSilentTooLong({
-        mic: !everHeard.mic && elapsed > MIC_GRACE_MS,
-        system: monitoringSystem && !everHeard.system && elapsed > SYSTEM_GRACE_MS
+        mic: !everHeard.mic && micElapsed > MIC_GRACE_MS,
+        system: monitoringSystem && !everHeard.system && systemElapsed > SYSTEM_GRACE_MS
       })
     }
     check()
@@ -412,14 +580,138 @@ export default function Record(): React.JSX.Element {
     return () => clearInterval(timer)
   }, [openKinds, everHeard.mic, everHeard.system])
 
+  // A source that has stayed silent through its whole grace period (see
+  // above) gets one automatic recovery attempt during an actual recording —
+  // this is the safety net for a dropout that neither the track's `ended`/
+  // `mute` events nor the graph-stall watchdog caught (a device that keeps
+  // reporting "live" and "unmuted" while genuinely producing nothing, which
+  // Windows exclusive-mode audio drivers can do). Guarded to fire once per
+  // silent stretch, not once per second the warning stays up.
+  useEffect(() => {
+    if (!everHeard.mic) return
+    silentRecoveryAttemptedRef.current.mic = false
+  }, [everHeard.mic])
+  useEffect(() => {
+    if (!everHeard.system) return
+    silentRecoveryAttemptedRef.current.system = false
+  }, [everHeard.system])
+  useEffect(() => {
+    if (!recording) return
+    for (const kind of ['mic', 'system'] as const) {
+      if (silentTooLong[kind] && !silentRecoveryAttemptedRef.current[kind]) {
+        silentRecoveryAttemptedRef.current[kind] = true
+        void recoverSource(kind, `${kind} stayed silent through its grace period`)
+      }
+    }
+  }, [recording, silentTooLong, recoverSource])
+
+  /**
+   * Rebuilds the whole capture graph when the combined node's heartbeat
+   * (`lastBlockAtRef`, updated on every mixed block) goes quiet for longer
+   * than a momentary hiccup — the signature of the AudioContext's own render
+   * thread stalling, which happens when the default *output* device it's
+   * bound to disappears (an audio interface usually supplies both input and
+   * output, so unplugging it does this). Per-source recovery can't fix this:
+   * nothing is wrong with the sources, the context driving them has stopped
+   * pumping. `context.resume()` is tried first since it's cheap and covers
+   * plain suspension; a full rebuild is pinned to the original sample rate
+   * so a fallback output device running at a different rate doesn't shift
+   * playback speed for the audio appended after the gap.
+   */
+  const handleGraphStall = useCallback(async (): Promise<void> => {
+    const session = sessionRef.current
+    if (!session || rebuildingGraphRef.current) return
+    if (Date.now() - lastRebuildAttemptAtRef.current < 5000) return
+    lastRebuildAttemptAtRef.current = Date.now()
+    rebuildingGraphRef.current = true
+    console.warn('[record] capture graph appears stalled')
+    showCaptureNotice('warn', 'Audio capture stalled — attempting to recover…')
+
+    try {
+      if (session.context.state !== 'running') {
+        try {
+          await session.context.resume()
+        } catch (err) {
+          console.warn('[record] context.resume() failed:', err)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        if (Date.now() - lastBlockAtRef.current < 2000) {
+          showCaptureNotice('ok', 'Audio capture resumed.', 4000)
+          return
+        }
+      }
+
+      console.warn('[record] rebuilding capture graph from scratch')
+      const wantedKinds = openKinds
+      const originalRate = session.sampleRate
+      await session.stop()
+      sessionRef.current = null
+
+      const streams: Array<{ kind: CaptureSourceKind; stream: MediaStream }> = []
+      for (const kind of wantedKinds) {
+        try {
+          streams.push({ kind, stream: kind === 'mic' ? await acquireMic() : await requestSystemStream() })
+        } catch (err) {
+          console.error(`[record] rebuild: could not reacquire ${kind}:`, err)
+        }
+      }
+
+      if (streams.length === 0) {
+        setOpenKinds([])
+        showCaptureNotice('warn', 'Audio capture was lost and could not be recovered automatically.')
+        return
+      }
+
+      const rebuilt = await startCapture(streams, handleLevel, handleBlock, originalRate)
+      for (const { kind, stream } of streams) {
+        wireTrackWatchers(kind, stream, activeTrackRef.current, (k, r) => recoverSourceRef.current(k, r))
+      }
+      sessionRef.current = rebuilt
+      setOpenKinds(streams.map((s) => s.kind))
+      lastBlockAtRef.current = Date.now()
+      showCaptureNotice('ok', 'Audio capture recovered.', 4000)
+    } finally {
+      rebuildingGraphRef.current = false
+    }
+  }, [acquireMic, handleBlock, handleLevel, openKinds, showCaptureNotice])
+
+  // The watchdog itself: polls the heartbeat rather than reacting to an event,
+  // since a stalled render thread produces no event of any kind to react to.
+  useEffect(() => {
+    if (openKinds.length === 0) return
+    const STALL_MS = 2500
+    const timer = setInterval(() => {
+      if (rebuildingGraphRef.current) return
+      if (Date.now() - lastBlockAtRef.current > STALL_MS) void handleGraphStall()
+    }, 750)
+    return () => clearInterval(timer)
+  }, [openKinds, handleGraphStall])
+
   async function start(): Promise<void> {
     setWarning(null)
 
     // The graph is already open and metering; if something closed it, open it
     // again rather than refusing.
     if (!sessionRef.current) await openMonitor()
-    const session = sessionRef.current
+    let session = sessionRef.current
     if (!session) return
+
+    // Only reopens the mic on unambiguous evidence it's actually gone — no
+    // track, or one that's literally `ended` — never on "hasn't produced a
+    // peak yet" or `track.muted` alone. Both of those are common and totally
+    // normal (a quiet room; a metadata flag that clears late on some
+    // hardware) and reopening on them was what regressed a mic that was
+    // already working fine into the wrong device — see `tryAcquireMic`'s doc
+    // comment in capture.ts. A track that's live but genuinely silent is
+    // instead caught later, from real measured audio (the silentTooLong
+    // effect above), not from a snapshot taken right here.
+    const micTrack = activeTrackRef.current.mic
+    const micLooksDead = !micTrack || micTrack.readyState !== 'live'
+    if (micLooksDead) {
+      await recoverSource('mic', 'mic track was missing or ended before recording started')
+      session = sessionRef.current
+      if (!session) return
+    }
 
     const rate = Math.round(session.sampleRate)
     setSampleRate(rate)
@@ -635,6 +927,11 @@ export default function Record(): React.JSX.Element {
 
       {error && <div className="banner banner--error">{error}</div>}
       {warning && <div className="banner banner--warn">{warning}</div>}
+      {captureNotice && (
+        <div className={captureNotice.tone === 'ok' ? 'banner banner--ok' : 'banner banner--warn'}>
+          {captureNotice.message}
+        </div>
+      )}
 
       {/*
         One frame for both states. Setup and recording share the same slots —
@@ -768,6 +1065,7 @@ export default function Record(): React.JSX.Element {
                     </span>
                   )}
                 </div>
+                {micNote && <p className="recorder__fine recorder__fine--warn">{micNote}</p>}
               </div>
 
               <label className="toolbar__toggle">

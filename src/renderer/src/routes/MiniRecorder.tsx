@@ -41,6 +41,16 @@ export default function MiniRecorder(): React.JSX.Element {
    * through that whole window.
    */
   const [finishing, setFinishing] = useState(false)
+  /**
+   * The most recent capture health report — main's own chunk-stall watchdog,
+   * or the main Record window's capture supervisor relayed via
+   * `recording:reportCaptureState` (this window has no getUserMedia access of
+   * its own, so it can't detect any of this directly).
+   */
+  const [captureNotice, setCaptureNotice] = useState<{ tone: 'warn' | 'ok'; message: string } | null>(
+    null
+  )
+  const captureNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Bootstraps from the query once; every change after that arrives as a
   // broadcast instead (recording:pauseChanged, recording:markerAdded), from
   // whichever window sent it. Markers added before this window even existed
@@ -54,6 +64,12 @@ export default function MiniRecorder(): React.JSX.Element {
     setPausedState(status.paused)
     setMarkerCount(status.markerCount)
   }, [status])
+
+  useEffect(() => {
+    return () => {
+      if (captureNoticeTimerRef.current) clearTimeout(captureNoticeTimerRef.current)
+    }
+  }, [])
 
   useEvent('recording:pauseChanged', (payload) => setPausedState(payload.paused))
   useEvent('recording:elapsedTick', (payload) => setElapsedMs(payload.elapsedMs))
@@ -70,6 +86,18 @@ export default function MiniRecorder(): React.JSX.Element {
   // events are what navigate the main window and bring it forward.
   useEvent('recording:stopped', () => window.close())
   useEvent('recording:discarded', () => window.close())
+  useEvent('recording:captureWarning', (payload) => {
+    if (captureNoticeTimerRef.current) {
+      clearTimeout(captureNoticeTimerRef.current)
+      captureNoticeTimerRef.current = null
+    }
+    if (payload.state === 'lost') {
+      setCaptureNotice({ tone: 'warn', message: payload.message })
+      return
+    }
+    setCaptureNotice({ tone: 'ok', message: payload.message })
+    captureNoticeTimerRef.current = setTimeout(() => setCaptureNotice(null), 4000)
+  })
 
   /** True for the one error this window should shrug off — see `finishing`'s doc comment. */
   function alreadyFinishing(err: unknown): boolean {
@@ -137,6 +165,16 @@ export default function MiniRecorder(): React.JSX.Element {
       ) : (
         <>
           <div className="mini__time">{formatDuration(elapsedMs)}</div>
+
+          {captureNotice && (
+            <p
+              className={
+                captureNotice.tone === 'warn' ? 'mini__notice mini__notice--warn' : 'mini__notice'
+              }
+            >
+              {captureNotice.message}
+            </p>
+          )}
 
           <div className="mini__toolbar">
             <div className="mini__icon-btn mini__mark-btn">
