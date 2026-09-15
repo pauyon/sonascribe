@@ -1,7 +1,7 @@
 name: Release
 
 # Tag-triggered so a release corresponds to a deliberate version bump, not
-# every push to master. `workflow_dispatch` is there for re-running a release
+# every push to main. `workflow_dispatch` is there for re-running a release
 # (e.g. after fixing a build issue) without having to move the tag.
 on:
   push:
