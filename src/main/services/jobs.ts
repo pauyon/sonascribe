@@ -8,7 +8,8 @@ import { saveTranscript } from '../db/transcript'
 import {
   getModelIdForEngine,
   getTranscriptionEngine,
-  getTranscriptionLanguage
+  getTranscriptionLanguage,
+  getTranscriptionSettings
 } from '../db/settings'
 import { resampleForAsr } from './ffmpeg'
 import { resolveModelPath } from './models'
@@ -219,4 +220,32 @@ export function queueTranscription(recordingId: string): void {
   }
 
   jobQueue.enqueue({ recordingId, controller, run })
+}
+
+/**
+ * Auto-transcribes a freshly stopped recording, but only when the currently
+ * selected engine's model is actually downloaded — `queueTranscription`
+ * itself doesn't check that synchronously (its "not downloaded" case only
+ * surfaces later, inside the async job, as a `failed` status), and without
+ * this pre-check here every recording a user without any model set up ever
+ * makes would flash queued → transcribing → failed for no reason. A model
+ * being downloaded is treated as the user's opt-in to transcription running
+ * automatically — matching how transcription is opt-in everywhere else in
+ * this app (nothing about it runs until a model exists on disk).
+ *
+ * Fire-and-forget, same shape as `triggerReindex` in services/search.ts: the
+ * caller (recorder.ts's `stopRecording`) must never be blocked or failed by
+ * this.
+ */
+export function triggerAutoTranscribe(recordingId: string): void {
+  void autoTranscribeIfModelReady(recordingId).catch((err: unknown) =>
+    console.error('[jobs] auto-transcribe failed to start:', err)
+  )
+}
+
+async function autoTranscribeIfModelReady(recordingId: string): Promise<void> {
+  const { engine, modelId } = getTranscriptionSettings()
+  const modelPath = await resolveModelPath(modelId[engine])
+  if (!modelPath) return
+  queueTranscription(recordingId)
 }

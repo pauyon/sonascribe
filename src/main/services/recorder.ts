@@ -15,6 +15,7 @@ import { emit } from '../ipc/events'
 import { focusMainWindow } from '../windows/main-window'
 import { WavWriter } from './wav-writer'
 import { measurePeak, SILENCE_PEAK_THRESHOLD } from './peaks'
+import { triggerAutoTranscribe } from './jobs'
 
 /**
  * Holds the open WAV writer for an in-progress recording.
@@ -313,6 +314,8 @@ export async function stopRecording(): Promise<RecordingSummary> {
   if (current.markers.length > 0) {
     setRecordingMarkers(current.recordingId, current.markers, durationMs)
   }
+  // Best-effort, no-op if no model is downloaded yet — see triggerAutoTranscribe's doc comment.
+  triggerAutoTranscribe(current.recordingId)
 
   const summary = { recordingId: current.recordingId, durationMs, silent: false }
   emit('recording:stopped', summary)
