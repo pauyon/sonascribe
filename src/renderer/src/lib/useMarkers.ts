@@ -18,6 +18,7 @@ export function useMarkers(
   addMarkerAt: (realMs: number, color?: string) => void
   rename: (id: string, label: string) => void
   recolor: (id: string, color: string) => void
+  setNotes: (id: string, notes: string) => void
   remove: (id: string) => void
   clearAll: () => void
 } {
@@ -29,7 +30,7 @@ export function useMarkers(
   }
 
   function addMarkerAt(realMs: number, color: string = DEFAULT_MARKER_COLOR): void {
-    persist([...markers, { id: crypto.randomUUID(), timeMs: realMs, label: '', color }])
+    persist([...markers, { id: crypto.randomUUID(), timeMs: realMs, label: '', color, notes: '' }])
   }
 
   function rename(id: string, label: string): void {
@@ -40,6 +41,10 @@ export function useMarkers(
     persist(markers.map((m) => (m.id === id ? { ...m, color } : m)))
   }
 
+  function setNotes(id: string, notes: string): void {
+    persist(markers.map((m) => (m.id === id ? { ...m, notes } : m)))
+  }
+
   function remove(id: string): void {
     persist(markers.filter((m) => m.id !== id))
   }
@@ -48,5 +53,5 @@ export function useMarkers(
     persist([])
   }
 
-  return { markers, addMarkerAt, rename, recolor, remove, clearAll }
+  return { markers, addMarkerAt, rename, recolor, setNotes, remove, clearAll }
 }

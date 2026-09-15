@@ -226,24 +226,39 @@ export function setPaused(paused: boolean): void {
  * windows read from. Held in memory and persisted for real by `stopRecording`,
  * the same way the rest of a session's state lives only here until then.
  */
-export function addMarker(elapsedMs: number): Marker {
+export function addMarker(elapsedMs: number, color?: string): Marker {
   if (!session) throw new RecordingError('No recording in progress')
   const marker: Marker = {
     id: randomUUID(),
     timeMs: Math.max(0, elapsedMs),
     label: '',
-    color: DEFAULT_MARKER_COLOR
+    color: color || DEFAULT_MARKER_COLOR,
+    notes: ''
   }
   session.markers.push(marker)
   emit('recording:markerAdded', marker)
   return marker
 }
 
+/**
+ * Updates a note on a marker already added this session — the live
+ * counterpart to `recordings:setMarkers`' whole-list replace, which only
+ * applies to a recording that's already stopped. No separate persistence
+ * step: this mutates the same in-memory `session.markers` objects
+ * `stopRecording` writes out via `setRecordingMarkers` once the take ends.
+ */
+export function updateMarker(id: string, notes: string): Marker {
+  if (!session) throw new RecordingError('No recording in progress')
+  const marker = session.markers.find((m) => m.id === id)
+  if (!marker) throw new RecordingError(`Marker ${id} not found`)
+  marker.notes = notes
+  emit('recording:markerUpdated', marker)
+  return marker
+}
+
 /** Current session, for a freshly opened mini controls window to bootstrap from — including markers already added before it existed to see their broadcasts. */
-export function getRecordingStatus(): { recordingId: string; paused: boolean; markerCount: number } | null {
-  return session
-    ? { recordingId: session.recordingId, paused: session.paused, markerCount: session.markers.length }
-    : null
+export function getRecordingStatus(): { recordingId: string; paused: boolean; markers: Marker[] } | null {
+  return session ? { recordingId: session.recordingId, paused: session.paused, markers: session.markers } : null
 }
 
 export interface RecordingSummary {

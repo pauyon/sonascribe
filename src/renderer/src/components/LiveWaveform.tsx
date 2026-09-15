@@ -3,6 +3,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 export interface LiveWaveformHandle {
   /** Appends one block's peak amplitude (0..1) as the newest bar. */
   push(peak: number): void
+  /** Pins a marker at the position that's "now" the instant this is called. */
+  markNow(color: string): void
 }
 
 /**
@@ -25,6 +27,10 @@ const LiveWaveform = forwardRef<LiveWaveformHandle>(function LiveWaveform(_props
   const bufferRef = useRef<number[]>([])
   const colorRef = useRef('#3569ff')
   const sizeRef = useRef({ width: 0, height: 0, dpr: 1 })
+  /** Total blocks ever pushed — markers are anchored to this count rather than to elapsed time, so their pins scroll in lockstep with the bars they landed next to. */
+  const totalPushedRef = useRef(0)
+  /** Pins still within the visible window — pruned in `push()` as they age out, the same way old bars simply aren't drawn once they've scrolled off. */
+  const markersRef = useRef<Array<{ blockIndex: number; color: string }>>([])
 
   /** Roughly 20-25s of history at the worklet's ~85ms block cadence. */
   const CAPACITY = 240
@@ -55,6 +61,36 @@ const LiveWaveform = forwardRef<LiveWaveformHandle>(function LiveWaveform(_props
       const amplitude = Math.max(buffer[i] * mid, 1)
       ctx.fillRect(x, mid - amplitude, Math.max(barWidth - 1, 1), amplitude * 2)
     }
+
+    // Marker pins, on top of the trace — same flag-plus-full-height-line
+    // recipe Waveform.tsx uses for a finished recording's fixed timeline,
+    // adapted to this one's right-aligned, ever-scrolling coordinate space:
+    // "blocksAgo" blocks back from the newest bar lands at the same slot
+    // that bar was in "blocksAgo" pushes ago, regardless of how full the
+    // ring buffer is.
+    const FLAG_SIZE = 5
+    for (const marker of markersRef.current) {
+      const blocksAgo = totalPushedRef.current - marker.blockIndex
+      if (blocksAgo < 0 || blocksAgo >= CAPACITY) continue
+      const x = (CAPACITY - 1 - blocksAgo) * barWidth
+
+      ctx.globalAlpha = 0.45
+      ctx.strokeStyle = marker.color
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+      ctx.stroke()
+
+      ctx.globalAlpha = 1
+      ctx.fillStyle = marker.color
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x + FLAG_SIZE, FLAG_SIZE)
+      ctx.lineTo(x, FLAG_SIZE * 2)
+      ctx.closePath()
+      ctx.fill()
+    }
   }
 
   useImperativeHandle(
@@ -64,6 +100,18 @@ const LiveWaveform = forwardRef<LiveWaveformHandle>(function LiveWaveform(_props
         const buffer = bufferRef.current
         buffer.push(Math.min(1, Math.max(0, peak)))
         if (buffer.length > CAPACITY) buffer.shift()
+        totalPushedRef.current += 1
+        // Drop pins that have scrolled fully out of view — otherwise this
+        // grows for the whole length of a long recording for no reason,
+        // since none of them are ever drawn again once out of range.
+        const cutoff = totalPushedRef.current - CAPACITY
+        if (markersRef.current.some((m) => m.blockIndex < cutoff)) {
+          markersRef.current = markersRef.current.filter((m) => m.blockIndex >= cutoff)
+        }
+        draw()
+      },
+      markNow(color: string) {
+        markersRef.current.push({ blockIndex: totalPushedRef.current, color })
         draw()
       }
     }),

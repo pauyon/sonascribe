@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { DEFAULT_MARKER_COLOR } from '@shared/types'
+import { DEFAULT_MARKER_COLOR, type Marker } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import {
   CaptureError,
@@ -16,6 +16,7 @@ import Select from '../components/Select'
 import HelpTip from '../components/HelpTip'
 import Icon from '../components/Icon'
 import LiveWaveform, { type LiveWaveformHandle } from '../components/LiveWaveform'
+import MarkerNoteField from '../components/MarkerNoteField'
 
 /** Peak level meter for one source. */
 function Meter({
@@ -99,8 +100,28 @@ export default function Record(): React.JSX.Element {
   const [recording, setRecording] = useState(false)
   const [paused, setPaused] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(0)
-  /** How many moments have been marked so far this session — the mini window can add one too, so this counts the broadcast rather than only this window's own clicks. */
-  const [markerCount, setMarkerCount] = useState(0)
+  /** This session's markers, oldest first — the mini window can add one too, so this stays in sync via broadcasts rather than only this window's own clicks. */
+  const [markers, setMarkers] = useState<Marker[]>([])
+  /**
+   * The one marker whose note field is allowed to be open right now — set to
+   * the marker just added (so it auto-expands and focuses without waiting on
+   * the broadcast), and enforced on every `MarkerNoteField` via its
+   * `active` prop so placing a new marker saves and collapses whichever
+   * one was open before, rather than leaving both open at once.
+   */
+  const [expandedMarkerId, setExpandedMarkerId] = useState<string | null>(null)
+  const markersListRef = useRef<HTMLDivElement>(null)
+  /**
+   * Always points at the current render's `mark` (defined further down, but
+   * hoisted since it's a function declaration) — the "m" shortcut effect
+   * below only re-runs when `recording` changes, so calling `mark` directly
+   * from inside it would keep using whatever `elapsedMs`/`markerColor` were
+   * current at that moment forever, not the latest ones. Reassigned on every
+   * render (a plain statement, not inside an effect) so it's never stale.
+   */
+  const markRef = useRef<(() => void) | null>(null)
+  /** Sticky color the next marker stamps with — same "remembers your last pick" pattern as the offline editor's PlayerBar swatch. */
+  const [markerColor, setMarkerColor] = useState(DEFAULT_MARKER_COLOR)
   const [levels, setLevels] = useState<Record<string, number>>({ mic: 0, system: 0 })
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
@@ -214,10 +235,19 @@ export default function Record(): React.JSX.Element {
     pausedRef.current = payload.paused
   })
 
-  // Counts every marker added this session, regardless of which window (this
-  // one or the mini controls popout) actually called recording:addMarker.
-  useEvent('recording:markerAdded', () => {
-    setMarkerCount((n) => n + 1)
+  // Tracks every marker added this session, regardless of which window (this
+  // one or the mini controls popout) actually called recording:addMarker —
+  // deduped by id since this window's own click also appends directly (for
+  // zero-latency auto-focus) from recording:addMarker's synchronous
+  // response, and would otherwise double up when this same broadcast arrives
+  // right behind it.
+  useEvent('recording:markerAdded', (marker) => {
+    setMarkers((prev) => (prev.some((m) => m.id === marker.id) ? prev : [...prev, marker]))
+  })
+
+  // A note typed into any marker from either window lands here.
+  useEvent('recording:markerUpdated', (marker) => {
+    setMarkers((prev) => prev.map((m) => (m.id === marker.id ? marker : m)))
   })
 
   // Stops sending audio blocks the instant the session is gone in main. This
@@ -245,6 +275,8 @@ export default function Record(): React.JSX.Element {
       setError(
         'No audio was captured, so nothing was saved. Check the input device and that its level meter moved.'
       )
+      setMarkers([])
+      setExpandedMarkerId(null)
       return
     }
     navigate(`/recordings/${summary.recordingId}`)
@@ -259,7 +291,8 @@ export default function Record(): React.JSX.Element {
     pausedRef.current = false
     setFinishing(false)
     setElapsedMs(0)
-    setMarkerCount(0)
+    setMarkers([])
+    setExpandedMarkerId(null)
     setCaptureNotice(null)
   })
 
@@ -544,6 +577,13 @@ export default function Record(): React.JSX.Element {
     return () => clearInterval(timer)
   }, [])
 
+  // Keeps the newest marker's note field in view the moment it's added,
+  // rather than requiring a scroll to find it right after clicking Mark.
+  useEffect(() => {
+    if (!expandedMarkerId) return
+    markersListRef.current?.scrollTo({ top: markersListRef.current.scrollHeight, behavior: 'smooth' })
+  }, [expandedMarkerId])
+
   /**
    * Flags a source that has never once cleared SIGNAL_FLOOR since the graph
    * opened, given long enough that it plausibly should have — this is what
@@ -687,6 +727,23 @@ export default function Record(): React.JSX.Element {
     return () => clearInterval(timer)
   }, [openKinds, handleGraphStall])
 
+  // "m" marks the current moment without reaching for the mouse — same
+  // shortcut Trim.tsx already uses for adding a marker. Ignored while typing
+  // anywhere (a marker's own note field included) so the letter just types
+  // normally there instead of adding a new marker.
+  useEffect(() => {
+    if (!recording) return
+    function isTypingTarget(target: EventTarget | null): boolean {
+      return target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+    }
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return
+      if (e.key === 'm' || e.key === 'M') markRef.current?.()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [recording])
+
   async function start(): Promise<void> {
     setWarning(null)
 
@@ -731,7 +788,8 @@ export default function Record(): React.JSX.Element {
     startedAtRef.current = Date.now()
     pausedMsRef.current = 0
     setElapsedMs(0)
-    setMarkerCount(0)
+    setMarkers([])
+    setExpandedMarkerId(null)
     setRecording(true)
     setPaused(false)
     pausedRef.current = false
@@ -739,7 +797,30 @@ export default function Record(): React.JSX.Element {
 
   /** Flags the current moment for later — the position is exactly this window's own paused-time-excluding elapsed timer, which is also what's on screen. */
   function mark(): void {
-    void api.invoke('recording:addMarker', { elapsedMs })
+    // Pinned immediately, synchronously with the click/keypress rather than
+    // waiting on the IPC round trip — the pin is a visual "right here, right
+    // now" marker on the live trace, and by the time recording:addMarker
+    // resolves a few more blocks may already have scrolled past.
+    liveWaveformRef.current?.markNow(markerColor)
+    void api.invoke('recording:addMarker', { elapsedMs, color: markerColor }).then((marker) => {
+      // Appended directly from the response rather than waiting on the
+      // recording:markerAdded broadcast, so the note field can appear and
+      // auto-focus with zero perceived latency; the broadcast listener above
+      // is a no-op for this marker once it arrives, already deduped by id.
+      setMarkers((prev) => (prev.some((m) => m.id === marker.id) ? prev : [...prev, marker]))
+      // Also collapses whichever marker's note was previously open (via the
+      // `active` prop below), saving it first — see useMarkerNote's doc
+      // comment. Set in the same batch as the marker list update so the new
+      // row renders already-expanded rather than opening a beat later.
+      setExpandedMarkerId(marker.id)
+    })
+  }
+  markRef.current = mark
+
+  /** Saves a note typed into one of this session's markers — reflected locally right away, and to every window via the recording:markerUpdated broadcast this triggers. */
+  function updateMarkerNote(id: string, notes: string): void {
+    setMarkers((prev) => prev.map((m) => (m.id === id ? { ...m, notes } : m)))
+    void api.invoke('recording:updateMarker', { id, notes })
   }
 
   function togglePause(): void {
@@ -979,8 +1060,16 @@ export default function Record(): React.JSX.Element {
         <div className="recorder__controls">
           {recording ? (
             <>
-              <button className="btn btn--ghost btn--icon" onClick={mark} title="Mark this moment, to jump back to it later">
-                <Icon name="flag" />
+              <input
+                type="color"
+                className="player__marker-color"
+                value={markerColor}
+                onChange={(e) => setMarkerColor(e.target.value)}
+                aria-label="Color for the next marker"
+                title="Color for the next marker"
+              />
+              <button className="btn btn--ghost btn--icon" onClick={mark} title="Mark this moment, to jump back to it later (M)">
+                <Icon name="flag" style={{ color: markerColor }} />
                 Mark
               </button>
               <button className="btn btn--icon" onClick={togglePause}>
@@ -995,10 +1084,10 @@ export default function Record(): React.JSX.Element {
                 <Icon name="trash" />
                 Discard
               </button>
-              {markerCount > 0 && (
+              {markers.length > 0 && (
                 <span className="recorder__marker-count">
                   <Icon name="flag" style={{ color: DEFAULT_MARKER_COLOR }} />
-                  {markerCount} marked
+                  {markers.length} marked
                 </span>
               )}
             </>
@@ -1014,6 +1103,22 @@ export default function Record(): React.JSX.Element {
             </button>
           )}
         </div>
+
+        {recording && markers.length > 0 && (
+          <div className="recorder__markers" ref={markersListRef}>
+            {markers.map((marker, i) => (
+              <MarkerNoteField
+                key={marker.id}
+                marker={marker}
+                index={i + 1}
+                startExpanded={marker.id === expandedMarkerId}
+                active={expandedMarkerId === null || expandedMarkerId === marker.id}
+                onExpandedChange={(isExpanded) => setExpandedMarkerId(isExpanded ? marker.id : null)}
+                onCommit={(notes) => updateMarkerNote(marker.id, notes)}
+              />
+            ))}
+          </div>
+        )}
 
         {!recording && (
           <div className="recorder__detail">

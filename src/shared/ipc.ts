@@ -197,7 +197,7 @@ export interface ApiSchema {
    */
   'recording:status': {
     request: void
-    response: { recordingId: string; paused: boolean; markerCount: number } | null
+    response: { recordingId: string; paused: boolean; markers: Marker[] } | null
   }
   /**
    * Relays the elapsed time Record.tsx already tracks (it alone accounts for
@@ -219,7 +219,18 @@ export interface ApiSchema {
    * can show the running count.
    */
   'recording:addMarker': {
-    request: { elapsedMs: number }
+    /** `color` defaults to `DEFAULT_MARKER_COLOR` when omitted — the mini window doesn't offer a picker of its own. */
+    request: { elapsedMs: number; color?: string }
+    response: Marker
+  }
+  /**
+   * Updates a note on a marker added this session — the live counterpart to
+   * `recordings:setMarkers`, which only applies once a recording has
+   * stopped. Broadcast via `recording:markerUpdated` so every open window
+   * sees the note, not just whichever one it was typed into.
+   */
+  'recording:updateMarker': {
+    request: { id: string; notes: string }
     response: Marker
   }
   /**
@@ -504,6 +515,8 @@ export interface EventSchema {
   'recording:elapsedTick': { elapsedMs: number }
   /** A marker was added during the in-progress recording, from whichever window called `recording:addMarker`. */
   'recording:markerAdded': Marker
+  /** A marker's note was updated during the in-progress recording, from whichever window called `recording:updateMarker`. */
+  'recording:markerUpdated': Marker
   /**
    * A stop has begun and the session is gone in main, ahead of the (brief)
    * finalize work `recording:stopped` waits for. Every window still
@@ -586,6 +599,7 @@ export const CHANNELS = [
   'recording:status',
   'recording:elapsed',
   'recording:addMarker',
+  'recording:updateMarker',
   'recording:reportCaptureState',
   'shell:showItemInFolder',
   'logs:read',
@@ -632,6 +646,7 @@ export const EVENTS = [
   'recording:pauseChanged',
   'recording:elapsedTick',
   'recording:markerAdded',
+  'recording:markerUpdated',
   'recording:sessionEnded',
   'recording:stopped',
   'recording:discarded',

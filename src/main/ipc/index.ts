@@ -59,6 +59,7 @@ import {
   setPaused,
   startRecording,
   stopRecording,
+  updateMarker,
   writeChunk
 } from '../services/recorder'
 import { cancelModelDownload, deleteModel, downloadModel, listModelStatuses } from '../services/models'
@@ -244,7 +245,9 @@ const handlers: Handlers = {
     emit('recording:elapsedTick', { elapsedMs })
   },
 
-  'recording:addMarker': ({ elapsedMs }) => addMarker(elapsedMs),
+  'recording:addMarker': ({ elapsedMs, color }) => addMarker(elapsedMs, color),
+
+  'recording:updateMarker': ({ id, notes }) => updateMarker(id, notes),
 
   'recording:reportCaptureState': ({ kind, state, message }) => {
     emit('recording:captureWarning', { kind, state, message })

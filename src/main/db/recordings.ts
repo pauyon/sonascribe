@@ -41,6 +41,11 @@ function parseJsonArray<T>(json: string | null): T[] {
   }
 }
 
+/** A marker persisted before `notes` existed decodes with the key simply absent — backfilled here, once, rather than leaving `notes` `string | undefined` everywhere it's used. */
+function parseMarkers(json: string | null): Marker[] {
+  return parseJsonArray<Marker>(json).map((marker) => ({ ...marker, notes: marker.notes ?? '' }))
+}
+
 function toRecording(row: RecordingRow): Recording {
   return {
     id: row.id,
@@ -52,7 +57,7 @@ function toRecording(row: RecordingRow): Recording {
     status: row.status as Recording['status'],
     error: row.error,
     cuts: parseJsonArray<Cut>(row.cuts),
-    markers: parseJsonArray<Marker>(row.markers),
+    markers: parseMarkers(row.markers),
     transcriptStatus: row.transcript_status as Recording['transcriptStatus'],
     transcriptError: row.transcript_error,
     modelId: row.model_id,

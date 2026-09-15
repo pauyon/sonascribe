@@ -1219,29 +1219,57 @@ body {
   margin: 4px 0 12px;
 }
 
+/* A vertical stack of rows, one per marker — a note that's open needs a
+   full-width line under its row, not competing for space with its
+   neighbors. Each row itself (.markers__row) packs swatch/time/label/note
+   preview/remove onto a single line — this used to be two rows per marker
+   (a chip, plus a separate note row underneath), which turned a session
+   with more than a few markers into a wall of scrolling. */
 .markers {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   margin: 12px 0 20px;
 }
 
-.markers__chip {
-  display: inline-flex;
+/* Capped and scrollable rather than growing the whole page indefinitely —
+   same reasoning as .recorder__markers's own cap, just taller since this
+   page has more room to spare than the Record screen's fixed-size card.
+   "Clear all markers" sits outside this, in .markers itself, so it's always
+   reachable without scrolling down through a long list to find it. */
+.markers__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.markers__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.markers__row {
+  display: flex;
   align-items: center;
   gap: 6px;
   font-size: var(--fs-caption);
   color: var(--text-muted);
+  border-radius: var(--r-sm);
+  padding: 4px 6px;
+}
+
+.markers__row:hover {
   background: var(--bg-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 4px 6px 4px 6px;
 }
 
 .markers__swatch {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -1261,43 +1289,56 @@ body {
   border-radius: 50%;
 }
 
-.markers__label,
+.markers__index {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .markers__jump {
+  flex-shrink: 0;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--text-muted);
   font: inherit;
   font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
   padding: 0;
 }
 
-.markers__jump {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
-
-.markers__jump:hover,
-.markers__label:hover {
+.markers__jump:hover {
   color: var(--accent);
 }
 
+.markers__label {
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
 .markers__label-input {
+  flex-shrink: 0;
   font-size: var(--fs-caption);
   padding: 1px 4px;
   width: 90px;
 }
 
 .markers__orphaned {
+  flex-shrink: 0;
   font-size: var(--fs-caption);
   color: var(--text-muted);
   font-style: italic;
 }
 
+.markers__rename,
 .markers__remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -1308,14 +1349,31 @@ body {
   line-height: 1;
 }
 
+.markers__rename svg,
 .markers__remove svg {
   width: 11px;
   height: 11px;
 }
 
+.markers__rename:hover,
 .markers__remove:hover {
   background: var(--border);
   color: var(--text);
+}
+
+/* The note preview/placeholder — flex:1 so it soaks up whatever room is left
+   in the row and truncates instead of wrapping or pushing the remove button
+   off the edge. */
+.markers__note-trigger {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
 }
 
 /* ---------- live waveform (Record screen, while recording) ---------- */
@@ -2902,6 +2960,109 @@ button.settings-card__row--link:hover {
 .recorder__marker-count svg {
   width: 13px;
   height: 13px;
+}
+
+/* Capped height rather than growing unbounded — a long session's marker list
+   scrolls in place instead of pushing the transport controls off-screen. Rows
+   are collapsed to one line each by default (see .marker-note__trigger), so
+   this rarely fills even for a long session — only markers actively being
+   read or edited take up more than one line at a time. */
+.recorder__markers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 14px;
+  padding-right: 4px;
+}
+
+/* One marker's note: collapsed to a single row (`__trigger`) showing its
+   position, time, and either a one-line note preview or an "Add a note…"
+   placeholder; expands in place into `__panel` on click rather than as a
+   floating popover — this sits inside .recorder__markers's own
+   `overflow-y: auto`, and an absolutely positioned panel would get clipped
+   trying to escape it regardless of z-index (see the .settings-card__row
+   comment above for the same gotcha hit elsewhere in this file). */
+.marker-note {
+  width: 100%;
+}
+
+.marker-note__trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--r-sm);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: var(--fs-caption);
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.marker-note__trigger:hover,
+.marker-note__trigger[aria-expanded='true'] {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.marker-note__flag {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+.marker-note__index {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.marker-note__time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.marker-note__preview,
+.marker-note__placeholder {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.marker-note__preview {
+  color: var(--text);
+}
+
+.marker-note__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px;
+}
+
+.marker-note__input {
+  width: 100%;
+  font-family: inherit;
+  font-size: var(--fs-caption);
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  resize: vertical;
+}
+
+.marker-note--compact .marker-note__input {
+  min-height: 30px;
+  padding: 4px 6px;
 }
 
 .recorder__detail {

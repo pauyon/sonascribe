@@ -49,6 +49,13 @@ export interface Marker {
   timeMs: number
   label: string
   color: string
+  /**
+   * Longer free-text note, distinct from the short `label` — e.g. what to
+   * follow up on, not just what to call the moment. A marker persisted
+   * before this field existed reads back as `''`, backfilled where the JSON
+   * is decoded (see `db/recordings.ts`) rather than left `undefined`.
+   */
+  notes: string
 }
 
 /**

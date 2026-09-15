@@ -83,6 +83,7 @@ export default function Editor(): React.JSX.Element {
     addMarkerAt,
     rename: renameMarker,
     recolor: recolorMarker,
+    setNotes: setMarkerNotes,
     remove: removeMarker,
     clearAll: clearAllMarkers
   } = useMarkers(recording, refetch)
@@ -491,6 +492,7 @@ export default function Editor(): React.JSX.Element {
             onJump={(marker) => audio.seek(marker.timeMs)}
             onRename={renameMarker}
             onRecolor={recolorMarker}
+            onNote={setMarkerNotes}
             onRemove={removeMarker}
             onClearAll={clearAllMarkers}
           />
