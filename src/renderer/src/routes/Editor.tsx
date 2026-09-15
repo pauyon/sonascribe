@@ -46,6 +46,11 @@ export default function Editor(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('')
   const [askOpen, setAskOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = usePersistedBoolean('sonascribe.editorRailCollapsed', false)
+  /** Which rail panel is active when both markers and speakers exist — a tab
+      switcher rather than showing both at once, which meant two independent
+      scroll regions (each with its own scrollbar) crammed into one narrow
+      column. Not persisted — a low-stakes per-visit choice. */
+  const [railTab, setRailTab] = useState<'markers' | 'speakers'>('markers')
   /** Shared error surface for the clipboard-copy/export actions below. */
   const { error: actionAsyncError, run: runAction } = useAsyncAction()
 
@@ -223,6 +228,9 @@ export default function Editor(): React.JSX.Element {
   const visibleSpeakers = speakers.speakers.filter((s) => !speakerDeleteUndo.hiddenSpeakerIds.has(s.id))
   const showMarkerChips = annotatedMarkers.length > 0
   const showSpeakerChips = transcriptMode === 'speakers' && visibleSpeakers.length > 0
+  /** Tabs only make sense when there's an actual choice — one section alone
+      just fills the rail directly, no switcher needed. */
+  const showRailTabs = showMarkerChips && showSpeakerChips
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const visibleUtterances = (transcript.utterances ?? []).filter(
     (u) =>
@@ -338,99 +346,161 @@ export default function Editor(): React.JSX.Element {
   return (
     <div
       className="editor-shell"
-      style={{ '--rail-w': railOpen ? (railCollapsed ? '48px' : '300px') : '0px' } as React.CSSProperties}
+      style={{ '--rail-w': railOpen && !railCollapsed ? '300px' : '0px' } as React.CSSProperties}
     >
       <div className={playbackSrc ? 'page page--has-player' : 'page'}>
-        <header className="page__header">
-          <div>
-            <Link className="page__back" to="/library">
-              ← Library
-            </Link>
-            {draftTitle === null ? (
-              <h1
-                className="page__title-editable"
-                onClick={() => setDraftTitle(recording.title)}
-                title="Click to rename"
-              >
-                {recording.title}
-              </h1>
-            ) : (
-              <input
-                className="input input--title"
-                value={draftTitle}
-                autoFocus
-                onChange={(e) => setDraftTitle(e.target.value)}
-                onBlur={commitTitle}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void commitTitle()
-                  if (e.key === 'Escape') setDraftTitle(null)
-                }}
-              />
-            )}
-            <p className="page__subtitle">
-              <StatusPill status={recording.status} />
-              <span className="page__meta">{formatDuration(recording.durationMs)}</span>
-            </p>
-          </div>
+        <div className="editor-sticky-top">
+          <header className="page__header">
+            <div>
+              <Link className="page__back" to="/library">
+                ← Library
+              </Link>
+              {draftTitle === null ? (
+                <h1
+                  className="page__title-editable"
+                  onClick={() => setDraftTitle(recording.title)}
+                  title="Click to rename"
+                >
+                  {recording.title}
+                </h1>
+              ) : (
+                <input
+                  className="input input--title"
+                  value={draftTitle}
+                  autoFocus
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  onBlur={commitTitle}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void commitTitle()
+                    if (e.key === 'Escape') setDraftTitle(null)
+                  }}
+                />
+              )}
+              <p className="page__subtitle">
+                <StatusPill status={recording.status} />
+                <span className="page__meta">{formatDuration(recording.durationMs)}</span>
+              </p>
+            </div>
 
-          <div className="page__actions">
-            {hasTranscript && (
-              <IconButton
-                icon="search"
-                active={searchOpen}
-                aria-pressed={searchOpen}
-                aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
-                title="Search transcript"
-                onClick={() =>
-                  setSearchOpen((open) => {
-                    if (open) setSearchQuery('')
-                    return !open
-                  })
-                }
-              />
-            )}
-            {hasTranscript && (
-              <IconButton
-                icon="chat"
-                active={askOpen}
-                aria-pressed={askOpen}
-                aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
-                title="Ask about this recording"
-                onClick={() => setAskOpen((open) => !open)}
-              />
-            )}
-            {hasTranscript && (
-              <IconButton
-                icon="speakers"
-                active={hasSpeakers && transcriptMode === 'speakers'}
-                disabled={speakerBusy}
-                aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
-                aria-label={
-                  !hasSpeakers
-                    ? 'Detect speakers'
-                    : transcriptMode === 'speakers'
-                      ? 'Hide speaker labels'
-                      : 'Show speaker labels'
-                }
-                title={
-                  speakerBusy
-                    ? 'Detecting speakers…'
-                    : !hasSpeakers
+            <div className="page__actions">
+              {hasTranscript && (
+                <IconButton
+                  icon="search"
+                  active={searchOpen}
+                  aria-pressed={searchOpen}
+                  aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
+                  title="Search transcript"
+                  onClick={() =>
+                    setSearchOpen((open) => {
+                      if (open) setSearchQuery('')
+                      return !open
+                    })
+                  }
+                />
+              )}
+              {hasTranscript && (
+                <IconButton
+                  icon="chat"
+                  active={askOpen}
+                  aria-pressed={askOpen}
+                  aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
+                  title="Ask about this recording"
+                  onClick={() => setAskOpen((open) => !open)}
+                />
+              )}
+              {hasTranscript && (
+                <IconButton
+                  icon="speakers"
+                  active={hasSpeakers && transcriptMode === 'speakers'}
+                  disabled={speakerBusy}
+                  aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
+                  aria-label={
+                    !hasSpeakers
                       ? 'Detect speakers'
                       : transcriptMode === 'speakers'
-                        ? 'Showing speakers & timestamps'
-                        : 'Showing timestamps only'
-                }
-                onClick={() =>
-                  hasSpeakers
-                    ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
-                    : void speakers.detect()
+                        ? 'Hide speaker labels'
+                        : 'Show speaker labels'
+                  }
+                  title={
+                    speakerBusy
+                      ? 'Detecting speakers…'
+                      : !hasSpeakers
+                        ? 'Detect speakers'
+                        : transcriptMode === 'speakers'
+                          ? 'Showing speakers & timestamps'
+                          : 'Showing timestamps only'
+                  }
+                  onClick={() =>
+                    hasSpeakers
+                      ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
+                      : void speakers.detect()
+                  }
+                />
+              )}
+              {(showMarkerChips || showSpeakerChips) && (
+                <IconButton
+                  icon="sidebarToggle"
+                  active={!railCollapsed}
+                  aria-pressed={!railCollapsed}
+                  aria-label={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
+                  title={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
+                  onClick={() => setRailCollapsed(!railCollapsed)}
+                />
+              )}
+              <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
+            </div>
+          </header>
+
+          {askOpen && (
+            <div className="ask-card">
+              <AskPanel
+                recordingId={recording.id}
+                onSeek={audio.seek}
+                onNavigateToRecording={(targetId, ms) =>
+                  navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
                 }
               />
-            )}
-            <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
-          </div>
-        </header>
+            </div>
+          )}
+
+          {searchOpen && (
+            <div className="search-bar">
+              <Icon name="search" className="search-bar__icon" />
+              <input
+                type="text"
+                className="input search-bar__input"
+                value={searchQuery}
+                autoFocus
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="Search transcript…"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSearchOpen(false)
+                    setSearchQuery('')
+                  }
+                }}
+              />
+              {normalizedSearch && (
+                <span className="search-bar__count">
+                  {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
+                </span>
+              )}
+              <button
+                type="button"
+                className="search-bar__close"
+                onClick={() => {
+                  setSearchOpen(false)
+                  setSearchQuery('')
+                }}
+                aria-label="Close search"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
+        </div>
 
         {confirmingDelete && (
           <ConfirmDialog
@@ -516,56 +586,6 @@ export default function Editor(): React.JSX.Element {
               </div>
             )}
 
-            {askOpen && (
-              <div className="ask-card">
-                <AskPanel
-                  recordingId={recording.id}
-                  onSeek={audio.seek}
-                  onNavigateToRecording={(targetId, ms) =>
-                    navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
-                  }
-                />
-              </div>
-            )}
-
-            {searchOpen && (
-              <div className="search-bar">
-                <Icon name="search" className="search-bar__icon" />
-                <input
-                  type="text"
-                  className="input search-bar__input"
-                  value={searchQuery}
-                  autoFocus
-                  onFocus={(e) => e.currentTarget.select()}
-                  placeholder="Search transcript…"
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      e.preventDefault()
-                      setSearchOpen(false)
-                      setSearchQuery('')
-                    }
-                  }}
-                />
-                {normalizedSearch && (
-                  <span className="search-bar__count">
-                    {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="search-bar__close"
-                  onClick={() => {
-                    setSearchOpen(false)
-                    setSearchQuery('')
-                  }}
-                  aria-label="Close search"
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            )}
-
             {recording.transcriptStatus === 'ready' && transcript.utterances && (
               <TranscriptPanel
                 utterances={visibleUtterances}
@@ -598,18 +618,36 @@ export default function Editor(): React.JSX.Element {
 
       {railOpen && (
         <aside className={railCollapsed ? 'editor-rail editor-rail--collapsed' : 'editor-rail'}>
-          <IconButton
-            icon="chevronRight"
-            size="sm"
-            className="editor-rail__toggle"
-            aria-pressed={railCollapsed}
-            aria-label={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
-            title={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
-            onClick={() => setRailCollapsed(!railCollapsed)}
-          />
+          {showRailTabs && (
+            <div className="editor-rail__tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={railTab === 'markers'}
+                className={railTab === 'markers' ? 'editor-rail__tab editor-rail__tab--active' : 'editor-rail__tab'}
+                onClick={() => setRailTab('markers')}
+              >
+                Markers · {annotatedMarkers.length}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={railTab === 'speakers'}
+                className={railTab === 'speakers' ? 'editor-rail__tab editor-rail__tab--active' : 'editor-rail__tab'}
+                onClick={() => setRailTab('speakers')}
+              >
+                Speakers · {visibleSpeakers.length}
+              </button>
+            </div>
+          )}
 
-          {!railCollapsed && (
-            <>
+          {/* Both panels stay mounted whenever both exist — even the
+              inactive tab — hidden via the `hidden` attribute rather than
+              unmounted, so switching tabs doesn't lose an open note editor
+              or a merge in progress. Same reasoning as staying mounted
+              while the whole rail is collapsed, below. */}
+          {showMarkerChips && (
+            <div className="editor-rail__panel" hidden={showRailTabs && railTab !== 'markers'}>
               <MarkerChips
                 markers={annotatedMarkers}
                 onJump={(marker) => audio.seek(marker.timeMs)}
@@ -619,21 +657,23 @@ export default function Editor(): React.JSX.Element {
                 onRemove={removeMarker}
                 onClearAll={clearAllMarkers}
               />
+            </div>
+          )}
 
-              {showSpeakerChips && (
-                <SpeakerChips
-                  speakers={visibleSpeakers}
-                  utterances={transcript.utterances ?? []}
-                  filter={speakerFilter}
-                  onFilterChange={setSpeakerFilter}
-                  onRename={speakers.rename}
-                  onRecolor={speakers.recolor}
-                  onMerge={speakers.merge}
-                  onRemove={speakerDeleteUndo.removePending}
-                  onCreate={speakers.create}
-                />
-              )}
-            </>
+          {showSpeakerChips && (
+            <div className="editor-rail__panel" hidden={showRailTabs && railTab !== 'speakers'}>
+              <SpeakerChips
+                speakers={visibleSpeakers}
+                utterances={transcript.utterances ?? []}
+                filter={speakerFilter}
+                onFilterChange={setSpeakerFilter}
+                onRename={speakers.rename}
+                onRecolor={speakers.recolor}
+                onMerge={speakers.merge}
+                onRemove={speakerDeleteUndo.removePending}
+                onCreate={speakers.create}
+              />
+            </div>
           )}
         </aside>
       )}

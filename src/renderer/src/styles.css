@@ -1,3 +1,17 @@
+/* Registered as <length> so `.app`'s own `transition: --sidebar-w` can
+   actually interpolate it — an ordinary custom property is just a text
+   substitution to the browser and doesn't animate. Every consumer
+   (`.app`'s grid track, `.player--floating`'s left offset, `.dropzone`'s
+   inset) re-evaluates each frame as it animates, so one transition drives
+   all three in sync. `--rail-w` (the same idea for the right rail) isn't
+   registered — the rail's own width change is an instant snap, not a
+   transition, so there's nothing for a registered type to interpolate. */
+@property --sidebar-w {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 220px;
+}
+
 /*
  * Brand tokens.
  *
@@ -158,6 +172,7 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   height: 100%;
+  transition: --sidebar-w 200ms ease;
 }
 
 .app[data-sidebar-collapsed] {
@@ -273,15 +288,19 @@ body {
 
 .page {
   padding: 38px 32px 48px;
-  max-width: 1000px;
-  /* Only takes effect where .page is actually a flex item — Editor.tsx's
-     .editor-shell. Elsewhere (every other route) a lone div ignores both
-     properties entirely. Without them, .page (full of long transcript
-     text) refused to shrink below its own content's natural width once
-     the rail's fixed 300px was also competing for room, forcing the whole
-     window to scroll horizontally instead of the transcript column
-     shrinking to fit — the exact same min-width:auto trap the rail's
-     chips just went through, one flex level up. */
+  /* No max-width — fills whatever width .content gives it, all the way to
+     the far edge, on every route. (Library's own card list stays readable
+     on its own via .cards' separate 760px cap; this was only ever
+     constraining the page shell around it, like the header row's action
+     buttons, which had no reason to stop short of the edge.)
+     flex/min-width only take effect where .page is actually a flex item —
+     Editor.tsx's .editor-shell. Elsewhere (every other route) a lone div
+     ignores both properties entirely. Without them, .page (full of long
+     transcript text) refused to shrink below its own content's natural
+     width once the rail's fixed 300px was also competing for room,
+     forcing the whole window to scroll horizontally instead of the
+     transcript column shrinking to fit — the exact same min-width:auto
+     trap the rail's chips went through, one flex level up. */
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -297,24 +316,32 @@ body {
 
 /* Editor.tsx only: wraps .page and its sibling .editor-rail in a row so
    the rail sits beside the transcript rather than above it. .page keeps
-   its own max-width and everything about it unchanged — the header and
-   transcript stay scoped to that column, not stretched across the rail. */
+   everything about it unchanged — the header and transcript stay scoped
+   to that column, not stretched across the rail. No `gap` here — the
+   spacing between the two lives on .editor-rail's own `margin-left`
+   instead, so it can collapse to 0 alongside the rail's width when
+   closed rather than leaving a fixed gap behind. */
 .editor-shell {
   display: flex;
   align-items: flex-start;
-  gap: 24px;
 }
 
 /* Sticks against `.content`'s own scroll area, same mechanism `.recent`
    already uses to scroll independently inside the sidebar's fixed-height
-   column. A fixed `height` (not `max-height`) rather than scrolling as one
-   unit — .markers and .speakers below split this height evenly and each
-   scrolls its own list internally, so a long marker list doesn't shove a
-   short speaker list out of view (or vice versa) the way one shared
-   scroll region would. */
+   column. A fixed `height` (not `max-height`) rather than scrolling as
+   one unit — when both Markers and Speakers exist, .editor-rail__tabs
+   below switches between them one at a time, each getting this whole
+   height and its own internal scroll, rather than splitting it and
+   showing two scrollbars in one narrow column at once.
+   No width/margin-left transition here (there was one) — animating a
+   300px-wide flex sibling forces `.page` (the transcript, often a
+   screen's worth of text) to relayout on every frame of the transition,
+   which was visibly choppy in practice. An instant snap reads better
+   than a janky animation. */
 .editor-rail {
   flex: none;
   width: 300px;
+  margin-left: 24px;
   /* Without this, an unshrinkable child (a long speaker name with nothing
      to truncate it, before the .chip__name fix below) forces this column
      wider than 300px regardless of the explicit width above — box-sizing
@@ -330,26 +357,83 @@ body {
   padding: 0 4px 8px;
 }
 
+/* Truly zero, not a sliver — MarkerChips/SpeakerChips stay mounted while
+   collapsed (so an in-progress note edit or merge survives a collapse)
+   and get clipped by the `overflow: hidden` above; at 0 width/padding
+   there's nothing for that clip to cut through, unlike a non-zero sliver
+   which showed broken-looking partial content. The toggle for this now
+   lives in .page__actions, in the header, not inside the rail itself —
+   it has to be reachable even while the rail is fully gone. */
 .editor-rail--collapsed {
-  width: 48px;
+  width: 0;
+  margin-left: 0;
+  padding: 0;
 }
 
-.editor-rail__toggle {
-  align-self: flex-start;
+/* A segmented control, not a full tab bar — two buttons in a tinted
+   track, the active one lifted to the surface colour with a shadow.
+   Flex:none (unlike .editor-rail__panel below) — this row sizes to its
+   own content, it isn't competing for the rail's height. */
+.editor-rail__tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-hover);
+  border-radius: var(--r-sm);
 }
 
-.editor-rail__toggle svg {
-  transition: transform 120ms ease;
+.editor-rail__tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: calc(var(--r-sm) - 2px);
+  font: inherit;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
 }
 
-/* Points right (the chevron's default orientation) while expanded — "click
-   to collapse toward the edge" — and flips to point left once collapsed,
-   toward the transcript it would expand back into. Mirrors the sidebar's
-   toggle in spirit, not literally: that one uses a static icon since it
-   sits on the left edge, where "point toward where it opens" would always
-   just mean pointing right regardless of state. */
-.editor-rail__toggle[aria-pressed='true'] svg {
-  transform: rotate(180deg);
+.editor-rail__tab:hover {
+  color: var(--text);
+}
+
+.editor-rail__tab--active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+/* Wraps each of MarkerChips/SpeakerChips so whichever is visible gets the
+   rail's full remaining height (flex:1) — the same flex:1/min-height:0
+   .markers and .speakers already carry passes straight through this
+   wrapper to them. The inactive tab's wrapper is `hidden` (see
+   Editor.tsx), which drops it out of flex layout entirely, so the one
+   panel showing genuinely gets the whole height rather than splitting it
+   with an invisible sibling. */
+.editor-rail__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The `display: flex` above has the same specificity as the browser's own
+   `[hidden] { display: none }` UA rule, and an author stylesheet always
+   wins a tie against the UA stylesheet — so without this, the inactive
+   tab's `hidden` attribute (Editor.tsx) was silently overridden and both
+   panels stayed visible at once. This one needs to out-specify it. */
+.editor-rail__panel[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app {
+    transition: none;
+  }
 }
 
 .page__header {
@@ -358,6 +442,29 @@ body {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+/* Wraps the header plus the Ask/search panels it opens (Editor.tsx only —
+   every other route just renders .page__header on its own with no
+   wrapper to hang this on, and shouldn't stick). Keeps the title
+   (rename-in-place), status, and action icons reachable without
+   scrolling back up through a long transcript — and just as
+   importantly, keeps Ask/search themselves inside the pinned area they
+   were opened from. Both panels used to render further down, after the
+   player, so opening one — its input `autoFocus`es — made the browser
+   scroll that far-off input into view, which looked like "clicking
+   search jumps back to the top" regardless of where you'd scrolled to
+   read the transcript. Now the input is already inside the sticky
+   region, so there's nothing off-screen to scroll to. One border on the
+   wrapper rather than the header alone, so it sits at the bottom of
+   whichever panel is actually open instead of a line splitting the
+   header from search/Ask beneath it. */
+.editor-shell .editor-sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
 }
 
 .page h1 {
@@ -3784,7 +3891,6 @@ select {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 760px;
 }
 
 .rec {
