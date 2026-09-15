@@ -172,6 +172,12 @@ export default function MarkerChips({
 
   return (
     <div className="markers">
+      <div className="chip-section__header">
+        <span className="chip-section__label">Markers</span>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={onClearAll}>
+          Clear all
+        </button>
+      </div>
       <div className="markers__list">
         {markers.map((marker, i) => (
           <MarkerChip
@@ -187,9 +193,6 @@ export default function MarkerChips({
           />
         ))}
       </div>
-      <button type="button" className="btn btn--ghost btn--sm" onClick={onClearAll}>
-        Clear all markers
-      </button>
     </div>
   )
 }

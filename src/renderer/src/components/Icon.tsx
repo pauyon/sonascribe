@@ -134,6 +134,12 @@ const STROKE = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  sidebarToggle: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </>
+  ),
   /** Half-filled circle for the Appearance setting — the left path overrides
       the parent's fill="none" with its own fill, which SVG allows even
       though every other icon here is stroke-only. */

@@ -11,6 +11,7 @@ import { useTranscript } from '../lib/useTranscript'
 import { useSpeakers } from '../lib/useSpeakers'
 import { useSpeakerDeleteUndo } from '../lib/useSpeakerDeleteUndo'
 import { useAsyncAction } from '../lib/useAsyncAction'
+import { usePersistedBoolean } from '../lib/usePersistedBoolean'
 import { copyPlainText, copyWithSpeakers, copyWithTimestamps } from '../lib/transcriptCopy'
 import { cutAt, realToVirtual } from '../lib/cuts'
 import { formatDuration } from '../lib/format'
@@ -44,6 +45,7 @@ export default function Editor(): React.JSX.Element {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [askOpen, setAskOpen] = useState(false)
+  const [railCollapsed, setRailCollapsed] = usePersistedBoolean('sonascribe.editorRailCollapsed', false)
   /** Shared error surface for the clipboard-copy/export actions below. */
   const { error: actionAsyncError, run: runAction } = useAsyncAction()
 
@@ -218,6 +220,9 @@ export default function Editor(): React.JSX.Element {
 
   const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
   const hasSpeakers = speakers.speakers.length > 0
+  const visibleSpeakers = speakers.speakers.filter((s) => !speakerDeleteUndo.hiddenSpeakerIds.has(s.id))
+  const showMarkerChips = annotatedMarkers.length > 0
+  const showSpeakerChips = transcriptMode === 'speakers' && visibleSpeakers.length > 0
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const visibleUtterances = (transcript.utterances ?? []).filter(
     (u) =>
@@ -328,284 +333,309 @@ export default function Editor(): React.JSX.Element {
     onMarkerColorChange: setMarkerColor
   }
 
-  return (
-    <div className={playbackSrc ? 'page page--has-player' : 'page'}>
-      <header className="page__header">
-        <div>
-          <Link className="page__back" to="/library">
-            ← Library
-          </Link>
-          {draftTitle === null ? (
-            <h1
-              className="page__title-editable"
-              onClick={() => setDraftTitle(recording.title)}
-              title="Click to rename"
-            >
-              {recording.title}
-            </h1>
-          ) : (
-            <input
-              className="input input--title"
-              value={draftTitle}
-              autoFocus
-              onChange={(e) => setDraftTitle(e.target.value)}
-              onBlur={commitTitle}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void commitTitle()
-                if (e.key === 'Escape') setDraftTitle(null)
-              }}
-            />
-          )}
-          <p className="page__subtitle">
-            <StatusPill status={recording.status} />
-            <span className="page__meta">{formatDuration(recording.durationMs)}</span>
-          </p>
-        </div>
+  const railOpen = playbackSrc && (showMarkerChips || showSpeakerChips)
 
-        <div className="page__actions">
-          {hasTranscript && (
-            <IconButton
-              icon="search"
-              active={searchOpen}
-              aria-pressed={searchOpen}
-              aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
-              title="Search transcript"
-              onClick={() =>
-                setSearchOpen((open) => {
-                  if (open) setSearchQuery('')
-                  return !open
-                })
-              }
-            />
-          )}
-          {hasTranscript && (
-            <IconButton
-              icon="chat"
-              active={askOpen}
-              aria-pressed={askOpen}
-              aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
-              title="Ask about this recording"
-              onClick={() => setAskOpen((open) => !open)}
-            />
-          )}
-          {hasTranscript && (
-            <IconButton
-              icon="speakers"
-              active={hasSpeakers && transcriptMode === 'speakers'}
-              disabled={speakerBusy}
-              aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
-              aria-label={
-                !hasSpeakers
-                  ? 'Detect speakers'
-                  : transcriptMode === 'speakers'
-                    ? 'Hide speaker labels'
-                    : 'Show speaker labels'
-              }
-              title={
-                speakerBusy
-                  ? 'Detecting speakers…'
-                  : !hasSpeakers
+  return (
+    <div
+      className="editor-shell"
+      style={{ '--rail-w': railOpen ? (railCollapsed ? '48px' : '300px') : '0px' } as React.CSSProperties}
+    >
+      <div className={playbackSrc ? 'page page--has-player' : 'page'}>
+        <header className="page__header">
+          <div>
+            <Link className="page__back" to="/library">
+              ← Library
+            </Link>
+            {draftTitle === null ? (
+              <h1
+                className="page__title-editable"
+                onClick={() => setDraftTitle(recording.title)}
+                title="Click to rename"
+              >
+                {recording.title}
+              </h1>
+            ) : (
+              <input
+                className="input input--title"
+                value={draftTitle}
+                autoFocus
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void commitTitle()
+                  if (e.key === 'Escape') setDraftTitle(null)
+                }}
+              />
+            )}
+            <p className="page__subtitle">
+              <StatusPill status={recording.status} />
+              <span className="page__meta">{formatDuration(recording.durationMs)}</span>
+            </p>
+          </div>
+
+          <div className="page__actions">
+            {hasTranscript && (
+              <IconButton
+                icon="search"
+                active={searchOpen}
+                aria-pressed={searchOpen}
+                aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
+                title="Search transcript"
+                onClick={() =>
+                  setSearchOpen((open) => {
+                    if (open) setSearchQuery('')
+                    return !open
+                  })
+                }
+              />
+            )}
+            {hasTranscript && (
+              <IconButton
+                icon="chat"
+                active={askOpen}
+                aria-pressed={askOpen}
+                aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
+                title="Ask about this recording"
+                onClick={() => setAskOpen((open) => !open)}
+              />
+            )}
+            {hasTranscript && (
+              <IconButton
+                icon="speakers"
+                active={hasSpeakers && transcriptMode === 'speakers'}
+                disabled={speakerBusy}
+                aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
+                aria-label={
+                  !hasSpeakers
                     ? 'Detect speakers'
                     : transcriptMode === 'speakers'
-                      ? 'Showing speakers & timestamps'
-                      : 'Showing timestamps only'
-              }
-              onClick={() =>
-                hasSpeakers
-                  ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
-                  : void speakers.detect()
-              }
-            />
-          )}
-          <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
-        </div>
-      </header>
-
-      {confirmingDelete && (
-        <ConfirmDialog
-          title="Delete recording?"
-          message={
-            <>
-              This can&rsquo;t be undone — the audio file, and any cuts or markers on it, will
-              be permanently removed.
-            </>
-          }
-          confirmLabel="Delete permanently"
-          onConfirm={deleteRecording}
-          onCancel={() => setConfirmingDelete(false)}
-        />
-      )}
-
-      {recording.error && <div className="banner banner--error">{recording.error}</div>}
-      {actionError && <div className="banner banner--error">{actionError}</div>}
-      {actionAsyncError && <div className="banner banner--error">{actionAsyncError}</div>}
-      {transcript.startError && <div className="banner banner--error">{transcript.startError}</div>}
-      {recording.transcriptStatus === 'failed' && recording.transcriptError && (
-        <div className="banner banner--error">{recording.transcriptError}</div>
-      )}
-      {speakers.detectError && <div className="banner banner--error">{speakers.detectError}</div>}
-      {recording.speakerStatus === 'failed' && recording.speakerError && (
-        <div className="banner banner--error">{recording.speakerError}</div>
-      )}
-
-      {(recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting') && (
-        <div className="toolbar">
-          <div style={{ flex: 1 }}>
-            <ProgressBar
-              fraction={speakers.progress}
-              label={
-                recording.speakerStatus === 'queued'
-                  ? 'Queued…'
-                  : speakers.progress == null
+                      ? 'Hide speaker labels'
+                      : 'Show speaker labels'
+                }
+                title={
+                  speakerBusy
                     ? 'Detecting speakers…'
-                    : `Detecting speakers… ${Math.round(speakers.progress * 100)}%`
-              }
-            />
+                    : !hasSpeakers
+                      ? 'Detect speakers'
+                      : transcriptMode === 'speakers'
+                        ? 'Showing speakers & timestamps'
+                        : 'Showing timestamps only'
+                }
+                onClick={() =>
+                  hasSpeakers
+                    ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
+                    : void speakers.detect()
+                }
+              />
+            )}
+            <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
           </div>
-          <button type="button" className="btn btn--ghost btn--sm" onClick={speakers.cancel}>
-            Cancel
-          </button>
-        </div>
-      )}
+        </header>
 
-      {(recording.transcriptStatus === 'queued' || recording.transcriptStatus === 'transcribing') && (
-        <div className="toolbar">
-          <div style={{ flex: 1 }}>
-            <ProgressBar
-              fraction={transcript.progress}
-              label={
-                recording.transcriptStatus === 'queued'
-                  ? 'Queued…'
-                  : transcript.progress == null
-                    ? 'Transcribing…'
-                    : `Transcribing… ${Math.round(transcript.progress * 100)}%`
-              }
-            />
-          </div>
-          <button type="button" className="btn btn--ghost btn--sm" onClick={transcript.cancel}>
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {playbackSrc && (
-        <>
-          <audio ref={audio.ref} src={playbackSrc} preload="metadata" {...audio.bind} />
-          <div ref={playerSentinelRef}>
-            <PlayerBar {...playerProps} />
-          </div>
-          {playerFloating && <PlayerBar {...playerProps} floating />}
-
-          <MarkerChips
-            markers={annotatedMarkers}
-            onJump={(marker) => audio.seek(marker.timeMs)}
-            onRename={renameMarker}
-            onRecolor={recolorMarker}
-            onNote={setMarkerNotes}
-            onRemove={removeMarker}
-            onClearAll={clearAllMarkers}
+        {confirmingDelete && (
+          <ConfirmDialog
+            title="Delete recording?"
+            message={
+              <>
+                This can&rsquo;t be undone — the audio file, and any cuts or markers on it, will
+                be permanently removed.
+              </>
+            }
+            confirmLabel="Delete permanently"
+            onConfirm={deleteRecording}
+            onCancel={() => setConfirmingDelete(false)}
           />
+        )}
 
-          {speakerDeleteUndo.pendingDelete && (
-            <div className="toast">
-              <span>{speakerDeleteUndo.pendingDelete.label}</span>
-              <button type="button" className="toast__action" onClick={speakerDeleteUndo.undo}>
-                Undo
-              </button>
-            </div>
-          )}
+        {recording.error && <div className="banner banner--error">{recording.error}</div>}
+        {actionError && <div className="banner banner--error">{actionError}</div>}
+        {actionAsyncError && <div className="banner banner--error">{actionAsyncError}</div>}
+        {transcript.startError && <div className="banner banner--error">{transcript.startError}</div>}
+        {recording.transcriptStatus === 'failed' && recording.transcriptError && (
+          <div className="banner banner--error">{recording.transcriptError}</div>
+        )}
+        {speakers.detectError && <div className="banner banner--error">{speakers.detectError}</div>}
+        {recording.speakerStatus === 'failed' && recording.speakerError && (
+          <div className="banner banner--error">{recording.speakerError}</div>
+        )}
 
-          {askOpen && (
-            <div className="ask-card">
-              <AskPanel
-                recordingId={recording.id}
-                onSeek={audio.seek}
-                onNavigateToRecording={(targetId, ms) =>
-                  navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
+        {(recording.speakerStatus === 'queued' || recording.speakerStatus === 'detecting') && (
+          <div className="toolbar">
+            <div style={{ flex: 1 }}>
+              <ProgressBar
+                fraction={speakers.progress}
+                label={
+                  recording.speakerStatus === 'queued'
+                    ? 'Queued…'
+                    : speakers.progress == null
+                      ? 'Detecting speakers…'
+                      : `Detecting speakers… ${Math.round(speakers.progress * 100)}%`
                 }
               />
             </div>
-          )}
+            <button type="button" className="btn btn--ghost btn--sm" onClick={speakers.cancel}>
+              Cancel
+            </button>
+          </div>
+        )}
 
-          {searchOpen && (
-            <div className="search-bar">
-              <Icon name="search" className="search-bar__icon" />
-              <input
-                type="text"
-                className="input search-bar__input"
-                value={searchQuery}
-                autoFocus
-                onFocus={(e) => e.currentTarget.select()}
-                placeholder="Search transcript…"
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    e.preventDefault()
+        {(recording.transcriptStatus === 'queued' || recording.transcriptStatus === 'transcribing') && (
+          <div className="toolbar">
+            <div style={{ flex: 1 }}>
+              <ProgressBar
+                fraction={transcript.progress}
+                label={
+                  recording.transcriptStatus === 'queued'
+                    ? 'Queued…'
+                    : transcript.progress == null
+                      ? 'Transcribing…'
+                      : `Transcribing… ${Math.round(transcript.progress * 100)}%`
+                }
+              />
+            </div>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={transcript.cancel}>
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {playbackSrc && (
+          <>
+            <audio ref={audio.ref} src={playbackSrc} preload="metadata" {...audio.bind} />
+            <div ref={playerSentinelRef}>
+              <PlayerBar {...playerProps} />
+            </div>
+            {playerFloating && <PlayerBar {...playerProps} floating />}
+
+            {speakerDeleteUndo.pendingDelete && (
+              <div className="toast">
+                <span>{speakerDeleteUndo.pendingDelete.label}</span>
+                <button type="button" className="toast__action" onClick={speakerDeleteUndo.undo}>
+                  Undo
+                </button>
+              </div>
+            )}
+
+            {askOpen && (
+              <div className="ask-card">
+                <AskPanel
+                  recordingId={recording.id}
+                  onSeek={audio.seek}
+                  onNavigateToRecording={(targetId, ms) =>
+                    navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
+                  }
+                />
+              </div>
+            )}
+
+            {searchOpen && (
+              <div className="search-bar">
+                <Icon name="search" className="search-bar__icon" />
+                <input
+                  type="text"
+                  className="input search-bar__input"
+                  value={searchQuery}
+                  autoFocus
+                  onFocus={(e) => e.currentTarget.select()}
+                  placeholder="Search transcript…"
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setSearchOpen(false)
+                      setSearchQuery('')
+                    }
+                  }}
+                />
+                {normalizedSearch && (
+                  <span className="search-bar__count">
+                    {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="search-bar__close"
+                  onClick={() => {
                     setSearchOpen(false)
                     setSearchQuery('')
-                  }
-                }}
+                  }}
+                  aria-label="Close search"
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            )}
+
+            {recording.transcriptStatus === 'ready' && transcript.utterances && (
+              <TranscriptPanel
+                utterances={visibleUtterances}
+                currentMs={audio.currentMs}
+                onSeek={audio.seek}
+                mode={transcriptMode}
+                speakers={visibleSpeakers}
+                onReassignSpeaker={speakers.reassignUtterance}
+                onEditText={transcript.editText}
+                onSplitUtterance={transcript.splitUtterance}
+                markers={markers}
+                highlightQuery={normalizedSearch || undefined}
+                isolatedSpeakerName={speakerFilter ? (speakers.speakers.find((s) => s.id === speakerFilter)?.displayName ?? null) : null}
               />
-              {normalizedSearch && (
-                <span className="search-bar__count">
-                  {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
-                </span>
+            )}
+          </>
+        )}
+
+        {!playbackSrc && (
+          <div className="empty">
+            <h2>{recording.status === 'normalizing' ? 'Preparing…' : 'No audio'}</h2>
+            <p>
+              {recording.status === 'normalizing'
+                ? 'This recording is still being prepared.'
+                : 'This recording has no audio file.'}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {railOpen && (
+        <aside className={railCollapsed ? 'editor-rail editor-rail--collapsed' : 'editor-rail'}>
+          <IconButton
+            icon="chevronRight"
+            size="sm"
+            className="editor-rail__toggle"
+            aria-pressed={railCollapsed}
+            aria-label={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
+            title={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
+            onClick={() => setRailCollapsed(!railCollapsed)}
+          />
+
+          {!railCollapsed && (
+            <>
+              <MarkerChips
+                markers={annotatedMarkers}
+                onJump={(marker) => audio.seek(marker.timeMs)}
+                onRename={renameMarker}
+                onRecolor={recolorMarker}
+                onNote={setMarkerNotes}
+                onRemove={removeMarker}
+                onClearAll={clearAllMarkers}
+              />
+
+              {showSpeakerChips && (
+                <SpeakerChips
+                  speakers={visibleSpeakers}
+                  utterances={transcript.utterances ?? []}
+                  filter={speakerFilter}
+                  onFilterChange={setSpeakerFilter}
+                  onRename={speakers.rename}
+                  onRecolor={speakers.recolor}
+                  onMerge={speakers.merge}
+                  onRemove={speakerDeleteUndo.removePending}
+                  onCreate={speakers.create}
+                />
               )}
-              <button
-                type="button"
-                className="search-bar__close"
-                onClick={() => {
-                  setSearchOpen(false)
-                  setSearchQuery('')
-                }}
-                aria-label="Close search"
-              >
-                <Icon name="close" />
-              </button>
-            </div>
+            </>
           )}
-
-          {transcriptMode === 'speakers' && (
-            <SpeakerChips
-              speakers={speakers.speakers.filter((s) => !speakerDeleteUndo.hiddenSpeakerIds.has(s.id))}
-              utterances={transcript.utterances ?? []}
-              filter={speakerFilter}
-              onFilterChange={setSpeakerFilter}
-              onRename={speakers.rename}
-              onRecolor={speakers.recolor}
-              onMerge={speakers.merge}
-              onRemove={speakerDeleteUndo.removePending}
-              onCreate={speakers.create}
-            />
-          )}
-
-          {recording.transcriptStatus === 'ready' && transcript.utterances && (
-            <TranscriptPanel
-              utterances={visibleUtterances}
-              currentMs={audio.currentMs}
-              onSeek={audio.seek}
-              mode={transcriptMode}
-              speakers={speakers.speakers.filter((s) => !speakerDeleteUndo.hiddenSpeakerIds.has(s.id))}
-              onReassignSpeaker={speakers.reassignUtterance}
-              onEditText={transcript.editText}
-              onSplitUtterance={transcript.splitUtterance}
-              markers={markers}
-              highlightQuery={normalizedSearch || undefined}
-              isolatedSpeakerName={speakerFilter ? (speakers.speakers.find((s) => s.id === speakerFilter)?.displayName ?? null) : null}
-            />
-          )}
-        </>
-      )}
-
-      {!playbackSrc && (
-        <div className="empty">
-          <h2>{recording.status === 'normalizing' ? 'Preparing…' : 'No audio'}</h2>
-          <p>
-            {recording.status === 'normalizing'
-              ? 'This recording is still being prepared.'
-              : 'This recording has no audio file.'}
-          </p>
-        </div>
+        </aside>
       )}
     </div>
   )

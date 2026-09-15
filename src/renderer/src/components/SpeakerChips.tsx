@@ -105,7 +105,7 @@ function SpeakerChip({
         </button>
       )}
 
-      <span className="chip__count">{count}</span>
+      <span className="chip__count">({count})</span>
 
       {!mergeMode && (
         <button
@@ -201,6 +201,9 @@ export default function SpeakerChips({
 
   return (
     <div className="speakers">
+      <div className="chip-section__header">
+        <span className="chip-section__label">Speakers</span>
+      </div>
       <div className="speakers__list">
         {speakers.map((speaker) => (
           <SpeakerChip
