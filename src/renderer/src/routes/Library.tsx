@@ -4,6 +4,7 @@ import type { ImportProgress, Recording } from '@shared/types'
 import { SUPPORTED_MEDIA_EXTENSIONS } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import RecordingCard from '../components/RecordingCard'
+import OverflowMenu, { type OverflowMenuItem } from '../components/OverflowMenu'
 
 export default function Library(): React.JSX.Element {
   const navigate = useNavigate()
@@ -20,6 +21,8 @@ export default function Library(): React.JSX.Element {
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [cardActionError, setCardActionError] = useState<string | null>(null)
+  /** Result of the last library-wide bundle export/import — a success summary, not an error. */
+  const [bundleNotice, setBundleNotice] = useState<string | null>(null)
   // Drag events fire for every child element; a counter avoids the highlight
   // flickering as the pointer moves between them.
   const dragDepth = useRef(0)
@@ -68,6 +71,40 @@ export default function Library(): React.JSX.Element {
   async function pickFiles(): Promise<void> {
     const paths = await api.invoke('dialog:pickMediaFiles')
     await importPaths(paths)
+  }
+
+  async function exportLibraryBundle(): Promise<void> {
+    setImportError(null)
+    setBundleNotice(null)
+    try {
+      const result = await api.invoke('bundle:exportLibrary')
+      if (result) {
+        setBundleNotice(
+          `Exported ${result.count} recording${result.count === 1 ? '' : 's'} to ${result.path}`
+        )
+      }
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function importBundle(): Promise<void> {
+    setImportError(null)
+    setBundleNotice(null)
+    try {
+      const result = await api.invoke('bundle:import')
+      if (!result) return
+      // recording:updated fires per imported row above (see the handler at
+      // the top of this component), so the list is already live-refreshed
+      // by the time this resolves — no extra refetch needed here.
+      const parts = [`${result.imported} imported`]
+      if (result.skipped > 0) parts.push(`${result.skipped} already in your library`)
+      if (result.errors.length > 0) parts.push(`${result.errors.length} failed`)
+      setBundleNotice(parts.join(', '))
+      if (result.errors.length > 0) setImportError(result.errors.join('; '))
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   async function cardAction(fn: () => Promise<unknown>): Promise<void> {
@@ -120,6 +157,22 @@ export default function Library(): React.JSX.Element {
           <button className="btn btn--primary" onClick={pickFiles} disabled={ffmpegMissing}>
             Import file
           </button>
+          <OverflowMenu
+            ariaLabel="Library bundle actions"
+            groups={
+              [
+                [
+                  {
+                    icon: 'download',
+                    label: 'Export Library Bundle',
+                    onClick: () => void exportLibraryBundle(),
+                    disabled: recordings.length === 0
+                  },
+                  { icon: 'open', label: 'Import Bundle', onClick: () => void importBundle() }
+                ]
+              ] satisfies OverflowMenuItem[][]
+            }
+          />
         </div>
       </header>
 
@@ -132,6 +185,7 @@ export default function Library(): React.JSX.Element {
       {error && <div className="banner banner--error">{error}</div>}
       {importError && <div className="banner banner--error">{importError}</div>}
       {cardActionError && <div className="banner banner--error">{cardActionError}</div>}
+      {bundleNotice && <div className="banner banner--ok">{bundleNotice}</div>}
 
       {!loading && recordings.length === 0 && !error ? (
         <div className="empty empty--drop">

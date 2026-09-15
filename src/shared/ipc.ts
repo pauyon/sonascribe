@@ -197,7 +197,7 @@ export interface ApiSchema {
    */
   'recording:status': {
     request: void
-    response: { recordingId: string; paused: boolean; markerCount: number } | null
+    response: { recordingId: string; paused: boolean; markers: Marker[] } | null
   }
   /**
    * Relays the elapsed time Record.tsx already tracks (it alone accounts for
@@ -219,8 +219,30 @@ export interface ApiSchema {
    * can show the running count.
    */
   'recording:addMarker': {
-    request: { elapsedMs: number }
+    /** `color` defaults to `DEFAULT_MARKER_COLOR` when omitted — the mini window doesn't offer a picker of its own. */
+    request: { elapsedMs: number; color?: string }
     response: Marker
+  }
+  /**
+   * Updates a note on a marker added this session — the live counterpart to
+   * `recordings:setMarkers`, which only applies once a recording has
+   * stopped. Broadcast via `recording:markerUpdated` so every open window
+   * sees the note, not just whichever one it was typed into.
+   */
+  'recording:updateMarker': {
+    request: { id: string; notes: string }
+    response: Marker
+  }
+  /**
+   * Relays a mic/system capture warning or recovery from the renderer's own
+   * supervisor (track lost, device reconnected, …) out to every window via
+   * `recording:captureWarning` — mirrors `recording:elapsed`'s reasoning: the
+   * mini controls window can't reach getUserMedia itself, so it has no other
+   * way to learn this.
+   */
+  'recording:reportCaptureState': {
+    request: { kind: 'mic' | 'system'; state: 'lost' | 'recovered'; message: string }
+    response: void
   }
 
   /** Reveals a file in the OS file manager, selected. */
@@ -324,6 +346,31 @@ export interface ApiSchema {
   'audio:export': {
     request: { recordingId: string }
     response: string | null
+  }
+  /**
+   * Exports one recording as a self-contained folder bundle (audio, markers
+   * and their notes, cuts, transcript, speakers) for moving it to another
+   * machine — see services/bundle.ts. Returns the written folder's path, or
+   * null if the destination-folder dialog was cancelled.
+   */
+  'bundle:exportRecording': {
+    request: { recordingId: string }
+    response: { path: string } | null
+  }
+  /** Same as `bundle:exportRecording`, for every recording with audio — one bundle folder each, inside a chosen parent folder. */
+  'bundle:exportLibrary': {
+    request: void
+    response: { path: string; count: number } | null
+  }
+  /**
+   * Imports a bundle (or a folder of them, from `bundle:exportLibrary`) —
+   * detected by shape, not by which export produced it. A recording whose id
+   * already exists locally is counted as skipped, not re-imported. Returns
+   * null if the source-folder dialog was cancelled.
+   */
+  'bundle:import': {
+    request: void
+    response: { imported: number; skipped: number; errors: string[] } | null
   }
 
   /**
@@ -493,6 +540,8 @@ export interface EventSchema {
   'recording:elapsedTick': { elapsedMs: number }
   /** A marker was added during the in-progress recording, from whichever window called `recording:addMarker`. */
   'recording:markerAdded': Marker
+  /** A marker's note was updated during the in-progress recording, from whichever window called `recording:updateMarker`. */
+  'recording:markerUpdated': Marker
   /**
    * A stop has begun and the session is gone in main, ahead of the (brief)
    * finalize work `recording:stopped` waits for. Every window still
@@ -512,6 +561,18 @@ export interface EventSchema {
   }
   /** A recording was discarded — mirrors `recording:stopped` for the cancel path. */
   'recording:discarded': { recordingId: string }
+  /**
+   * The capture graph lost or regained a source mid-recording — from main's
+   * own chunk-stall watchdog (`kind: 'graph'`) or relayed from the renderer's
+   * capture supervisor (`kind: 'mic' | 'system'`) via `recording:reportCaptureState`,
+   * so a popped-out mini controls window (which can't reach getUserMedia
+   * itself) still sees it.
+   */
+  'recording:captureWarning': {
+    kind: 'mic' | 'system' | 'graph'
+    state: 'lost' | 'recovered'
+    message: string
+  }
 
   /** Byte-level progress for an in-flight model download. */
   'model:progress': ModelDownloadProgress
@@ -563,6 +624,8 @@ export const CHANNELS = [
   'recording:status',
   'recording:elapsed',
   'recording:addMarker',
+  'recording:updateMarker',
+  'recording:reportCaptureState',
   'shell:showItemInFolder',
   'logs:read',
   'models:list',
@@ -579,6 +642,9 @@ export const CHANNELS = [
   'transcript:listActive',
   'transcript:export',
   'audio:export',
+  'bundle:exportRecording',
+  'bundle:exportLibrary',
+  'bundle:import',
   'speakers:detect',
   'speakers:cancel',
   'speakers:list',
@@ -608,9 +674,11 @@ export const EVENTS = [
   'recording:pauseChanged',
   'recording:elapsedTick',
   'recording:markerAdded',
+  'recording:markerUpdated',
   'recording:sessionEnded',
   'recording:stopped',
   'recording:discarded',
+  'recording:captureWarning',
   'model:progress',
   'transcript:progress',
   'speaker:progress',

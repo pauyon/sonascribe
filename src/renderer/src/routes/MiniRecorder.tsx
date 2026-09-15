@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_MARKER_COLOR } from '@shared/types'
+import { DEFAULT_MARKER_COLOR, type Marker } from '@shared/types'
 import { api, useEvent, useQuery } from '../lib/api'
 import { formatDuration } from '../lib/format'
 import Icon from '../components/Icon'
 import IconButton from '../components/IconButton'
+import MarkerNoteField from '../components/MarkerNoteField'
 
 /**
  * The pop-out recording controls: a small always-on-top window with the
@@ -30,7 +31,10 @@ export default function MiniRecorder(): React.JSX.Element {
 
   const [paused, setPausedState] = useState(false)
   const [elapsedMs, setElapsedMs] = useState(0)
-  const [markerCount, setMarkerCount] = useState(0)
+  /** This session's markers — this window shows a note field for only the last one (see the render below); the full list lives on the main Record screen. */
+  const [markers, setMarkers] = useState<Marker[]>([])
+  /** The marker this window's own Mark click most recently added — only that one autofocuses, not whichever marker merely happens to be latest (e.g. right after this window opens mid-session). */
+  const [justAddedMarkerId, setJustAddedMarkerId] = useState<string | null>(null)
   /**
    * True from the moment Stop or Discard is clicked — here, or in the main
    * Record window, which is why this is driven by `recording:sessionEnded`
@@ -41,6 +45,18 @@ export default function MiniRecorder(): React.JSX.Element {
    * through that whole window.
    */
   const [finishing, setFinishing] = useState(false)
+  /**
+   * The most recent capture health report — main's own chunk-stall watchdog,
+   * or the main Record window's capture supervisor relayed via
+   * `recording:reportCaptureState` (this window has no getUserMedia access of
+   * its own, so it can't detect any of this directly).
+   */
+  const [captureNotice, setCaptureNotice] = useState<{ tone: 'warn' | 'ok'; message: string } | null>(
+    null
+  )
+  const captureNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Always points at the current render's `mark` — see Record.tsx's identical `markRef` for why this indirection is needed rather than calling `mark` directly from the shortcut effect below. */
+  const markRef = useRef<(() => void) | null>(null)
   // Bootstraps from the query once; every change after that arrives as a
   // broadcast instead (recording:pauseChanged, recording:markerAdded), from
   // whichever window sent it. Markers added before this window even existed
@@ -52,14 +68,27 @@ export default function MiniRecorder(): React.JSX.Element {
     if (appliedStatusRef.current || !status) return
     appliedStatusRef.current = true
     setPausedState(status.paused)
-    setMarkerCount(status.markerCount)
+    setMarkers(status.markers)
   }, [status])
+
+  useEffect(() => {
+    return () => {
+      if (captureNoticeTimerRef.current) clearTimeout(captureNoticeTimerRef.current)
+    }
+  }, [])
 
   useEvent('recording:pauseChanged', (payload) => setPausedState(payload.paused))
   useEvent('recording:elapsedTick', (payload) => setElapsedMs(payload.elapsedMs))
-  // Counts every marker added this session, regardless of which window (this
-  // one or the main Record screen) actually called recording:addMarker.
-  useEvent('recording:markerAdded', () => setMarkerCount((n) => n + 1))
+  // Tracks every marker added this session, regardless of which window (this
+  // one or the main Record screen) actually called recording:addMarker —
+  // deduped the same way Record.tsx's own listener is, for the same reason:
+  // this window's own mark() also appends directly from the response.
+  useEvent('recording:markerAdded', (marker) => {
+    setMarkers((prev) => (prev.some((m) => m.id === marker.id) ? prev : [...prev, marker]))
+  })
+  useEvent('recording:markerUpdated', (marker) => {
+    setMarkers((prev) => prev.map((m) => (m.id === marker.id ? marker : m)))
+  })
   // Fired the instant a stop begins anywhere — before the slow work that
   // follows it — so the transport disables immediately even when Stop was
   // clicked on the main window rather than here. See `finishing` above.
@@ -70,6 +99,18 @@ export default function MiniRecorder(): React.JSX.Element {
   // events are what navigate the main window and bring it forward.
   useEvent('recording:stopped', () => window.close())
   useEvent('recording:discarded', () => window.close())
+  useEvent('recording:captureWarning', (payload) => {
+    if (captureNoticeTimerRef.current) {
+      clearTimeout(captureNoticeTimerRef.current)
+      captureNoticeTimerRef.current = null
+    }
+    if (payload.state === 'lost') {
+      setCaptureNotice({ tone: 'warn', message: payload.message })
+      return
+    }
+    setCaptureNotice({ tone: 'ok', message: payload.message })
+    captureNoticeTimerRef.current = setTimeout(() => setCaptureNotice(null), 4000)
+  })
 
   /** True for the one error this window should shrug off — see `finishing`'s doc comment. */
   function alreadyFinishing(err: unknown): boolean {
@@ -103,8 +144,37 @@ export default function MiniRecorder(): React.JSX.Element {
 
   /** Flags the current moment — `elapsedMs` here is the relayed copy of Record.tsx's own timer, the same position it shows. */
   function mark(): void {
-    void api.invoke('recording:addMarker', { elapsedMs })
+    void api.invoke('recording:addMarker', { elapsedMs }).then((marker) => {
+      setMarkers((prev) => (prev.some((m) => m.id === marker.id) ? prev : [...prev, marker]))
+      setJustAddedMarkerId(marker.id)
+    })
   }
+  markRef.current = mark
+
+  // "m" marks the current moment — same shortcut Record.tsx's main window
+  // offers, so it works no matter which window has focus. Ignored while
+  // typing (the quick-note field included) and while a stop/discard is
+  // already in flight, matching the Mark button's own disabled state.
+  useEffect(() => {
+    if (!status || finishing) return
+    function isTypingTarget(target: EventTarget | null): boolean {
+      return target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+    }
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return
+      if (e.key === 'm' || e.key === 'M') markRef.current?.()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [status, finishing])
+
+  /** Saves a note on the most-recently-added marker (the only one this window edits — see `markers`' doc comment). */
+  function updateMarkerNote(id: string, notes: string): void {
+    setMarkers((prev) => prev.map((m) => (m.id === id ? { ...m, notes } : m)))
+    void api.invoke('recording:updateMarker', { id, notes })
+  }
+
+  const latestMarker = markers.length > 0 ? markers[markers.length - 1] : null
 
   return (
     <div className="mini">
@@ -138,6 +208,16 @@ export default function MiniRecorder(): React.JSX.Element {
         <>
           <div className="mini__time">{formatDuration(elapsedMs)}</div>
 
+          {captureNotice && (
+            <p
+              className={
+                captureNotice.tone === 'warn' ? 'mini__notice mini__notice--warn' : 'mini__notice'
+              }
+            >
+              {captureNotice.message}
+            </p>
+          )}
+
           <div className="mini__toolbar">
             <div className="mini__icon-btn mini__mark-btn">
               <IconButton
@@ -151,7 +231,7 @@ export default function MiniRecorder(): React.JSX.Element {
                 icon="flag"
                 iconStyle={{ color: DEFAULT_MARKER_COLOR }}
               />
-              {markerCount > 0 && <span className="mini__mark-count">{markerCount}</span>}
+              {markers.length > 0 && <span className="mini__mark-count">{markers.length}</span>}
             </div>
             <IconButton
               size="sm"
@@ -187,6 +267,17 @@ export default function MiniRecorder(): React.JSX.Element {
               icon="trash"
             />
           </div>
+
+          {latestMarker && (
+            <MarkerNoteField
+              key={latestMarker.id}
+              marker={latestMarker}
+              index={markers.length}
+              compact
+              startExpanded={latestMarker.id === justAddedMarkerId}
+              onCommit={(notes) => updateMarkerNote(latestMarker.id, notes)}
+            />
+          )}
         </>
       )}
     </div>

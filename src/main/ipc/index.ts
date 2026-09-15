@@ -59,6 +59,7 @@ import {
   setPaused,
   startRecording,
   stopRecording,
+  updateMarker,
   writeChunk
 } from '../services/recorder'
 import { cancelModelDownload, deleteModel, downloadModel, listModelStatuses } from '../services/models'
@@ -69,6 +70,7 @@ import {
   queueSpeakerDetection
 } from '../services/speaker-jobs'
 import { exportAudio, exportTranscript } from '../services/transcript-export'
+import { exportLibraryBundle, exportRecordingBundle, importBundle } from '../services/bundle'
 import { showOpenDialog } from '../services/dialogs'
 import { openMiniRecorderWindow } from '../windows/mini-recorder'
 import * as ollama from '../services/ollama'
@@ -113,7 +115,9 @@ const handlers: Handlers = {
   'recordings:rename': ({ id, title }) => {
     const trimmed = title.trim()
     if (!trimmed) throw new Error('Title cannot be empty')
-    return renameRecording(id, trimmed)
+    const updated = renameRecording(id, trimmed)
+    emit('recording:updated', updated)
+    return updated
   },
 
   'recordings:delete': async ({ id }) => {
@@ -132,14 +136,22 @@ const handlers: Handlers = {
     const recording = getRecording(id)
     if (!recording) throw new Error(`Recording ${id} not found`)
     if (recording.durationMs == null) throw new Error('Recording has no known duration yet')
-    return setRecordingCuts(id, cuts, recording.durationMs)
+    const updated = setRecordingCuts(id, cuts, recording.durationMs)
+    // So a second open window on the same recording (the common case being
+    // Trim.tsx and Editor.tsx on the same id) picks up the edit live rather
+    // than showing stale cuts/markers until something else happens to
+    // trigger a refetch there.
+    emit('recording:updated', updated)
+    return updated
   },
 
   'recordings:setMarkers': ({ id, markers }) => {
     const recording = getRecording(id)
     if (!recording) throw new Error(`Recording ${id} not found`)
     if (recording.durationMs == null) throw new Error('Recording has no known duration yet')
-    return setRecordingMarkers(id, markers, recording.durationMs)
+    const updated = setRecordingMarkers(id, markers, recording.durationMs)
+    emit('recording:updated', updated)
+    return updated
   },
 
   'dialog:pickMediaFiles': async () => {
@@ -244,7 +256,13 @@ const handlers: Handlers = {
     emit('recording:elapsedTick', { elapsedMs })
   },
 
-  'recording:addMarker': ({ elapsedMs }) => addMarker(elapsedMs),
+  'recording:addMarker': ({ elapsedMs, color }) => addMarker(elapsedMs, color),
+
+  'recording:updateMarker': ({ id, notes }) => updateMarker(id, notes),
+
+  'recording:reportCaptureState': ({ kind, state, message }) => {
+    emit('recording:captureWarning', { kind, state, message })
+  },
 
   'shell:showItemInFolder': ({ path }) => {
     shell.showItemInFolder(path)
@@ -301,6 +319,12 @@ const handlers: Handlers = {
   'transcript:export': ({ recordingId, format }) => exportTranscript(recordingId, format),
 
   'audio:export': ({ recordingId }) => exportAudio(recordingId),
+
+  'bundle:exportRecording': ({ recordingId }) => exportRecordingBundle(recordingId),
+
+  'bundle:exportLibrary': () => exportLibraryBundle(),
+
+  'bundle:import': () => importBundle(),
 
   'speakers:detect': ({ recordingId }) => {
     queueSpeakerDetection(recordingId)

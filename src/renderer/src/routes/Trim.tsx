@@ -46,6 +46,7 @@ export default function Trim(): React.JSX.Element {
     addMarkerAt,
     rename: renameMarker,
     recolor: recolorMarker,
+    setNotes: setMarkerNotes,
     remove: removeMarker,
     clearAll: clearAllMarkers
   } = useMarkers(recording, refetch)
@@ -399,6 +400,7 @@ export default function Trim(): React.JSX.Element {
             onJump={jumpToMarker}
             onRename={renameMarker}
             onRecolor={recolorMarker}
+            onNote={setMarkerNotes}
             onRemove={removeMarker}
             onClearAll={clearAllMarkers}
           />

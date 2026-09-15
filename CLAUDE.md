@@ -140,13 +140,38 @@ scripts/          fetch-sidecars.mjs, smoke.mjs (CDP e2e), make-icon.mjs
    silent microphone can still be told apart from silent system audio even
    though the recorded file is already mixed. Runs at the hardware's own
    sample rate. `public/recorder-worklet.js` is source-count-agnostic — it
-   just sums whatever reaches `inputs[0][0]`.
+   just sums whatever reaches `inputs[0][0]`. Mic acquisition
+   (`requestMicStream`) is a fallback ladder, not one call, but only a
+   **thrown** `getUserMedia` error (`OverconstrainedError` from a stale saved
+   device id, `NotReadableError` from a device held exclusively) advances a
+   rung — never `track.muted` on a stream that resolved. That was tried once
+   and reverted: `.muted` can read `true` well past acquisition on a device
+   that's actually capturing fine, so rejecting on it threw away working
+   streams, including — on the last rung — silently switching to the system
+   default device, different physical hardware than the user was speaking
+   into. **Do not resurrect a `track.muted` gate in `tryAcquireMic`.**
+   `CaptureSession.replaceSource` lets a source be swapped without tearing
+   down the context, which is what a capture supervisor in `Record.tsx` uses
+   for as long as the session is open: a source's track firing `ended`/
+   `mute` (the *event*, still a legitimate live-session trigger — this is not
+   the same thing as gating initial acceptance on the `.muted` property), or
+   staying silent past its grace period as measured from real audio samples,
+   re-acquires just that source; a stalled `AudioContext` (its bound output
+   device disappearing — an interface usually supplies both directions) is
+   caught by polling the combined node's own block cadence, `resume()`d, or
+   as a last resort rebuilt pinned to the original sample rate.
 2. **Recording** (`services/recorder.ts`) — the renderer streams 16-bit PCM
    blocks from the combined node over `recording:chunk`; main owns the
-   `WavWriter`. `stopRecording` reads back the file's peak level and discards
-   (deletes the file, marks the row `failed`) anything that never cleared a
-   silence threshold — system-audio loopback with nothing playing produces a
-   full-length file of digital zeroes, which byte count alone wouldn't catch.
+   `WavWriter`. `writeChunk` pads a late-arriving block with silence first
+   when wall-clock has pulled ahead of audio-time-written, so a recovery's
+   gap doesn't shift everything after it out of position, and a separate
+   watchdog notices chunks stopping altogether (`recording:captureWarning`,
+   relayed to every window including the mini controls one, which has no
+   `getUserMedia` access of its own to detect this directly). `stopRecording`
+   reads back the file's peak level and discards (deletes the file, marks the
+   row `failed`) anything that never cleared a silence threshold —
+   system-audio loopback with nothing playing produces a full-length file of
+   digital zeroes, which byte count alone wouldn't catch.
 3. **Import** (`services/importer.ts`) — a picked or dropped file is
    normalized straight to WAV via ffmpeg (mono, 48 kHz, 16-bit PCM); the
    normalized file *is* `source_path`, there's no separate "original" kept

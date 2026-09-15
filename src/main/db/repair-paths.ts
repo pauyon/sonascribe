@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs'
+import { open, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { getMediaRoot } from '../services/storage'
+import { readWavInfo } from '../services/wav'
 import { getDb } from './index'
 
 /**
@@ -48,36 +50,101 @@ export function repairMediaPaths(): number {
 }
 
 /**
+ * Patches a WAV file's two size fields (the RIFF chunk and the `data` chunk)
+ * to match what's actually on disk, and returns the resulting duration.
+ *
+ * `WavWriter`'s constructor writes its header with placeholder sizes (see
+ * wav-writer.ts) and only patches them for real in `close()` — a session
+ * that never reached a clean `close()` (a crash mid-recording, not just
+ * mid-finalize) leaves the file sitting there with real audio in it but a
+ * header that still claims zero bytes of data. The `fmt` chunk itself (and
+ * therefore sample rate/channels/bit depth) is written up front and is
+ * always intact, so `readWavInfo` is trustworthy for everything except the
+ * size fields this function is here to fix.
+ */
+async function repairWavHeader(path: string): Promise<number> {
+  const info = await readWavInfo(path)
+  const { size: fileSize } = await stat(path)
+  const realDataBytes = Math.max(0, fileSize - info.dataOffset)
+  const byteRate = info.sampleRate * info.channels * (info.bitsPerSample / 8)
+  const durationMs = byteRate > 0 ? Math.round((realDataBytes / byteRate) * 1000) : 0
+
+  const handle = await open(path, 'r+')
+  try {
+    const sizes = Buffer.alloc(4)
+    sizes.writeUInt32LE(fileSize - 8, 0)
+    await handle.write(sizes, 0, 4, 4)
+    sizes.writeUInt32LE(realDataBytes, 0)
+    await handle.write(sizes, 0, 4, info.dataOffset - 4)
+  } finally {
+    await handle.close()
+  }
+
+  return durationMs
+}
+
+/**
  * Returns recordings stranded mid-finalize to a state the user can act on.
  *
  * A recording interrupted while `normalizing` — the window closed, the
  * machine slept, a crash — comes back claiming to be normalizing forever,
  * with no process left actually finishing that work.
  *
- * 'ready' when the audio file already exists (a crash after the file was
- * written but before the row was updated), 'failed' otherwise — there's
- * nothing left to retry automatically the way a transcription job used to be
- * re-queued.
+ * `source_path` is only ever set by `stopRecording`'s own clean-exit path
+ * (see recorder.ts), so it's still null for the far more common case: the
+ * app went away while actively recording, not during the brief finalize
+ * window. The audio itself is written continuously the whole time straight
+ * to `<mediaRoot>/<id>/recording.wav` — a deterministic path this
+ * reconstructs and checks directly, rather than giving up just because the
+ * DB row was never linked up to it. 'ready' (with its header repaired) once
+ * real audio is confirmed present, 'failed' otherwise — there's nothing left
+ * to retry automatically the way a transcription job used to be re-queued.
  */
-export function resetInterruptedRecordings(): number {
+export async function resetInterruptedRecordings(): Promise<number> {
   const db = getDb()
   const stranded = db
-    .prepare(`SELECT id, source_path, duration_ms FROM recordings WHERE status = 'normalizing'`)
-    .all() as unknown as Array<{ id: string; source_path: string | null; duration_ms: number | null }>
+    .prepare(`SELECT id, source_path FROM recordings WHERE status = 'normalizing'`)
+    .all() as unknown as Array<{ id: string; source_path: string | null }>
   if (stranded.length === 0) return 0
 
   const toReady = db.prepare(`UPDATE recordings SET status = 'ready', error = NULL WHERE id = ?`)
+  const toReadyWithPath = db.prepare(
+    `UPDATE recordings SET status = 'ready', error = NULL, source_path = ?, duration_ms = ? WHERE id = ?`
+  )
   const toFailed = db.prepare(`UPDATE recordings SET status = 'failed', error = ? WHERE id = ?`)
 
+  let recovered = 0
   for (const { id, source_path: sourcePath } of stranded) {
     if (sourcePath && existsSync(sourcePath)) {
       toReady.run(id)
-    } else {
-      toFailed.run('Interrupted before any audio was saved', id)
+      continue
     }
+
+    const expectedPath = join(getMediaRoot(), id, 'recording.wav')
+    if (existsSync(expectedPath)) {
+      try {
+        const durationMs = await repairWavHeader(expectedPath)
+        // A crash within the first block or two, before any real audio
+        // landed, is the one case genuinely indistinguishable from "nothing
+        // was ever recorded" — treated the same way rather than leaving a
+        // 0:00 entry with nothing to play.
+        if (durationMs > 0) {
+          toReadyWithPath.run(expectedPath, durationMs, id)
+          recovered++
+          continue
+        }
+      } catch (err) {
+        console.warn(`[repair] found ${expectedPath} but could not repair its header:`, err)
+      }
+    }
+
+    toFailed.run('Interrupted before any audio was saved', id)
   }
 
-  console.log(`[db] resolved ${stranded.length} recording(s) interrupted mid-finalize`)
+  console.log(
+    `[db] resolved ${stranded.length} recording(s) interrupted mid-finalize` +
+      (recovered > 0 ? ` (${recovered} recovered from a crash mid-recording)` : '')
+  )
   return stranded.length
 }
 

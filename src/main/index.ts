@@ -142,7 +142,7 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     electronApp.setAppUserModelId('com.sonascribe.app')
 
     app.on('browser-window-created', (_, window) => {
@@ -157,7 +157,12 @@ if (!app.requestSingleInstanceLock()) {
     // Media rows hold absolute paths; a moved user-data directory invalidates
     // them, so repoint anything that no longer resolves.
     repairMediaPaths()
-    resetInterruptedRecordings()
+    // Awaited (unlike the orphan sweeps below) so a recording recovered from
+    // a crash mid-recording is already 'ready' by the time the renderer's
+    // first recordings:list call can possibly arrive — that race would
+    // otherwise show it 'failed' until something happened to trigger a
+    // refetch, since this repair has no event of its own to correct it.
+    await resetInterruptedRecordings()
     resetInterruptedTranscriptions()
     resetInterruptedSpeakerDetections()
     // Reclaim audio stranded by earlier versions, or by a crash between deleting

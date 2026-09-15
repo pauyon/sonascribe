@@ -41,6 +41,8 @@ function describeMediaError(err: unknown, kind: CaptureSourceKind): string {
       return `No ${kind === 'mic' ? 'microphone' : 'system audio device'} was found.`
     case 'NotReadableError':
       return `${what} is in use by another application.`
+    case 'OverconstrainedError':
+      return `The saved ${kind === 'mic' ? 'microphone' : 'audio device'} is no longer available. Pick a different one.`
     default:
       return `${what} could not be started${err instanceof Error && err.message ? `: ${err.message}` : '.'}`
   }
@@ -69,23 +71,108 @@ export const CLEAN_MIC: MicProcessing = {
   noiseSuppression: false
 }
 
+/** Which rung of the fallback ladder in `requestMicStream` produced a usable track. */
+export type MicAcquisitionAttempt = 'requested' | 'requested-raw' | 'default-raw'
+
+export interface MicAcquisition {
+  stream: MediaStream
+  attempt: MicAcquisitionAttempt
+}
+
+function trackDiagnostics(track: MediaStreamTrack): string {
+  return `label="${track.label}" readyState=${track.readyState} muted=${track.muted} settings=${JSON.stringify(track.getSettings())}`
+}
+
+type MicAttemptResult = { ok: true; stream: MediaStream } | { ok: false; error: unknown }
+
+/**
+ * A resolved stream's audio track is only rejected here for something
+ * unambiguous: no track at all, or one that's already `ended`. `track.muted`
+ * is deliberately NOT treated as failure — it's a metadata flag Chromium can
+ * report transiently (or for longer than expected) even on a device that is
+ * actually capturing fine, especially one shared with another app, and
+ * gating acceptance on it previously caused a *working* stream to be thrown
+ * away in favor of a fallback rung — including, on the last rung, silently
+ * switching to a different physical device (the system default) that the
+ * user was never actually speaking into. A track that resolves live but is
+ * genuinely silent is instead caught later, from real measured audio over
+ * real time (see `Record.tsx`'s silence-triggered recovery) — evidence, not
+ * a flag.
+ */
+async function tryAcquireMic(
+  constraints: MediaTrackConstraints,
+  label: string
+): Promise<MicAttemptResult> {
+  let stream: MediaStream
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: constraints, video: false })
+  } catch (err) {
+    console.info(`[capture] mic attempt "${label}" failed:`, err)
+    return { ok: false, error: err }
+  }
+
+  const [track] = stream.getAudioTracks()
+  if (!track || track.readyState !== 'live') {
+    console.info(`[capture] mic attempt "${label}" returned no live track`)
+    for (const t of stream.getTracks()) t.stop()
+    return { ok: false, error: new Error('No live microphone track was returned.') }
+  }
+
+  console.info(`[capture] mic attempt "${label}" succeeded: ${trackDiagnostics(track)}`)
+  return { ok: true, stream }
+}
+
+/**
+ * Opens the microphone, falling back through progressively less-constrained
+ * requests when the requested device is outright rejected — a saved device id
+ * that's gone (`OverconstrainedError`) or a device another app has locked
+ * exclusively (`NotReadableError`). A *resolved* stream is never second-
+ * guessed here (see `tryAcquireMic`'s doc comment) — only a thrown error
+ * advances to the next rung.
+ */
 export async function requestMicStream(
   deviceId?: string,
   processing: MicProcessing = CLEAN_MIC
-): Promise<MediaStream> {
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: {
+): Promise<MicAcquisition> {
+  const attempts: Array<{
+    attempt: MicAcquisitionAttempt
+    constraints: MediaTrackConstraints
+    skip?: boolean
+  }> = [
+    {
+      attempt: 'requested',
+      constraints: {
         deviceId: deviceId ? { exact: deviceId } : undefined,
         echoCancellation: processing.echoCancellation,
         noiseSuppression: processing.noiseSuppression,
         autoGainControl: true
-      },
-      video: false
-    })
-  } catch (err) {
-    throw new CaptureError(describeMediaError(err, 'mic'), 'mic')
+      }
+    },
+    {
+      attempt: 'requested-raw',
+      skip: !deviceId,
+      constraints: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    },
+    {
+      attempt: 'default-raw',
+      constraints: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    }
+  ]
+
+  let lastError: unknown
+  for (const { attempt, constraints, skip } of attempts) {
+    if (skip) continue
+    const result = await tryAcquireMic(constraints, attempt)
+    if (result.ok) return { stream: result.stream, attempt }
+    lastError = result.error
   }
+
+  throw new CaptureError(describeMediaError(lastError, 'mic'), 'mic')
 }
 
 /**
@@ -123,6 +210,16 @@ export interface CaptureSession {
   context: AudioContext
   /** Hardware sample rate the context (and so the recorded file) runs at. */
   sampleRate: number
+  /** Whether a source of this kind is currently wired into the combined node. */
+  hasSource: (kind: CaptureSourceKind) => boolean
+  /**
+   * Detaches whatever source is currently live for `kind` (if any) and wires
+   * `stream` into the same combined node in its place — used to recover a
+   * source without tearing down the recording's AudioContext or losing more
+   * than the reacquisition time. No-op-safe to call for a kind that isn't
+   * attached yet.
+   */
+  replaceSource: (kind: CaptureSourceKind, stream: MediaStream) => void
   stop: () => Promise<void>
 }
 
@@ -134,14 +231,20 @@ export interface CaptureSession {
  * (pre-mix) samples — used for the meters, and for tapping the clean mic
  * signal for "test your mic" playback. `onBlock` fires only for the
  * combined, mixed signal — the one that gets written to disk.
+ *
+ * `sampleRate`, if given, pins the context to that rate instead of letting it
+ * adopt the hardware default — needed when rebuilding the graph mid-recording
+ * after the original context became unrecoverable, since the WAV header was
+ * already written at the original rate and a mismatched rebuild would play
+ * back at the wrong speed.
  */
 export async function startCapture(
   sources: Array<{ kind: CaptureSourceKind; stream: MediaStream }>,
   onLevel: (kind: CaptureSourceKind, samples: Int16Array, peak: number) => void,
-  onBlock: (samples: Int16Array, peak: number) => void
+  onBlock: (samples: Int16Array, peak: number) => void,
+  sampleRate?: number
 ): Promise<CaptureSession> {
-  // No sampleRate override: the context adopts the hardware rate.
-  const context = new AudioContext()
+  const context = sampleRate ? new AudioContext({ sampleRate }) : new AudioContext()
   await context.audioWorklet.addModule('recorder-worklet.js')
 
   function makeNode(): AudioWorkletNode {
@@ -161,9 +264,9 @@ export async function startCapture(
     onBlock(event.data.samples, event.data.peak)
   }
 
-  const cleanups: Array<() => void> = []
+  const detachers = new Map<CaptureSourceKind, () => void>()
 
-  for (const { kind, stream } of sources) {
+  function attachSource(kind: CaptureSourceKind, stream: MediaStream): void {
     const source = context.createMediaStreamSource(stream)
     source.connect(combined)
 
@@ -173,7 +276,7 @@ export async function startCapture(
     }
     source.connect(monitor)
 
-    cleanups.push(() => {
+    detachers.set(kind, () => {
       monitor.port.onmessage = null
       source.disconnect()
       monitor.disconnect()
@@ -181,13 +284,20 @@ export async function startCapture(
     })
   }
 
+  for (const { kind, stream } of sources) attachSource(kind, stream)
+
   return {
     context,
     sampleRate: context.sampleRate,
+    hasSource: (kind) => detachers.has(kind),
+    replaceSource: (kind, stream) => {
+      detachers.get(kind)?.()
+      attachSource(kind, stream)
+    },
     stop: async () => {
       combined.port.onmessage = null
       combined.disconnect()
-      for (const cleanup of cleanups) cleanup()
+      for (const detach of detachers.values()) detach()
       await context.close()
     }
   }
