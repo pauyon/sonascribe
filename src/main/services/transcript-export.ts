@@ -18,13 +18,14 @@ import { showSaveDialog } from './dialogs'
  * `ipc/index.ts` used to hold inline.
  */
 
-function safeFileName(title: string): string {
+/** Also used by services/bundle.ts for its export folder names. */
+export function safeFileName(title: string, fallback = 'transcript'): string {
   return (
     title
       .replace(/[<>:"/\\|?*]/g, '_')
       .replace(/\.+$/, '')
       .trim()
-      .slice(0, 120) || 'transcript'
+      .slice(0, 120) || fallback
   )
 }
 

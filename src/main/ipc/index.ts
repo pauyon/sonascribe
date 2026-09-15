@@ -70,6 +70,7 @@ import {
   queueSpeakerDetection
 } from '../services/speaker-jobs'
 import { exportAudio, exportTranscript } from '../services/transcript-export'
+import { exportLibraryBundle, exportRecordingBundle, importBundle } from '../services/bundle'
 import { showOpenDialog } from '../services/dialogs'
 import { openMiniRecorderWindow } from '../windows/mini-recorder'
 import * as ollama from '../services/ollama'
@@ -318,6 +319,12 @@ const handlers: Handlers = {
   'transcript:export': ({ recordingId, format }) => exportTranscript(recordingId, format),
 
   'audio:export': ({ recordingId }) => exportAudio(recordingId),
+
+  'bundle:exportRecording': ({ recordingId }) => exportRecordingBundle(recordingId),
+
+  'bundle:exportLibrary': () => exportLibraryBundle(),
+
+  'bundle:import': () => importBundle(),
 
   'speakers:detect': ({ recordingId }) => {
     queueSpeakerDetection(recordingId)

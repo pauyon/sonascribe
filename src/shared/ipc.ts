@@ -347,6 +347,31 @@ export interface ApiSchema {
     request: { recordingId: string }
     response: string | null
   }
+  /**
+   * Exports one recording as a self-contained folder bundle (audio, markers
+   * and their notes, cuts, transcript, speakers) for moving it to another
+   * machine — see services/bundle.ts. Returns the written folder's path, or
+   * null if the destination-folder dialog was cancelled.
+   */
+  'bundle:exportRecording': {
+    request: { recordingId: string }
+    response: { path: string } | null
+  }
+  /** Same as `bundle:exportRecording`, for every recording with audio — one bundle folder each, inside a chosen parent folder. */
+  'bundle:exportLibrary': {
+    request: void
+    response: { path: string; count: number } | null
+  }
+  /**
+   * Imports a bundle (or a folder of them, from `bundle:exportLibrary`) —
+   * detected by shape, not by which export produced it. A recording whose id
+   * already exists locally is counted as skipped, not re-imported. Returns
+   * null if the source-folder dialog was cancelled.
+   */
+  'bundle:import': {
+    request: void
+    response: { imported: number; skipped: number; errors: string[] } | null
+  }
 
   /**
    * Queues speaker detection for a recording — only meaningful once it has
@@ -617,6 +642,9 @@ export const CHANNELS = [
   'transcript:listActive',
   'transcript:export',
   'audio:export',
+  'bundle:exportRecording',
+  'bundle:exportLibrary',
+  'bundle:import',
   'speakers:detect',
   'speakers:cancel',
   'speakers:list',

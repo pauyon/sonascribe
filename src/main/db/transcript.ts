@@ -276,3 +276,80 @@ export function saveSpeakerMergedTranscript(
     throw err
   }
 }
+
+/** One speaker as carried in an imported bundle — see services/bundle.ts. */
+export interface BundleSpeakerInput {
+  id: string
+  clusterId: number
+  displayName: string
+  color: string
+}
+
+/** One utterance as carried in an imported bundle — see services/bundle.ts. */
+export interface BundleUtteranceInput {
+  id: string
+  startMs: number
+  endMs: number
+  text: string
+  confidence: number | null
+  speakerId: string | null
+  words: TranscriptWord[]
+}
+
+/**
+ * Recreates a recording's speakers and transcript from an imported bundle,
+ * preserving every id — unlike `saveTranscript`/`saveSpeakerMergedTranscript`,
+ * which always mint fresh ones, ids here must match what the bundle's
+ * `speakerId` references point at, and must stay stable so re-importing the
+ * same bundle is recognizable as already present (see
+ * `insertRecordingFromBundle`'s doc comment). Word ids are the one exception:
+ * `TranscriptWord` never carries one (nothing ever references a word by id),
+ * so there is nothing to preserve there.
+ *
+ * Speakers are inserted before utterances in the same transaction, since
+ * `utterances.speaker_id` references them.
+ */
+export function insertTranscriptFromBundle(
+  recordingId: string,
+  speakers: BundleSpeakerInput[],
+  utterances: BundleUtteranceInput[]
+): void {
+  const db = getDb()
+  const insertSpeaker = db.prepare(
+    `INSERT INTO speakers (id, recording_id, cluster_id, display_name, color)
+     VALUES (?, ?, ?, ?, ?)`
+  )
+  const insertUtterance = db.prepare(
+    `INSERT INTO utterances (id, recording_id, start_ms, end_ms, text, confidence, speaker_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+  const insertWord = db.prepare(
+    `INSERT INTO words (id, utterance_id, start_ms, end_ms, text, probability)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  )
+
+  db.exec('BEGIN')
+  try {
+    for (const speaker of speakers) {
+      insertSpeaker.run(speaker.id, recordingId, speaker.clusterId, speaker.displayName, speaker.color)
+    }
+    for (const utterance of utterances) {
+      insertUtterance.run(
+        utterance.id,
+        recordingId,
+        utterance.startMs,
+        utterance.endMs,
+        utterance.text,
+        utterance.confidence,
+        utterance.speakerId
+      )
+      for (const word of utterance.words) {
+        insertWord.run(randomUUID(), utterance.id, word.startMs, word.endMs, word.text, word.probability)
+      }
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}

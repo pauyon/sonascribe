@@ -128,6 +128,83 @@ export function createRecording(input: CreateRecordingInput): Recording {
   return recording
 }
 
+/**
+ * Recreates a recording row from an imported bundle (see services/bundle.ts)
+ * — every portable field the bundle carried, inserted with its *original*
+ * id/timestamp rather than minting fresh ones the way `createRecording`
+ * does, since ids are how a re-import of the same bundle is recognized as
+ * already present. `status`/`error` are never part of the bundle (a process
+ * state, not portable data) — always 'ready' here, since the caller only
+ * reaches this after the audio file has already been copied into place.
+ */
+export interface BundleRecordingInput {
+  id: string
+  title: string
+  createdAt: number
+  durationMs: number | null
+  source: Recording['source']
+  sourcePath: string
+  cuts: Cut[]
+  markers: Marker[]
+  transcriptStatus: Recording['transcriptStatus']
+  modelId: string | null
+  language: string | null
+  transcriptPreview: string | null
+  speakerStatus: Recording['speakerStatus']
+}
+
+export function insertRecordingFromBundle(input: BundleRecordingInput): Recording {
+  const recording: Recording = {
+    id: input.id,
+    title: input.title,
+    createdAt: input.createdAt,
+    durationMs: input.durationMs,
+    source: input.source,
+    sourcePath: input.sourcePath,
+    status: 'ready',
+    error: null,
+    cuts: input.cuts,
+    markers: input.markers,
+    transcriptStatus: input.transcriptStatus,
+    transcriptError: null,
+    modelId: input.modelId,
+    language: input.language,
+    transcriptPreview: input.transcriptPreview,
+    speakerStatus: input.speakerStatus,
+    speakerError: null
+  }
+
+  getDb()
+    .prepare(
+      `INSERT INTO recordings (
+         id, title, created_at, duration_ms, source, source_path, status, error,
+         cuts, markers, transcript_status, transcript_error, model_id, language,
+         transcript_preview, speaker_status, speaker_error
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      recording.id,
+      recording.title,
+      recording.createdAt,
+      recording.durationMs,
+      recording.source,
+      recording.sourcePath,
+      recording.status,
+      recording.error,
+      recording.cuts.length > 0 ? JSON.stringify(recording.cuts) : null,
+      recording.markers.length > 0 ? JSON.stringify(recording.markers) : null,
+      recording.transcriptStatus,
+      recording.transcriptError,
+      recording.modelId,
+      recording.language,
+      recording.transcriptPreview,
+      recording.speakerStatus,
+      recording.speakerError
+    )
+
+  return recording
+}
+
 export function renameRecording(id: string, title: string): Recording {
   getDb().prepare('UPDATE recordings SET title = ? WHERE id = ?').run(title, id)
   const updated = getRecording(id)

@@ -212,6 +212,10 @@ export default function Editor(): React.JSX.Element {
     await runAction(() => api.invoke('audio:export', { recordingId: id }))
   }
 
+  async function exportBundle(): Promise<void> {
+    await runAction(() => api.invoke('bundle:exportRecording', { recordingId: id }))
+  }
+
   const hasTranscript = recording.transcriptStatus === 'ready' && (transcript.utterances?.length ?? 0) > 0
   const hasSpeakers = speakers.speakers.length > 0
   const normalizedSearch = searchQuery.trim().toLowerCase()
@@ -283,7 +287,12 @@ export default function Editor(): React.JSX.Element {
               label: 'Reveal in folder',
               onClick: () => void api.invoke('shell:showItemInFolder', { path: recording.sourcePath! })
             },
-            { icon: 'volume', label: 'Export Audio', onClick: () => void exportAudio() }
+            { icon: 'volume', label: 'Export Audio', onClick: () => void exportAudio() },
+            {
+              icon: 'download',
+              label: 'Export Recording Bundle',
+              onClick: () => void exportBundle()
+            }
           ] satisfies OverflowMenuItem[])
         : []),
       ...(hasTranscript
