@@ -349,106 +349,158 @@ export default function Editor(): React.JSX.Element {
       style={{ '--rail-w': railOpen && !railCollapsed ? '300px' : '0px' } as React.CSSProperties}
     >
       <div className={playbackSrc ? 'page page--has-player' : 'page'}>
-        <header className="page__header">
-          <div>
-            <Link className="page__back" to="/library">
-              ← Library
-            </Link>
-            {draftTitle === null ? (
-              <h1
-                className="page__title-editable"
-                onClick={() => setDraftTitle(recording.title)}
-                title="Click to rename"
-              >
-                {recording.title}
-              </h1>
-            ) : (
-              <input
-                className="input input--title"
-                value={draftTitle}
-                autoFocus
-                onChange={(e) => setDraftTitle(e.target.value)}
-                onBlur={commitTitle}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void commitTitle()
-                  if (e.key === 'Escape') setDraftTitle(null)
-                }}
-              />
-            )}
-            <p className="page__subtitle">
-              <StatusPill status={recording.status} />
-              <span className="page__meta">{formatDuration(recording.durationMs)}</span>
-            </p>
-          </div>
+        <div className="editor-sticky-top">
+          <header className="page__header">
+            <div>
+              <Link className="page__back" to="/library">
+                ← Library
+              </Link>
+              {draftTitle === null ? (
+                <h1
+                  className="page__title-editable"
+                  onClick={() => setDraftTitle(recording.title)}
+                  title="Click to rename"
+                >
+                  {recording.title}
+                </h1>
+              ) : (
+                <input
+                  className="input input--title"
+                  value={draftTitle}
+                  autoFocus
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  onBlur={commitTitle}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void commitTitle()
+                    if (e.key === 'Escape') setDraftTitle(null)
+                  }}
+                />
+              )}
+              <p className="page__subtitle">
+                <StatusPill status={recording.status} />
+                <span className="page__meta">{formatDuration(recording.durationMs)}</span>
+              </p>
+            </div>
 
-          <div className="page__actions">
-            {hasTranscript && (
-              <IconButton
-                icon="search"
-                active={searchOpen}
-                aria-pressed={searchOpen}
-                aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
-                title="Search transcript"
-                onClick={() =>
-                  setSearchOpen((open) => {
-                    if (open) setSearchQuery('')
-                    return !open
-                  })
-                }
-              />
-            )}
-            {hasTranscript && (
-              <IconButton
-                icon="chat"
-                active={askOpen}
-                aria-pressed={askOpen}
-                aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
-                title="Ask about this recording"
-                onClick={() => setAskOpen((open) => !open)}
-              />
-            )}
-            {hasTranscript && (
-              <IconButton
-                icon="speakers"
-                active={hasSpeakers && transcriptMode === 'speakers'}
-                disabled={speakerBusy}
-                aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
-                aria-label={
-                  !hasSpeakers
-                    ? 'Detect speakers'
-                    : transcriptMode === 'speakers'
-                      ? 'Hide speaker labels'
-                      : 'Show speaker labels'
-                }
-                title={
-                  speakerBusy
-                    ? 'Detecting speakers…'
-                    : !hasSpeakers
+            <div className="page__actions">
+              {hasTranscript && (
+                <IconButton
+                  icon="search"
+                  active={searchOpen}
+                  aria-pressed={searchOpen}
+                  aria-label={searchOpen ? 'Close transcript search' : 'Search transcript'}
+                  title="Search transcript"
+                  onClick={() =>
+                    setSearchOpen((open) => {
+                      if (open) setSearchQuery('')
+                      return !open
+                    })
+                  }
+                />
+              )}
+              {hasTranscript && (
+                <IconButton
+                  icon="chat"
+                  active={askOpen}
+                  aria-pressed={askOpen}
+                  aria-label={askOpen ? 'Close Ask panel' : 'Ask about this recording'}
+                  title="Ask about this recording"
+                  onClick={() => setAskOpen((open) => !open)}
+                />
+              )}
+              {hasTranscript && (
+                <IconButton
+                  icon="speakers"
+                  active={hasSpeakers && transcriptMode === 'speakers'}
+                  disabled={speakerBusy}
+                  aria-pressed={hasSpeakers && transcriptMode === 'speakers'}
+                  aria-label={
+                    !hasSpeakers
                       ? 'Detect speakers'
                       : transcriptMode === 'speakers'
-                        ? 'Showing speakers & timestamps'
-                        : 'Showing timestamps only'
-                }
-                onClick={() =>
-                  hasSpeakers
-                    ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
-                    : void speakers.detect()
+                        ? 'Hide speaker labels'
+                        : 'Show speaker labels'
+                  }
+                  title={
+                    speakerBusy
+                      ? 'Detecting speakers…'
+                      : !hasSpeakers
+                        ? 'Detect speakers'
+                        : transcriptMode === 'speakers'
+                          ? 'Showing speakers & timestamps'
+                          : 'Showing timestamps only'
+                  }
+                  onClick={() =>
+                    hasSpeakers
+                      ? setTranscriptMode((m) => (m === 'speakers' ? 'timestamps' : 'speakers'))
+                      : void speakers.detect()
+                  }
+                />
+              )}
+              {(showMarkerChips || showSpeakerChips) && (
+                <IconButton
+                  icon="sidebarToggle"
+                  active={!railCollapsed}
+                  aria-pressed={!railCollapsed}
+                  aria-label={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
+                  title={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
+                  onClick={() => setRailCollapsed(!railCollapsed)}
+                />
+              )}
+              <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
+            </div>
+          </header>
+
+          {askOpen && (
+            <div className="ask-card">
+              <AskPanel
+                recordingId={recording.id}
+                onSeek={audio.seek}
+                onNavigateToRecording={(targetId, ms) =>
+                  navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
                 }
               />
-            )}
-            {(showMarkerChips || showSpeakerChips) && (
-              <IconButton
-                icon="sidebarToggle"
-                active={!railCollapsed}
-                aria-pressed={!railCollapsed}
-                aria-label={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
-                title={railCollapsed ? 'Show markers & speakers' : 'Hide markers & speakers'}
-                onClick={() => setRailCollapsed(!railCollapsed)}
+            </div>
+          )}
+
+          {searchOpen && (
+            <div className="search-bar">
+              <Icon name="search" className="search-bar__icon" />
+              <input
+                type="text"
+                className="input search-bar__input"
+                value={searchQuery}
+                autoFocus
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="Search transcript…"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSearchOpen(false)
+                    setSearchQuery('')
+                  }
+                }}
               />
-            )}
-            <OverflowMenu groups={overflowGroups} ariaLabel="More actions" />
-          </div>
-        </header>
+              {normalizedSearch && (
+                <span className="search-bar__count">
+                  {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
+                </span>
+              )}
+              <button
+                type="button"
+                className="search-bar__close"
+                onClick={() => {
+                  setSearchOpen(false)
+                  setSearchQuery('')
+                }}
+                aria-label="Close search"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
+        </div>
 
         {confirmingDelete && (
           <ConfirmDialog
@@ -530,56 +582,6 @@ export default function Editor(): React.JSX.Element {
                 <span>{speakerDeleteUndo.pendingDelete.label}</span>
                 <button type="button" className="toast__action" onClick={speakerDeleteUndo.undo}>
                   Undo
-                </button>
-              </div>
-            )}
-
-            {askOpen && (
-              <div className="ask-card">
-                <AskPanel
-                  recordingId={recording.id}
-                  onSeek={audio.seek}
-                  onNavigateToRecording={(targetId, ms) =>
-                    navigate(`/recordings/${targetId}`, { state: { seekMs: ms } })
-                  }
-                />
-              </div>
-            )}
-
-            {searchOpen && (
-              <div className="search-bar">
-                <Icon name="search" className="search-bar__icon" />
-                <input
-                  type="text"
-                  className="input search-bar__input"
-                  value={searchQuery}
-                  autoFocus
-                  onFocus={(e) => e.currentTarget.select()}
-                  placeholder="Search transcript…"
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      e.preventDefault()
-                      setSearchOpen(false)
-                      setSearchQuery('')
-                    }
-                  }}
-                />
-                {normalizedSearch && (
-                  <span className="search-bar__count">
-                    {visibleUtterances.length} {visibleUtterances.length === 1 ? 'match' : 'matches'}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="search-bar__close"
-                  onClick={() => {
-                    setSearchOpen(false)
-                    setSearchQuery('')
-                  }}
-                  aria-label="Close search"
-                >
-                  <Icon name="close" />
                 </button>
               </div>
             )}

@@ -444,15 +444,22 @@ body {
   margin-bottom: 24px;
 }
 
-/* Editor.tsx only, scoped by ancestry off its own unique wrapper rather
-   than a modifier class — every other route reuses this same
-   .page__header with no wrapper to hang a scope off, and shouldn't stick.
-   Keeps the title (rename-in-place), status, and the header's action
-   icons reachable without scrolling back up through a long transcript. A
-   permanent border, not a conditionally-applied one, is the simple way to
-   separate it from content scrolling underneath once stuck — it looks
-   correct before that point too. */
-.editor-shell .page__header {
+/* Wraps the header plus the Ask/search panels it opens (Editor.tsx only —
+   every other route just renders .page__header on its own with no
+   wrapper to hang this on, and shouldn't stick). Keeps the title
+   (rename-in-place), status, and action icons reachable without
+   scrolling back up through a long transcript — and just as
+   importantly, keeps Ask/search themselves inside the pinned area they
+   were opened from. Both panels used to render further down, after the
+   player, so opening one — its input `autoFocus`es — made the browser
+   scroll that far-off input into view, which looked like "clicking
+   search jumps back to the top" regardless of where you'd scrolled to
+   read the transcript. Now the input is already inside the sticky
+   region, so there's nothing off-screen to scroll to. One border on the
+   wrapper rather than the header alone, so it sits at the bottom of
+   whichever panel is actually open instead of a line splitting the
+   header from search/Ask beneath it. */
+.editor-shell .editor-sticky-top {
   position: sticky;
   top: 0;
   z-index: 5;
