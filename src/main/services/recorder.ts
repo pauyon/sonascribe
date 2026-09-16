@@ -242,19 +242,40 @@ export function addMarker(elapsedMs: number, color?: string): Marker {
 }
 
 /**
- * Updates a note on a marker already added this session — the live
- * counterpart to `recordings:setMarkers`' whole-list replace, which only
- * applies to a recording that's already stopped. No separate persistence
- * step: this mutates the same in-memory `session.markers` objects
- * `stopRecording` writes out via `setRecordingMarkers` once the take ends.
+ * Updates a marker already added this session — notes, label, and/or
+ * color, whichever are given — the live counterpart to
+ * `recordings:setMarkers`' whole-list replace, which only applies to a
+ * recording that's already stopped. No separate persistence step: this
+ * mutates the same in-memory `session.markers` objects `stopRecording`
+ * writes out via `setRecordingMarkers` once the take ends.
  */
-export function updateMarker(id: string, notes: string): Marker {
+export function updateMarker(
+  id: string,
+  updates: { notes?: string; label?: string; color?: string }
+): Marker {
   if (!session) throw new RecordingError('No recording in progress')
   const marker = session.markers.find((m) => m.id === id)
   if (!marker) throw new RecordingError(`Marker ${id} not found`)
-  marker.notes = notes
+  // Not Object.assign(marker, updates) — every caller only ever sends the
+  // one field it's actually changing (see recording:updateMarker's IPC
+  // handler), so the request object always carries the *other* two keys
+  // too, just as `undefined`. Object.assign copies a key with an
+  // `undefined` value same as any other, so that would silently wipe
+  // whichever fields weren't being touched — e.g. saving a note would
+  // reset the marker's color to undefined (rendering as black) on every
+  // keystroke's autosave.
+  if (updates.notes !== undefined) marker.notes = updates.notes
+  if (updates.label !== undefined) marker.label = updates.label
+  if (updates.color !== undefined) marker.color = updates.color
   emit('recording:markerUpdated', marker)
   return marker
+}
+
+/** Removes a marker added this session — same in-memory-only reasoning as `updateMarker` above. */
+export function removeMarker(id: string): void {
+  if (!session) throw new RecordingError('No recording in progress')
+  session.markers = session.markers.filter((m) => m.id !== id)
+  emit('recording:markerRemoved', id)
 }
 
 /** Current session, for a freshly opened mini controls window to bootstrap from — including markers already added before it existed to see their broadcasts. */

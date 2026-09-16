@@ -224,14 +224,24 @@ export interface ApiSchema {
     response: Marker
   }
   /**
-   * Updates a note on a marker added this session — the live counterpart to
-   * `recordings:setMarkers`, which only applies once a recording has
-   * stopped. Broadcast via `recording:markerUpdated` so every open window
-   * sees the note, not just whichever one it was typed into.
+   * Updates a marker added this session — notes, label, and/or color,
+   * whichever are given — the live counterpart to `recordings:setMarkers`,
+   * which only applies once a recording has stopped. Broadcast via
+   * `recording:markerUpdated` so every open window sees the change, not
+   * just whichever one made it.
    */
   'recording:updateMarker': {
-    request: { id: string; notes: string }
+    request: { id: string; notes?: string; label?: string; color?: string }
     response: Marker
+  }
+  /**
+   * Removes a marker added this session — the live counterpart to
+   * `recordings:setMarkers`' whole-list replace. Broadcast via
+   * `recording:markerRemoved` so every open window drops it too.
+   */
+  'recording:removeMarker': {
+    request: { id: string }
+    response: void
   }
   /**
    * Relays a mic/system capture warning or recovery from the renderer's own
@@ -540,8 +550,10 @@ export interface EventSchema {
   'recording:elapsedTick': { elapsedMs: number }
   /** A marker was added during the in-progress recording, from whichever window called `recording:addMarker`. */
   'recording:markerAdded': Marker
-  /** A marker's note was updated during the in-progress recording, from whichever window called `recording:updateMarker`. */
+  /** A marker was updated during the in-progress recording, from whichever window called `recording:updateMarker`. */
   'recording:markerUpdated': Marker
+  /** A marker's id, removed during the in-progress recording from whichever window called `recording:removeMarker`. */
+  'recording:markerRemoved': string
   /**
    * A stop has begun and the session is gone in main, ahead of the (brief)
    * finalize work `recording:stopped` waits for. Every window still
@@ -625,6 +637,7 @@ export const CHANNELS = [
   'recording:elapsed',
   'recording:addMarker',
   'recording:updateMarker',
+  'recording:removeMarker',
   'recording:reportCaptureState',
   'shell:showItemInFolder',
   'logs:read',
@@ -675,6 +688,7 @@ export const EVENTS = [
   'recording:elapsedTick',
   'recording:markerAdded',
   'recording:markerUpdated',
+  'recording:markerRemoved',
   'recording:sessionEnded',
   'recording:stopped',
   'recording:discarded',

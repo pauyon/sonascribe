@@ -1579,9 +1579,23 @@ body {
   color: var(--accent);
 }
 
+/* The live Record screen's list has nothing to seek to yet — same look,
+   but not a button and no hover-to-accent, since clicking it does nothing. */
+.markers__jump--static,
+.markers__jump--static:hover {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+/* flex:1 rather than a fixed max-width — now that the note trigger below
+   is a small fixed-size icon instead of a preview string competing for
+   the same space, the label can use whatever room is actually left in
+   the row. Always rendered (even empty — see MarkerChips.tsx), so it
+   also acts as the row's one flexible spacer, keeping the note icon and
+   remove button consistently right-aligned whether or not a label is set. */
 .markers__label {
-  flex-shrink: 0;
-  max-width: 140px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1603,13 +1617,14 @@ body {
 }
 
 .markers__rename,
-.markers__remove {
+.markers__remove,
+.markers__note-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -1619,30 +1634,42 @@ body {
 }
 
 .markers__rename svg,
-.markers__remove svg {
-  width: 11px;
-  height: 11px;
+.markers__remove svg,
+.markers__note-trigger svg {
+  width: 15px;
+  height: 15px;
 }
 
 .markers__rename:hover,
-.markers__remove:hover {
+.markers__remove:hover,
+.markers__note-trigger:hover {
   background: var(--border);
   color: var(--text);
 }
 
-/* The note preview/placeholder — flex:1 so it soaks up whatever room is left
-   in the row and truncates instead of wrapping or pushing the remove button
-   off the edge. */
-.markers__note-trigger {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
+/* Distinguishes "has a note" from "empty, click to add one" now that the
+   trigger is just an icon with no preview text to tell the two apart. */
+.markers__note-trigger--active {
+  color: var(--accent);
+}
+
+.markers__note-trigger--active:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* "Open right now" (editing or peeking) — a filled background rather than
+   just the accent text colour --active alone uses, so the row still
+   reads as mid-edit at a glance now that there's no Done button sitting
+   next to it to make that obvious. */
+.markers__note-trigger--open {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.markers__note-trigger--open:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* ---------- live waveform (Record screen, while recording) ---------- */
@@ -1819,6 +1846,62 @@ body {
   vertical-align: -1px;
 }
 
+/* Wraps the flag icon so a popover can anchor to it without disrupting
+   the inline text flow it sits in (see the comment above). */
+.utterance__marker-flag {
+  position: relative;
+  display: inline-block;
+}
+
+/* Same sticky-note treatment as the rail's marker notes — tinted from
+   --marker-color (set inline in TranscriptPanel.tsx's MarkerFlag), just
+   reachable by hovering the flag inline in the transcript instead of
+   opening the rail. Hidden via opacity/visibility rather than
+   conditionally rendered, so the fade transition has something to
+   animate. */
+.utterance__marker-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: max-content;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--marker-color, #f5c542) 22%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--marker-color, #f5c542) 45%, transparent);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow);
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.utterance__marker-flag:hover .utterance__marker-popover {
+  visibility: visible;
+  opacity: 1;
+}
+
+.utterance__marker-popover-label {
+  font-weight: 600;
+}
+
+.utterance__marker-popover-note {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--text-muted);
+}
+
 /* Marks a screenshot taken around this timestamp; opens it full-size on
    click. Sits right after the timestamp it belongs to, whether that's the
    line's own header or one of its inline paragraph timestamps. */
@@ -1974,12 +2057,12 @@ body {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   max-width: 100%;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
-  padding: 3px 4px 3px 8px;
+  padding: 2px 3px 2px 7px;
   background: var(--bg-raised);
   font-size: var(--fs-caption);
 }
@@ -2080,6 +2163,8 @@ body {
   font-size: var(--fs-caption);
 }
 
+/* Sized to match the marker row's icon buttons (.markers__rename etc.,
+   24px/15px) for consistency between the two sections of the rail. */
 .chip__action {
   display: flex;
   align-items: center;
@@ -2087,16 +2172,16 @@ body {
   background: none;
   border: none;
   border-radius: 50%;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
 }
 
 .chip__action svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
 .chip__action:hover {
@@ -2141,12 +2226,12 @@ body {
 }
 
 .chip__menu .menu {
-  top: 24px;
+  top: 26px;
 }
 
 .chip__menu .overflow-menu__trigger {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: 50%;
   background: none;
@@ -2154,8 +2239,8 @@ body {
 }
 
 .chip__menu .overflow-menu__trigger-icon {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
 .chip__menu .overflow-menu__trigger:hover {
@@ -2164,8 +2249,8 @@ body {
 }
 
 .speakers__swatch {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -3341,29 +3426,115 @@ button.settings-card__row--link:hover {
   color: var(--text);
 }
 
+/* Tinted from --marker-color (set inline per marker in MarkerChips.tsx,
+   same pattern SpeakerChip already uses for --speaker) so a note reads as
+   a small sticky note in that marker's own colour — the same colour as
+   its swatch dot in the row above, carried down into the note itself.
+   The tint lives here, on the shared outer card, rather than on the
+   textarea/peek-text below, so edit and peek both look like one
+   continuous coloured note rather than a coloured frame around a plain
+   white input. */
 .marker-note__panel {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
-  padding: 6px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--marker-color, #f5c542) 22%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--marker-color, #f5c542) 45%, transparent);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow);
+}
+
+/* Brief confirmation when Enter saves without closing the note (see
+   MarkerChips.tsx) — otherwise nothing visibly changes at all, which read
+   as broken rather than "saved, still open on purpose." */
+.marker-note__saved-hint {
+  font-size: var(--fs-caption);
+  color: var(--ok-text);
+  animation: marker-note-saved-fade 1200ms ease forwards;
+}
+
+@keyframes marker-note-saved-fade {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Auto-grows with the text — a manual resize handle meant sizing it up by
+   hand every time a note ran long. A CSS-only trick (no ResizeObserver, no
+   measuring in JS): an invisible ::after mirrors the textarea's value via
+   `data-value` (kept in sync from React — see MarkerChips.tsx/
+   MarkerNoteField.tsx), and both it and the textarea share one grid cell,
+   so the grid track — and the textarea filling it — grows to whichever
+   is taller. The two need identical font metrics and box model to mirror
+   each other's height correctly, which is why .marker-note__input below
+   repeats padding/border/font-size rather than leaving them to inherit. */
+.marker-note__grow {
+  display: grid;
+  width: 100%;
+}
+
+.marker-note__grow::after {
+  content: attr(data-value);
+  grid-area: 1 / 1 / 2 / 2;
+  visibility: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: inherit;
+  font-size: var(--fs-caption);
+  padding: 0;
+  border: none;
+}
+
+.marker-note__grow textarea {
+  grid-area: 1 / 1 / 2 / 2;
 }
 
 .marker-note__input {
   width: 100%;
+  min-height: 4.2em;
   font-family: inherit;
   font-size: var(--fs-caption);
-  padding: 6px 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  padding: 0;
+  background: transparent;
+  border: none;
   color: var(--text);
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
+}
+
+.marker-note__input:focus {
+  outline: none;
+}
+
+/* Read-only reveal — same footprint as .marker-note__input (the textarea
+   edit mode swaps into), but not a form control, so it doesn't visually
+   invite typing the way an empty textarea does. Wraps normal text rather
+   than truncating — the whole point of peeking is to read the note in
+   full. */
+.marker-note__peek-text {
+  width: 100%;
+  margin: 0;
+  font-size: var(--fs-caption);
+  padding: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  cursor: text;
 }
 
 .marker-note--compact .marker-note__input {
   min-height: 30px;
-  padding: 4px 6px;
 }
 
 .recorder__detail {
@@ -3390,6 +3561,10 @@ button.settings-card__row--link:hover {
   }
   .recorder__time {
     transition: none;
+  }
+  .marker-note__saved-hint {
+    animation: none;
+    opacity: 1;
   }
 }
 

@@ -93,10 +93,15 @@ export function useMarkerNote(
     setExpanded(true)
   }
 
-  /** Saves immediately and collapses — the explicit "complete this note" action. */
-  function done(): void {
+  /** Saves immediately without collapsing — Enter's action (see `onKeyDown`), and available for a caller that wants to force an immediate save mid-edit. */
+  function save(): void {
     clearPendingCommit()
     onCommit(draft)
+  }
+
+  /** Saves immediately and collapses — the explicit "close this note" action (the note-icon toggle, or a dedicated Done button; not Enter — see `onKeyDown`). */
+  function done(): void {
+    save()
     setExpanded(false)
   }
 
@@ -113,12 +118,14 @@ export function useMarkerNote(
     scheduleCommit(next)
   }
 
-  /** Enter completes (matching Done); Shift+Enter still inserts a newline; Escape discards. */
+  /** Enter saves but leaves the note open — the note icon (or a Done button)
+      is the toggle that closes it, not Enter; Shift+Enter still inserts a
+      newline; Escape discards and closes. */
   function onKeyDown(e: { key: string; shiftKey: boolean; preventDefault: () => void }): void {
     if (e.key === 'Escape') discard()
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      done()
+      save()
     }
   }
 
