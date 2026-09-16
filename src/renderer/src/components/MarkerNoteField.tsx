@@ -37,7 +37,10 @@ export default function MarkerNoteField({
   const note = useMarkerNote(marker, onCommit, { startExpanded, active, onExpandedChange })
 
   return (
-    <div className={compact ? 'marker-note marker-note--compact' : 'marker-note'}>
+    <div
+      className={compact ? 'marker-note marker-note--compact' : 'marker-note'}
+      style={{ '--marker-color': marker.color } as React.CSSProperties}
+    >
       <button
         type="button"
         className="marker-note__trigger"
@@ -58,19 +61,17 @@ export default function MarkerNoteField({
 
       {note.expanded && (
         <div className="marker-note__panel">
-          <textarea
-            className="marker-note__input"
-            rows={compact ? 2 : 3}
-            placeholder="Add a note…"
-            autoFocus
-            value={note.draft}
-            onChange={(e) => note.onChange(e.target.value)}
-            onKeyDown={note.onKeyDown}
-          />
-          <button type="button" className="btn btn--ghost btn--sm btn--icon marker-note__done" onClick={note.done}>
-            <Icon name="check" />
-            Done
-          </button>
+          {/* See MarkerChips.tsx for how the grow trick works. */}
+          <div className="marker-note__grow" data-value={`${note.draft} `}>
+            <textarea
+              className="marker-note__input"
+              placeholder="Add a note…"
+              autoFocus
+              value={note.draft}
+              onChange={(e) => note.onChange(e.target.value)}
+              onKeyDown={note.onKeyDown}
+            />
+          </div>
         </div>
       )}
     </div>

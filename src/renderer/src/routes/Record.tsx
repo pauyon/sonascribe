@@ -16,7 +16,7 @@ import Select from '../components/Select'
 import HelpTip from '../components/HelpTip'
 import Icon from '../components/Icon'
 import LiveWaveform, { type LiveWaveformHandle } from '../components/LiveWaveform'
-import MarkerNoteField from '../components/MarkerNoteField'
+import MarkerRow from '../components/MarkerRow'
 
 /** Peak level meter for one source. */
 function Meter({
@@ -105,7 +105,7 @@ export default function Record(): React.JSX.Element {
   /**
    * The one marker whose note field is allowed to be open right now — set to
    * the marker just added (so it auto-expands and focuses without waiting on
-   * the broadcast), and enforced on every `MarkerNoteField` via its
+   * the broadcast), and enforced on every `MarkerRow` via its
    * `active` prop so placing a new marker saves and collapses whichever
    * one was open before, rather than leaving both open at once.
    */
@@ -245,9 +245,14 @@ export default function Record(): React.JSX.Element {
     setMarkers((prev) => (prev.some((m) => m.id === marker.id) ? prev : [...prev, marker]))
   })
 
-  // A note typed into any marker from either window lands here.
+  // A note/label/color change from either window lands here.
   useEvent('recording:markerUpdated', (marker) => {
     setMarkers((prev) => prev.map((m) => (m.id === marker.id ? marker : m)))
+  })
+
+  // A removal from either window lands here.
+  useEvent('recording:markerRemoved', (id) => {
+    setMarkers((prev) => prev.filter((m) => m.id !== id))
   })
 
   // Stops sending audio blocks the instant the session is gone in main. This
@@ -823,6 +828,24 @@ export default function Record(): React.JSX.Element {
     void api.invoke('recording:updateMarker', { id, notes })
   }
 
+  /** Same shape as `updateMarkerNote`, for a marker's label. */
+  function renameMarker(id: string, label: string): void {
+    setMarkers((prev) => prev.map((m) => (m.id === id ? { ...m, label } : m)))
+    void api.invoke('recording:updateMarker', { id, label })
+  }
+
+  /** Same shape as `updateMarkerNote`, for a marker's color. */
+  function recolorMarker(id: string, color: string): void {
+    setMarkers((prev) => prev.map((m) => (m.id === id ? { ...m, color } : m)))
+    void api.invoke('recording:updateMarker', { id, color })
+  }
+
+  /** Same optimistic-then-IPC shape, for removing a marker mid-recording. */
+  function removeMarker(id: string): void {
+    setMarkers((prev) => prev.filter((m) => m.id !== id))
+    void api.invoke('recording:removeMarker', { id })
+  }
+
   function togglePause(): void {
     const next = !paused
     if (next) {
@@ -1107,14 +1130,17 @@ export default function Record(): React.JSX.Element {
         {recording && markers.length > 0 && (
           <div className="recorder__markers" ref={markersListRef}>
             {markers.map((marker, i) => (
-              <MarkerNoteField
+              <MarkerRow
                 key={marker.id}
                 marker={marker}
                 index={i + 1}
                 startExpanded={marker.id === expandedMarkerId}
                 active={expandedMarkerId === null || expandedMarkerId === marker.id}
                 onExpandedChange={(isExpanded) => setExpandedMarkerId(isExpanded ? marker.id : null)}
-                onCommit={(notes) => updateMarkerNote(marker.id, notes)}
+                onNote={(notes) => updateMarkerNote(marker.id, notes)}
+                onRename={(label) => renameMarker(marker.id, label)}
+                onRecolor={(color) => recolorMarker(marker.id, color)}
+                onRemove={() => removeMarker(marker.id)}
               />
             ))}
           </div>

@@ -9,6 +9,33 @@ function markerIn(markers: Marker[], startMs: number, endMs: number): Marker | u
   return markers.find((m) => m.timeMs >= startMs && m.timeMs < endMs)
 }
 
+/**
+ * The flag icon shown next to a timestamp that has a marker nearby —
+ * hovering it reveals the marker's label and/or note, tinted to that
+ * marker's own colour, same sticky-note treatment as the rail's marker
+ * list. Nothing to reveal (a marker with neither set) just renders the
+ * plain icon with no popover. Hover-only, not focus-triggered — the icon
+ * itself sits inside the seek button rather than being its own focusable
+ * element, so there's no keyboard-focus state to key off here.
+ */
+function MarkerFlag({ marker, className }: { marker: Marker; className?: string }): React.JSX.Element {
+  const hasInfo = Boolean(marker.label || marker.notes)
+  return (
+    <span
+      className="utterance__marker-flag"
+      style={{ '--marker-color': marker.color } as React.CSSProperties}
+    >
+      <Icon name="flag" className={className} style={{ color: marker.color }} />
+      {hasInfo && (
+        <span className="utterance__marker-popover">
+          {marker.label && <strong className="utterance__marker-popover-label">{marker.label}</strong>}
+          {marker.notes && <span className="utterance__marker-popover-note">{marker.notes}</span>}
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** Splits `text` around every case-insensitive occurrence of `query`, wrapping matches in a highlight span. */
 function highlightText(text: string, query: string): React.ReactNode {
   if (!query) return text
@@ -224,7 +251,7 @@ export default function TranscriptPanel({
               >
                 {(() => {
                   const marker = markerIn(markers, u.startMs, u.endMs)
-                  return marker && <Icon name="flag" className="utterance__time-flag" style={{ color: marker.color }} />
+                  return marker && <MarkerFlag marker={marker} className="utterance__time-flag" />
                 })()}
                 {formatDuration(u.startMs)}
               </button>
@@ -310,9 +337,7 @@ export default function TranscriptPanel({
                           onClick={() => onSeek(paragraph[0].startMs)}
                           title="Jump to this moment"
                         >
-                          {marker && (
-                            <Icon name="flag" className="utterance__time-flag" style={{ color: marker.color }} />
-                          )}
+                          {marker && <MarkerFlag marker={marker} className="utterance__time-flag" />}
                           {formatDuration(paragraph[0].startMs)}
                         </button>
                       )

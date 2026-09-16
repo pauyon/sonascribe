@@ -56,6 +56,7 @@ import {
   cancelRecording,
   getRecordingStatus,
   isRecording,
+  removeMarker,
   setPaused,
   startRecording,
   stopRecording,
@@ -258,7 +259,9 @@ const handlers: Handlers = {
 
   'recording:addMarker': ({ elapsedMs, color }) => addMarker(elapsedMs, color),
 
-  'recording:updateMarker': ({ id, notes }) => updateMarker(id, notes),
+  'recording:updateMarker': ({ id, notes, label, color }) => updateMarker(id, { notes, label, color }),
+
+  'recording:removeMarker': ({ id }) => removeMarker(id),
 
   'recording:reportCaptureState': ({ kind, state, message }) => {
     emit('recording:captureWarning', { kind, state, message })
